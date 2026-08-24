@@ -1,0 +1,1053 @@
+.settings-shell {
+  --settings-gutter: max(16px, calc((100% - 1000px) / 2));
+
+  min-height: 0;
+  width: 100%;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0 0 80px;
+}
+
+.settings-masthead {
+  padding: 32px var(--settings-gutter) 0;
+  background-color: var(--app-backdrop);
+  background-image: radial-gradient(color-mix(in oklch, var(--color-base-content) 13%, transparent) 0.8px, transparent 0.8px);
+  background-size: 17px 17px;
+}
+
+.settings-eyebrow {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--color-primary);
+  font-size: 0.62rem;
+  font-weight: 850;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.settings-masthead h1 {
+  margin: 0;
+  font-size: clamp(1.7rem, 3.4vw, 2.5rem);
+  font-weight: 850;
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
+.settings-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 20px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.settings-tabs button {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 9px;
+  padding: 0 18px;
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: polygon(9px 0, 100% 0, 100% 100%, 0 100%);
+  background: transparent;
+  color: var(--app-subtle);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.settings-tabs button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.settings-tabs button:hover {
+  background: color-mix(in oklch, var(--color-base-content) 5%, transparent);
+  color: var(--color-base-content);
+}
+
+.settings-tabs button.active {
+  background: var(--app-invert);
+  box-shadow: none;
+  color: var(--app-invert-ink);
+  font-weight: 850;
+}
+
+.settings-body {
+  display: grid;
+  gap: 14px;
+  padding: 20px var(--settings-gutter) 0;
+}
+
+/* ── section ──────────────────────────────────────────────── */
+
+.settings-section {
+  padding: 20px 22px;
+  border: 1px solid var(--app-border);
+  clip-path: var(--app-notch);
+  background: var(--app-panel);
+}
+
+.settings-section-head {
+  display: grid;
+  align-items: start;
+  gap: 14px;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.settings-mark {
+  position: relative;
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+}
+
+.settings-mark::before {
+  position: absolute;
+  inset: 3px;
+  border: 1px solid color-mix(in oklch, var(--color-primary) 55%, transparent);
+  background: color-mix(in oklch, var(--color-primary) 14%, transparent);
+  content: "";
+  rotate: 45deg;
+}
+
+.settings-mark svg {
+  position: relative;
+  z-index: 1;
+  width: 17px;
+  height: 17px;
+  color: var(--color-primary);
+}
+
+.settings-section-head h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.settings-section-head p {
+  margin: 2px 0 0;
+  color: var(--app-muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.settings-note {
+  margin: 12px 0 0;
+  color: var(--app-subtle);
+  font-size: 0.73rem;
+}
+
+.settings-error {
+  margin: 12px 0 0;
+  padding: 9px 13px;
+  border-left: 2px solid var(--color-error);
+  background: color-mix(in oklch, var(--color-error) 10%, transparent);
+  color: var(--color-error);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+/* ── buttons ──────────────────────────────────────────────── */
+
+.settings-button {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 15px;
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-chip);
+  background: var(--app-panel-raised);
+  color: var(--app-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.settings-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.settings-button:hover:not(:disabled) {
+  color: var(--color-base-content);
+}
+
+.settings-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.settings-button.is-ghost {
+  background: transparent;
+}
+
+/* ── option chips ─────────────────────────────────────────── */
+
+.settings-options {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(172px, 1fr));
+}
+
+.settings-option {
+  display: grid;
+  align-items: center;
+  gap: 11px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding: 11px 13px;
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-chip);
+  background: transparent;
+  color: var(--app-muted);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.settings-option:hover {
+  background: color-mix(in oklch, var(--color-base-content) 5%, transparent);
+  color: var(--color-base-content);
+}
+
+.settings-option.selected {
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 60%, transparent);
+  background: color-mix(in oklch, var(--color-primary) 14%, transparent);
+  color: var(--color-base-content);
+}
+
+.settings-option strong {
+  display: block;
+  overflow: hidden;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+}
+
+.settings-option small {
+  display: block;
+  color: var(--app-subtle);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.62rem;
+}
+
+.settings-option-check {
+  width: 16px;
+  height: 16px;
+  opacity: 0;
+}
+
+.settings-option.selected .settings-option-check {
+  color: var(--color-primary);
+  opacity: 1;
+}
+
+.locale-flag {
+  display: block;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--color-base-content) 22%, transparent);
+}
+
+.settings-swatches {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.settings-swatches i {
+  display: block;
+  width: 13px;
+  height: 22px;
+  clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
+}
+
+/* ── switches ─────────────────────────────────────────────── */
+
+.settings-switches {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-switch {
+  display: grid;
+  align-items: center;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  padding: 13px 15px;
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-notch-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.settings-switch:hover {
+  background: color-mix(in oklch, var(--color-base-content) 5%, transparent);
+}
+
+.settings-switch strong {
+  display: block;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.settings-switch small {
+  display: block;
+  margin-top: 2px;
+  color: var(--app-subtle);
+  font-size: 0.73rem;
+  line-height: 1.45;
+}
+
+.settings-switch-track {
+  position: relative;
+  display: block;
+  width: 44px;
+  height: 24px;
+  clip-path: var(--app-chip);
+  background: color-mix(in oklch, var(--color-base-content) 14%, transparent);
+  transition: background-color 180ms ease;
+}
+
+.settings-switch-track::after {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 16px;
+  height: 16px;
+  clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
+  background: var(--app-subtle);
+  content: "";
+  transition: transform 180ms cubic-bezier(0.4, 0, 0.2, 1), background-color 180ms ease;
+}
+
+.settings-switch[aria-checked="true"] .settings-switch-track {
+  background: color-mix(in oklch, var(--color-primary) 40%, transparent);
+}
+
+.settings-switch[aria-checked="true"] .settings-switch-track::after {
+  background: var(--color-primary);
+  transform: translateX(20px);
+}
+
+.settings-cache-controls {
+  display: grid;
+  gap: 22px;
+}
+
+.settings-cache-controls h3 {
+  margin: 0;
+  color: var(--color-base-content);
+  font-size: 0.82rem;
+}
+
+.settings-cache-controls > div > p {
+  margin: 3px 0 10px;
+  color: var(--app-subtle);
+  font-size: 0.73rem;
+}
+
+.settings-cache-option {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.settings-cache-status {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 18px;
+}
+
+.settings-cache-status span {
+  color: var(--app-subtle);
+}
+
+/* ── folder ───────────────────────────────────────────────── */
+
+.settings-folder {
+  display: grid;
+  align-items: center;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 14px 16px;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-notch-sm);
+}
+
+.settings-folder small {
+  display: block;
+  color: var(--app-subtle);
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.settings-folder strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 3px;
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.86rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-folder-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+  color: var(--color-success);
+  font-size: 0.71rem;
+}
+
+.settings-folder-state.pending {
+  color: var(--color-warning);
+}
+
+.settings-folder-state svg {
+  width: 13px;
+  height: 13px;
+}
+
+.settings-folder-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* ── window presets ───────────────────────────────────────── */
+
+.settings-presets {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(136px, 1fr));
+}
+
+.settings-preset {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  padding: 13px 10px;
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-notch-sm);
+  background: transparent;
+  color: var(--app-muted);
+  cursor: pointer;
+  font: inherit;
+}
+
+.settings-preset:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--color-base-content) 5%, transparent);
+  color: var(--color-base-content);
+}
+
+.settings-preset.current {
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 60%, transparent);
+  background: color-mix(in oklch, var(--color-primary) 14%, transparent);
+  color: var(--color-base-content);
+}
+
+.settings-preset strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.86rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.settings-preset span {
+  color: var(--app-subtle);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.settings-preset.is-too-large {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.settings-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  margin-top: 12px;
+  background: var(--app-border);
+}
+
+.settings-metrics > span {
+  flex: 1 1 124px;
+  padding: 10px 13px;
+  background: var(--app-panel);
+}
+
+.settings-metrics small {
+  display: block;
+  color: var(--app-subtle);
+  font-size: 0.56rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.settings-metrics b {
+  display: block;
+  margin-top: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.88rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+/* ── key bindings ─────────────────────────────────────────── */
+
+.settings-bindings {
+  display: grid;
+  gap: 3px;
+}
+
+.settings-binding-scope {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0 6px;
+  color: var(--app-subtle);
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.settings-binding-scope::after {
+  height: 1px;
+  flex: 1;
+  background: var(--app-border);
+  content: "";
+}
+
+.settings-binding-scope:first-child {
+  margin-top: 0;
+}
+
+.settings-binding {
+  display: grid;
+  align-items: center;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  padding: 9px 13px;
+  box-shadow: inset 0 0 0 1px transparent;
+  clip-path: var(--app-chip);
+}
+
+.settings-binding:hover {
+  background: color-mix(in oklch, var(--color-base-content) 5%, transparent);
+}
+
+.settings-binding.is-listening {
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 60%, transparent);
+  background: color-mix(in oklch, var(--color-primary) 12%, transparent);
+}
+
+.settings-binding.is-conflict {
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-error) 50%, transparent);
+  background: color-mix(in oklch, var(--color-error) 9%, transparent);
+}
+
+.settings-binding.has-reassignment {
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent);
+  background: color-mix(in oklch, var(--color-primary) 8%, transparent);
+}
+
+.settings-binding-name {
+  min-width: 0;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.settings-binding-name em {
+  display: block;
+  color: var(--app-subtle);
+  font-size: 0.7rem;
+  font-style: normal;
+  font-weight: 400;
+}
+
+.settings-binding-keys {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.settings-binding-keys button {
+  display: inline-flex;
+  min-width: 74px;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 11px;
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-chip-sm);
+  background: color-mix(in oklch, var(--color-base-100) 55%, transparent);
+  color: var(--color-base-content);
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.settings-binding-keys button:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 55%, transparent);
+  color: var(--color-primary);
+}
+
+.settings-binding-keys button.empty {
+  color: var(--app-subtle);
+  font-style: italic;
+}
+
+.settings-binding-keys button.listening {
+  box-shadow: inset 0 0 0 1px var(--color-primary);
+  background: color-mix(in oklch, var(--color-primary) 20%, transparent);
+  color: var(--color-primary);
+  animation: settings-binding-pulse 1.1s ease-in-out infinite;
+}
+
+.settings-binding-keys button:disabled {
+  color: var(--app-subtle);
+  cursor: not-allowed;
+}
+
+@keyframes settings-binding-pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.settings-binding-reset {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--app-subtle);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.settings-binding:hover .settings-binding-reset,
+.settings-binding-reset:focus-visible {
+  opacity: 1;
+}
+
+.settings-binding-reset:hover {
+  color: var(--color-primary);
+}
+
+.settings-binding-reset svg {
+  width: 14px;
+  height: 14px;
+}
+
+.settings-binding-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  grid-column: 1 / -1;
+  margin: 7px 0 0;
+  padding: 7px 11px;
+  border-left: 2px solid var(--color-error);
+  background: color-mix(in oklch, var(--color-base-200) 55%, transparent);
+  color: var(--color-error);
+  font-size: 0.73rem;
+}
+
+.settings-binding-warning.is-reassigned {
+  border-left-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.settings-binding-warning svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.settings-spin {
+  animation: settings-spin 900ms linear infinite;
+}
+
+.settings-loading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.settings-loading svg {
+  width: 14px;
+  height: 14px;
+}
+
+@keyframes settings-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 640px) {
+  .settings-binding {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-binding-reset {
+    opacity: 1;
+  }
+
+  .settings-folder,
+  .settings-section-head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-spin,
+  .settings-binding-keys button.listening {
+    animation: none;
+  }
+
+  .settings-switch-track,
+  .settings-switch-track::after {
+    transition: none;
+  }
+}
+
+/* ── about ────────────────────────────────────────────────── */
+
+.settings-crew {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-developer {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  align-items: center;
+  gap: 16px;
+  grid-template-columns: 84px minmax(0, 1fr);
+  overflow: hidden;
+  padding: 18px 22px 18px 36px;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-notch-sm);
+  background: color-mix(in oklch, var(--color-base-100) 40%, transparent);
+}
+
+.settings-developer > * {
+  position: relative;
+  z-index: 2;
+}
+
+.settings-developer::before,
+.settings-developer::after {
+  position: absolute;
+  z-index: 1;
+  content: "";
+  pointer-events: none;
+}
+
+.settings-developer.is-right {
+  grid-template-columns: minmax(0, 1fr) 84px;
+  padding: 18px 56px 18px 22px;
+  text-align: right;
+}
+
+.settings-developer.is-right .settings-portrait {
+  order: 2;
+}
+
+.settings-portrait {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 84px;
+  height: 84px;
+}
+
+.settings-portrait img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: var(--app-panel-raised);
+  object-fit: cover;
+}
+
+.settings-portrait::after {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow:
+    inset 0 0 0 2px var(--app-panel),
+    inset 0 0 0 3px color-mix(in oklch, var(--color-primary) 55%, transparent);
+  content: "";
+  pointer-events: none;
+}
+
+.settings-developer-copy {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+
+.settings-developer-copy > small {
+  display: block;
+  color: var(--color-primary);
+  font-size: 0.56rem;
+  font-weight: 850;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.settings-developer-copy > strong {
+  display: block;
+  margin-top: 5px;
+  overflow: hidden;
+  font-size: 1.12rem;
+  font-weight: 850;
+  letter-spacing: -0.03em;
+  text-overflow: ellipsis;
+}
+
+.settings-developer-quote {
+  display: block;
+  margin-top: 5px;
+  color: var(--app-muted);
+  font-size: 0.8rem;
+  font-style: italic;
+}
+
+.settings-developer-emoji {
+  font-family: "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
+  font-style: normal;
+}
+
+.settings-brand-line {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  margin-bottom: 16px;
+  text-align: left;
+}
+
+.settings-brand-line .brand-mark {
+  width: 44px;
+  height: 44px;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 11px), calc(100% - 11px) 100%, 0 100%);
+}
+
+.settings-brand-line .brand-mark svg {
+  width: 27px;
+  height: 27px;
+}
+
+.settings-brand-line strong {
+  display: block;
+  font-size: 1.05rem;
+  font-weight: 850;
+  letter-spacing: -0.03em;
+}
+
+.settings-brand-line > div > span {
+  display: block;
+  color: var(--app-muted);
+  font-size: 0.74rem;
+}
+
+.settings-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  margin: 0;
+  background: var(--app-border);
+}
+
+.settings-facts > div {
+  display: flex;
+  flex: 1 1 190px;
+  align-items: center;
+  flex-direction: column;
+  justify-content: center;
+  padding: 10px 13px;
+  background: var(--app-panel);
+  text-align: center;
+}
+
+.settings-facts > div:nth-last-child(-n + 2) {
+  padding-block: 15px;
+}
+
+.settings-about-build {
+  padding-bottom: 0;
+}
+
+.settings-about-build .settings-loading,
+.settings-about-build .settings-error {
+  margin-bottom: 20px;
+}
+
+.settings-facts dt {
+  color: var(--app-subtle);
+  font-size: 0.56rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.settings-facts dd {
+  margin: 3px 0 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .settings-developer,
+  .settings-developer.is-right {
+    grid-template-columns: 84px minmax(0, 1fr);
+    padding: 16px 18px;
+    text-align: left;
+  }
+
+  .settings-developer.is-right .settings-portrait {
+    order: 0;
+  }
+
+}
+
+.settings-developer-canvas {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.settings-preference-list {
+  display: grid;
+  gap: 1px;
+  margin: 12px 0 0;
+  padding: 0;
+  background: var(--app-border);
+  list-style: none;
+}
+
+.settings-preference-list > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 14px;
+  background: var(--app-panel);
+}
+
+.settings-preference-list strong,
+.settings-preference-work {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.settings-preference-work {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.settings-preference-work:hover {
+  text-decoration: underline;
+}
+
+.settings-preference-work:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.settings-preference-list small {
+  display: block;
+  margin-top: 2px;
+  color: var(--app-muted);
+  font-size: 0.7rem;
+}
+
+.settings-preference-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.settings-preference-actions button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-chip);
+  background: transparent;
+  color: var(--app-subtle);
+  cursor: pointer;
+}
+
+.settings-preference-actions button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.settings-preference-actions button:hover:not(:disabled) {
+  color: var(--color-base-content);
+}
+
+.settings-preference-actions button[aria-pressed="true"] {
+  box-shadow: none;
+  background: var(--color-primary);
+  color: var(--color-primary-content);
+}
+
+.settings-preference-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}

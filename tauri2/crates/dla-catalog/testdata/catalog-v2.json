@@ -1,0 +1,500 @@
+{
+  "schemaVersion": 2,
+  "snapshotId": "dla-catalog-synthetic-v2-rich-details",
+  "kind": "synthetic",
+  "source": "DLA Launcher authored edge cases; no user files or paths",
+  "works": [
+    {
+      "code": "DLA-SYNTH-0001",
+      "sourceCode": "SYNTH",
+      "title": "画像なし・英訳なし・サークルなし",
+      "titleEnglish": "",
+      "releaseDate": "",
+      "ageRating": "",
+      "releaseType": "digital",
+      "mainImageUrls": [],
+      "thumbnailUrls": [],
+      "circles": [],
+      "categories": [],
+      "tags": [],
+      "addedDate": "",
+      "updatedDate": "",
+      "sampleImageUrls": [],
+      "fileFormats": [],
+      "supportedLanguages": [],
+      "miscellanies": [],
+      "roms": [],
+      "rating": null
+    },
+    {
+      "code": "DLA-SYNTH-0002",
+      "sourceCode": "SYNTH",
+      "title": "非常に長い作品名の表示を確認するためのテスト作品――狭い画面でも列を壊さず、省略表示と詳細表示の境界を確認できるように意図的に長くした題名",
+      "titleEnglish": "An intentionally long translated title used to verify wrapping, truncation, responsive cards, and stable row heights",
+      "releaseDate": "2026-08-02",
+      "ageRating": "all_ages",
+      "releaseType": "digital",
+      "thumbnailUrls": [],
+      "circles": [
+        {
+          "name": "とても長いサークル名を持つ架空の制作グループ",
+          "nameEnglish": "A Fictional Circle With An Intentionally Long Name"
+        }
+      ],
+      "categories": [
+        {
+          "code": "ADV",
+          "name": "アドベンチャー",
+          "nameEnglish": "Adventure"
+        }
+      ],
+      "tags": [
+        {
+          "name": "長い名前",
+          "nameEnglish": "Long name"
+        }
+      ],
+      "addedDate": "2026-08-02",
+      "updatedDate": "2026-08-03",
+      "mainImageUrls": [],
+      "sampleImageUrls": [],
+      "fileFormats": [],
+      "supportedLanguages": [],
+      "miscellanies": [],
+      "roms": [],
+      "rating": null
+    },
+    {
+      "code": "DLA-SYNTH-0003",
+      "sourceCode": "SYNTH",
+      "title": "重複する題名",
+      "titleEnglish": "Duplicate title",
+      "releaseDate": "2001-01-01",
+      "ageRating": "r18",
+      "releaseType": "digital",
+      "thumbnailUrls": [],
+      "circles": [
+        {
+          "name": "架空工房A",
+          "nameEnglish": "Fictional Studio A"
+        }
+      ],
+      "categories": [
+        {
+          "code": "RPG",
+          "name": "ロールプレイング",
+          "nameEnglish": "Role-playing"
+        }
+      ],
+      "tags": [
+        {
+          "name": "同名作品",
+          "nameEnglish": "Duplicate name"
+        }
+      ],
+      "addedDate": "2025-10-21",
+      "updatedDate": "2026-07-20",
+      "mainImageUrls": [],
+      "sampleImageUrls": [],
+      "fileFormats": [],
+      "supportedLanguages": [],
+      "miscellanies": [],
+      "roms": [],
+      "rating": null
+    },
+    {
+      "code": "DLA-SYNTH-0004",
+      "sourceCode": "SYNTH",
+      "title": "重複する題名",
+      "titleEnglish": "Duplicate title",
+      "releaseDate": "2001-01-02",
+      "ageRating": "r18",
+      "releaseType": "digital",
+      "thumbnailUrls": [],
+      "circles": [
+        {
+          "name": "架空工房B",
+          "nameEnglish": "Fictional Studio B"
+        }
+      ],
+      "categories": [
+        {
+          "code": "RPG",
+          "name": "ロールプレイング",
+          "nameEnglish": "Role-playing"
+        }
+      ],
+      "tags": [
+        {
+          "name": "同名作品",
+          "nameEnglish": "Duplicate name"
+        }
+      ],
+      "addedDate": "2025-10-22",
+      "updatedDate": "2026-07-20",
+      "mainImageUrls": [],
+      "sampleImageUrls": [],
+      "fileFormats": [],
+      "supportedLanguages": [],
+      "miscellanies": [],
+      "roms": [],
+      "rating": null
+    },
+    {
+      "code": "DLA-SYNTH-0005",
+      "sourceCode": "SYNTH",
+      "title": "Emoji 🎧🌙 and mixed 日本語 text",
+      "titleEnglish": "Emoji and mixed-script audio work",
+      "releaseDate": "2024-02-29",
+      "ageRating": "all_ages",
+      "releaseType": "digital",
+      "thumbnailUrls": [],
+      "circles": [
+        {
+          "name": "Unicode Lab",
+          "nameEnglish": "Unicode Lab"
+        }
+      ],
+      "categories": [
+        {
+          "code": "SOU",
+          "name": "ボイス・ASMR",
+          "nameEnglish": "Voice / ASMR"
+        }
+      ],
+      "tags": [
+        {
+          "name": "バイノーラル",
+          "nameEnglish": "Binaural"
+        },
+        {
+          "name": "睡眠導入",
+          "nameEnglish": "Sleep aid"
+        }
+      ],
+      "addedDate": "2024-02-29",
+      "updatedDate": "2026-07-20",
+      "mainImageUrls": [],
+      "sampleImageUrls": [],
+      "fileFormats": [],
+      "supportedLanguages": [],
+      "miscellanies": [],
+      "roms": [],
+      "rating": null
+    },
+    {
+      "code": "DLA-SYNTH-0006",
+      "sourceCode": "SYNTH",
+      "title": "مكتبة النجوم",
+      "titleEnglish": "Right-to-left title fixture",
+      "releaseDate": "2020-06-15",
+      "ageRating": "all_ages",
+      "releaseType": "digital",
+      "thumbnailUrls": [],
+      "circles": [
+        {
+          "name": "مختبر",
+          "nameEnglish": "RTL Lab"
+        }
+      ],
+      "categories": [
+        {
+          "code": "NRE",
+          "name": "ノベル",
+          "nameEnglish": "Novel"
+        }
+      ],
+      "tags": [
+        {
+          "name": "RTL",
+          "nameEnglish": "Right-to-left"
+        }
+      ],
+      "addedDate": "2026-01-15",
+      "updatedDate": "2026-07-20",
+      "mainImageUrls": [],
+      "sampleImageUrls": [],
+      "fileFormats": [],
+      "supportedLanguages": [],
+      "miscellanies": [],
+      "roms": [],
+      "rating": null
+    },
+    {
+      "code": "DLA-SYNTH-0007",
+      "sourceCode": "SYNTH",
+      "title": "Café / Café normalization pair",
+      "titleEnglish": "Combining-character fixture",
+      "releaseDate": "2019-12-31",
+      "ageRating": "r15",
+      "releaseType": "digital",
+      "thumbnailUrls": [],
+      "circles": [
+        {
+          "name": "Normalization Lab",
+          "nameEnglish": "Normalization Lab"
+        }
+      ],
+      "categories": [
+        {
+          "code": "DNV",
+          "name": "デジタルノベル",
+          "nameEnglish": "Digital Novel"
+        }
+      ],
+      "tags": [
+        {
+          "name": "結合文字",
+          "nameEnglish": "Combining characters"
+        }
+      ],
+      "addedDate": "2026-01-16",
+      "updatedDate": "2026-07-20",
+      "mainImageUrls": [],
+      "sampleImageUrls": [],
+      "fileFormats": [],
+      "supportedLanguages": [],
+      "miscellanies": [],
+      "roms": [],
+      "rating": null
+    },
+    {
+      "code": "DLA-SYNTH-0008",
+      "sourceCode": "SYNTH",
+      "title": "多数タグ表示テスト",
+      "titleEnglish": "Many-tag presentation fixture",
+      "releaseDate": "2025-05-05",
+      "ageRating": "r18",
+      "releaseType": "digital",
+      "thumbnailUrls": [],
+      "circles": [
+        {
+          "name": "Fixture Circle",
+          "nameEnglish": "Fixture Circle"
+        }
+      ],
+      "categories": [
+        {
+          "code": "ICG",
+          "name": "CG・イラスト",
+          "nameEnglish": "CG + Illustrations"
+        }
+      ],
+      "tags": [
+        {
+          "name": "タグ01",
+          "nameEnglish": "Tag 01"
+        },
+        {
+          "name": "タグ02",
+          "nameEnglish": "Tag 02"
+        },
+        {
+          "name": "タグ03",
+          "nameEnglish": "Tag 03"
+        },
+        {
+          "name": "タグ04",
+          "nameEnglish": "Tag 04"
+        },
+        {
+          "name": "タグ05",
+          "nameEnglish": "Tag 05"
+        },
+        {
+          "name": "タグ06",
+          "nameEnglish": "Tag 06"
+        },
+        {
+          "name": "タグ07",
+          "nameEnglish": "Tag 07"
+        },
+        {
+          "name": "タグ08",
+          "nameEnglish": "Tag 08"
+        },
+        {
+          "name": "タグ09",
+          "nameEnglish": "Tag 09"
+        },
+        {
+          "name": "タグ10",
+          "nameEnglish": "Tag 10"
+        },
+        {
+          "name": "タグ11",
+          "nameEnglish": "Tag 11"
+        },
+        {
+          "name": "タグ12",
+          "nameEnglish": "Tag 12"
+        }
+      ],
+      "addedDate": "2026-06-30",
+      "updatedDate": "2026-07-21",
+      "mainImageUrls": [],
+      "sampleImageUrls": [],
+      "fileFormats": [],
+      "supportedLanguages": [],
+      "miscellanies": [],
+      "roms": [],
+      "rating": null
+    },
+    {
+      "code": "DLA-SYNTH-0009",
+      "sourceCode": "SYNTH",
+      "title": "1900年の境界値",
+      "titleEnglish": "Old release-date boundary",
+      "releaseDate": "1900-01-01",
+      "ageRating": "all_ages",
+      "releaseType": "physical",
+      "thumbnailUrls": [],
+      "circles": [
+        {
+          "name": "Archive Fixture",
+          "nameEnglish": "Archive Fixture"
+        }
+      ],
+      "categories": [
+        {
+          "code": "MUS",
+          "name": "音楽",
+          "nameEnglish": "Music"
+        }
+      ],
+      "tags": [],
+      "addedDate": "2026-07-01",
+      "updatedDate": "2026-07-21",
+      "mainImageUrls": [],
+      "sampleImageUrls": [],
+      "fileFormats": [],
+      "supportedLanguages": [],
+      "miscellanies": [],
+      "roms": [],
+      "rating": null
+    },
+    {
+      "code": "DLA-SYNTH-0010",
+      "sourceCode": "SYNTH",
+      "title": "将来日付の境界値",
+      "titleEnglish": "Future release-date boundary",
+      "releaseDate": "2099-12-31",
+      "ageRating": "all_ages",
+      "releaseType": "digital",
+      "thumbnailUrls": [],
+      "circles": [
+        {
+          "name": "Future Fixture",
+          "nameEnglish": "Future Fixture"
+        }
+      ],
+      "categories": [
+        {
+          "code": "MOV",
+          "name": "動画",
+          "nameEnglish": "Video"
+        }
+      ],
+      "tags": [],
+      "addedDate": "1900-01-02",
+      "updatedDate": "1900-01-03",
+      "mainImageUrls": [],
+      "sampleImageUrls": [],
+      "fileFormats": [],
+      "supportedLanguages": [],
+      "miscellanies": [],
+      "roms": [],
+      "rating": null
+    },
+    {
+      "code": "DLA-SYNTH-0011",
+      "sourceCode": "SYNTH",
+      "title": "複数カテゴリ作品",
+      "titleEnglish": "Multiple-category fixture",
+      "releaseDate": "2023-07-07",
+      "ageRating": "r15",
+      "releaseType": "digital",
+      "thumbnailUrls": [],
+      "circles": [
+        {
+          "name": "Cross Genre",
+          "nameEnglish": "Cross Genre"
+        }
+      ],
+      "categories": [
+        {
+          "code": "ADV",
+          "name": "アドベンチャー",
+          "nameEnglish": "Adventure"
+        },
+        {
+          "code": "RPG",
+          "name": "ロールプレイング",
+          "nameEnglish": "Role-playing"
+        }
+      ],
+      "tags": [
+        {
+          "name": "複数カテゴリ",
+          "nameEnglish": "Multiple categories"
+        }
+      ],
+      "addedDate": "2099-12-30",
+      "updatedDate": "2099-12-31",
+      "mainImageUrls": [],
+      "sampleImageUrls": [],
+      "fileFormats": [],
+      "supportedLanguages": [],
+      "miscellanies": [],
+      "roms": [],
+      "rating": null
+    },
+    {
+      "code": "DLA-SYNTH-0012",
+      "sourceCode": "SYNTH",
+      "title": "複数サークル共同制作",
+      "titleEnglish": "Multiple-circle fixture",
+      "releaseDate": "2022-08-08",
+      "ageRating": "r18",
+      "releaseType": "digital",
+      "thumbnailUrls": [],
+      "circles": [
+        {
+          "name": "共同サークル甲",
+          "nameEnglish": "Collaboration A"
+        },
+        {
+          "name": "共同サークル乙",
+          "nameEnglish": "Collaboration B"
+        },
+        {
+          "name": "共同サークル丙",
+          "nameEnglish": "Collaboration C"
+        }
+      ],
+      "categories": [
+        {
+          "code": "MNG",
+          "name": "マンガ",
+          "nameEnglish": "Manga"
+        }
+      ],
+      "tags": [
+        {
+          "name": "共同制作",
+          "nameEnglish": "Collaboration"
+        }
+      ],
+      "addedDate": "2023-07-08",
+      "updatedDate": "2023-07-09",
+      "mainImageUrls": [],
+      "sampleImageUrls": [],
+      "fileFormats": [],
+      "supportedLanguages": [],
+      "miscellanies": [],
+      "roms": [],
+      "rating": null
+    }
+  ],
+  "relations": []
+}

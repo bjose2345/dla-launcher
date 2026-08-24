@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:dla-launcher:catalog-package:relation:v1",
+  "title": "DLA catalog relation record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["parentWorkCode", "childWorkCode", "relationTypeCode", "relationTypeLabel"],
+  "properties": {
+    "parentWorkCode": {
+      "type": "string",
+      "minLength": 1
+    },
+    "childWorkCode": {
+      "type": "string",
+      "minLength": 1
+    },
+    "relationTypeCode": {
+      "type": "string",
+      "minLength": 1
+    },
+    "relationTypeLabel": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

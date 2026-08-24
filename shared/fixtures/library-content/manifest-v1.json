@@ -1,0 +1,306 @@
+{
+  "schemaVersion": 1,
+  "scenarios": [
+    {
+      "id": "windows-game",
+      "description": "A Windows game with one preferred executable and a setup program.",
+      "fixtureRoot": "windows-game",
+      "expected": {
+        "sourceScanSessionId": null,
+        "catalogIdentity": null,
+        "suggestedStatus": "ready",
+        "contentItems": [
+          {
+            "relativePath": "Data/game.dat",
+            "pathKey": "data/game.dat",
+            "mediaType": "unknown",
+            "sizeBytes": null,
+            "modifiedAt": null,
+            "confidence": "low",
+            "reasonCodes": ["unrecognized_extension"]
+          },
+          {
+            "relativePath": "Game.exe",
+            "pathKey": "game.exe",
+            "mediaType": "executable",
+            "sizeBytes": null,
+            "modifiedAt": null,
+            "confidence": "high",
+            "reasonCodes": ["executable_extension", "preferred_executable_name"]
+          },
+          {
+            "relativePath": "setup.exe",
+            "pathKey": "setup.exe",
+            "mediaType": "executable",
+            "sizeBytes": null,
+            "modifiedAt": null,
+            "confidence": "medium",
+            "reasonCodes": ["executable_extension", "installer_name"]
+          }
+        ],
+        "launchCandidates": [
+          {
+            "id": "launch-game",
+            "action": "launch_executable",
+            "target": { "kind": "relative_path", "path": "Game.exe" },
+            "supportedPlatforms": ["windows"],
+            "confidence": "high",
+            "reasonCodes": ["preferred_executable_name", "installer_deprioritized"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "audio-work",
+      "description": "An ordered audio work with cover artwork.",
+      "fixtureRoot": "audio-work",
+      "expected": {
+        "sourceScanSessionId": null,
+        "catalogIdentity": null,
+        "suggestedStatus": "ready",
+        "contentItems": [
+          {
+            "relativePath": "01 - introduction.flac",
+            "pathKey": "01 - introduction.flac",
+            "mediaType": "audio",
+            "sizeBytes": null,
+            "modifiedAt": null,
+            "confidence": "high",
+            "reasonCodes": ["audio_extension", "numbered_filename"]
+          },
+          {
+            "relativePath": "02 - scene.ogg",
+            "pathKey": "02 - scene.ogg",
+            "mediaType": "audio",
+            "sizeBytes": null,
+            "modifiedAt": null,
+            "confidence": "high",
+            "reasonCodes": ["audio_extension", "numbered_filename"]
+          },
+          {
+            "relativePath": "cover.jpg",
+            "pathKey": "cover.jpg",
+            "mediaType": "image",
+            "sizeBytes": null,
+            "modifiedAt": null,
+            "confidence": "high",
+            "reasonCodes": ["image_extension", "cover_filename"]
+          }
+        ],
+        "launchCandidates": [
+          {
+            "id": "play-album",
+            "action": "play_audio",
+            "target": { "kind": "installation_root" },
+            "supportedPlatforms": ["windows", "linux", "macos", "android", "ios"],
+            "confidence": "high",
+            "reasonCodes": ["dominant_audio_set", "numbered_track_sequence"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "manga-work",
+      "description": "An image sequence accompanied by a PDF edition.",
+      "fixtureRoot": "manga-work",
+      "expected": {
+        "sourceScanSessionId": null,
+        "catalogIdentity": null,
+        "suggestedStatus": "needs_review",
+        "contentItems": [
+          {
+            "relativePath": "book.pdf",
+            "pathKey": "book.pdf",
+            "mediaType": "pdf",
+            "sizeBytes": null,
+            "modifiedAt": null,
+            "confidence": "high",
+            "reasonCodes": ["pdf_extension"]
+          },
+          {
+            "relativePath": "images/001.webp",
+            "pathKey": "images/001.webp",
+            "mediaType": "image",
+            "sizeBytes": null,
+            "modifiedAt": null,
+            "confidence": "high",
+            "reasonCodes": ["image_extension", "numbered_filename"]
+          },
+          {
+            "relativePath": "images/002.webp",
+            "pathKey": "images/002.webp",
+            "mediaType": "image",
+            "sizeBytes": null,
+            "modifiedAt": null,
+            "confidence": "high",
+            "reasonCodes": ["image_extension", "numbered_filename"]
+          }
+        ],
+        "launchCandidates": [
+          {
+            "id": "open-pdf",
+            "action": "open_document",
+            "target": { "kind": "relative_path", "path": "book.pdf" },
+            "supportedPlatforms": ["windows", "linux", "macos", "android", "ios"],
+            "confidence": "high",
+            "reasonCodes": ["single_pdf"]
+          },
+          {
+            "id": "read-images",
+            "action": "read_images",
+            "target": { "kind": "installation_root" },
+            "supportedPlatforms": ["windows", "linux", "macos", "android", "ios"],
+            "confidence": "high",
+            "reasonCodes": ["numbered_image_sequence"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "mixed-content",
+      "description": "A mixed folder with executable, video, image, archive, and unknown content.",
+      "fixtureRoot": "mixed-content",
+      "expected": {
+        "sourceScanSessionId": null,
+        "catalogIdentity": null,
+        "suggestedStatus": "needs_review",
+        "contentItems": [
+          {
+            "relativePath": "bonus.zip",
+            "pathKey": "bonus.zip",
+            "mediaType": "archive",
+            "sizeBytes": null,
+            "modifiedAt": null,
+            "confidence": "high",
+            "reasonCodes": ["archive_extension"]
+          },
+          {
+            "relativePath": "manual.txt",
+            "pathKey": "manual.txt",
+            "mediaType": "unknown",
+            "sizeBytes": null,
+            "modifiedAt": null,
+            "confidence": "low",
+            "reasonCodes": ["unsupported_document_extension"]
+          },
+          {
+            "relativePath": "movie.mp4",
+            "pathKey": "movie.mp4",
+            "mediaType": "video",
+            "sizeBytes": null,
+            "modifiedAt": null,
+            "confidence": "high",
+            "reasonCodes": ["video_extension"]
+          },
+          {
+            "relativePath": "play.exe",
+            "pathKey": "play.exe",
+            "mediaType": "executable",
+            "sizeBytes": null,
+            "modifiedAt": null,
+            "confidence": "medium",
+            "reasonCodes": ["executable_extension"]
+          },
+          {
+            "relativePath": "poster.png",
+            "pathKey": "poster.png",
+            "mediaType": "image",
+            "sizeBytes": null,
+            "modifiedAt": null,
+            "confidence": "high",
+            "reasonCodes": ["image_extension"]
+          }
+        ],
+        "launchCandidates": [
+          {
+            "id": "launch-play",
+            "action": "launch_executable",
+            "target": { "kind": "relative_path", "path": "play.exe" },
+            "supportedPlatforms": ["windows"],
+            "confidence": "medium",
+            "reasonCodes": ["single_executable"]
+          },
+          {
+            "id": "play-movie",
+            "action": "play_video",
+            "target": { "kind": "relative_path", "path": "movie.mp4" },
+            "supportedPlatforms": ["windows", "linux", "macos", "android", "ios"],
+            "confidence": "high",
+            "reasonCodes": ["single_video"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "android-package",
+      "description": "A standalone Android package.",
+      "fixtureRoot": "android-package",
+      "expected": {
+        "sourceScanSessionId": null,
+        "catalogIdentity": null,
+        "suggestedStatus": "ready",
+        "contentItems": [
+          {
+            "relativePath": "work.apk",
+            "pathKey": "work.apk",
+            "mediaType": "android_package",
+            "sizeBytes": null,
+            "modifiedAt": null,
+            "confidence": "high",
+            "reasonCodes": ["android_package_extension"]
+          }
+        ],
+        "launchCandidates": [
+          {
+            "id": "open-android-package",
+            "action": "open_android_package",
+            "target": { "kind": "relative_path", "path": "work.apk" },
+            "supportedPlatforms": ["android"],
+            "confidence": "high",
+            "reasonCodes": ["single_android_package"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "edge-cases",
+      "description": "Deceptive extensions and files that must not become safe actions from names alone.",
+      "fixtureRoot": "edge-cases",
+      "expected": {
+        "sourceScanSessionId": null,
+        "catalogIdentity": null,
+        "suggestedStatus": "needs_review",
+        "contentItems": [
+          {
+            "relativePath": "cover.jpg.exe",
+            "pathKey": "cover.jpg.exe",
+            "mediaType": "unknown",
+            "sizeBytes": null,
+            "modifiedAt": null,
+            "confidence": "low",
+            "reasonCodes": ["deceptive_double_extension", "signature_required"]
+          },
+          {
+            "relativePath": "desktop.ini",
+            "pathKey": "desktop.ini",
+            "mediaType": "unknown",
+            "sizeBytes": null,
+            "modifiedAt": null,
+            "confidence": "high",
+            "reasonCodes": ["known_ignored_filename"]
+          },
+          {
+            "relativePath": "extensionless",
+            "pathKey": "extensionless",
+            "mediaType": "unknown",
+            "sizeBytes": null,
+            "modifiedAt": null,
+            "confidence": "low",
+            "reasonCodes": ["missing_extension", "signature_required"]
+          }
+        ],
+        "launchCandidates": []
+      }
+    }
+  ]
+}

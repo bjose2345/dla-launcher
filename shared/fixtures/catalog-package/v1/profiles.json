@@ -1,0 +1,59 @@
+{
+  "fixtureVersion": 1,
+  "createdAt": "2026-08-05T12:00:00Z",
+  "source": {
+    "id": "DL",
+    "name": "DLsite"
+  },
+  "profiles": [
+    {
+      "profile": "compact",
+      "snapshotId": "fixture-compact-v1",
+      "dat": "golden/compact/parity.dat",
+      "fieldSet": "compact",
+      "enrichmentFields": [],
+      "relations": false,
+      "expected": {
+        "workEntries": 2,
+        "uniqueWorks": 2,
+        "roms": 2,
+        "files": 0,
+        "relations": 0
+      }
+    },
+    {
+      "profile": "full",
+      "snapshotId": "fixture-full-v1",
+      "dat": "golden/full/parity.dat",
+      "fieldSet": "full",
+      "enrichmentFields": "all",
+      "relations": true,
+      "expected": {
+        "workEntries": 2,
+        "uniqueWorks": 2,
+        "roms": 2,
+        "files": 2,
+        "relations": 1
+      }
+    },
+    {
+      "profile": "custom",
+      "snapshotId": "fixture-custom-v1",
+      "dat": "golden/compact/parity.dat",
+      "fieldSet": "compact",
+      "enrichmentFields": [
+        "work.titleEnglish",
+        "work.images.main",
+        "work.descriptions"
+      ],
+      "relations": true,
+      "expected": {
+        "workEntries": 2,
+        "uniqueWorks": 2,
+        "roms": 2,
+        "files": 0,
+        "relations": 1
+      }
+    }
+  ]
+}

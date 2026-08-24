@@ -1,0 +1,15 @@
+[package]
+name = "dla-catalog"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[features]
+test-fixtures = []
+
+[dependencies]
+dla-domain.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

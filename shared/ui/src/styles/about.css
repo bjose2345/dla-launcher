@@ -1,0 +1,41 @@
+.about-page {
+  --about-gutter: max(16px, calc((100% - 1000px) / 2));
+
+  min-height: 0;
+  width: 100%;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding-bottom: 80px;
+}
+
+.about-page-masthead {
+  padding: 32px var(--about-gutter) 28px;
+  border-bottom: 1px solid var(--app-border);
+  background-color: var(--app-backdrop);
+  background-image: radial-gradient(color-mix(in oklch, var(--color-base-content) 13%, transparent) 0.8px, transparent 0.8px);
+  background-size: 17px 17px;
+}
+
+.about-page-masthead > span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--color-primary);
+  font-size: 0.62rem;
+  font-weight: 850;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.about-page-masthead h1 {
+  margin: 0;
+  font-size: clamp(1.7rem, 3.4vw, 2.5rem);
+  font-weight: 850;
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
+.about-page-body {
+  display: grid;
+  gap: 14px;
+  padding: 20px var(--about-gutter) 0;
+}

@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:dla-launcher:scanner-scenarios:v1",
+  "title": "DLA Launcher scanner scenario fixtures",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "scenarios"],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "scenarios": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/scenario"
+      }
+    }
+  },
+  "$defs": {
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "entries", "identities", "issues", "expected"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/entry"
+          }
+        },
+        "identities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/identity"
+          }
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "root_unavailable",
+              "permission_denied",
+              "entry_vanished",
+              "unsupported_entry",
+              "io",
+              "persistence"
+            ]
+          }
+        },
+        "expected": {
+          "$ref": "#/$defs/expected"
+        }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relativePath", "source", "kind", "readable", "symbolicLink"],
+      "properties": {
+        "relativePath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "enum": ["directory_name", "file_name"]
+        },
+        "kind": {
+          "enum": ["file", "directory"]
+        },
+        "readable": {
+          "type": "boolean"
+        },
+        "symbolicLink": {
+          "type": "boolean"
+        }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workCode", "confidence", "reasonCodes"],
+      "properties": {
+        "workCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "confidence": {
+          "enum": ["possible", "strong", "exact"]
+        },
+        "reasonCodes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["productCodes", "outcome", "selectedWorkCode"],
+      "properties": {
+        "productCodes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(?:RJ|BJ|VJ)[0-9]{5,10}$"
+          },
+          "uniqueItems": true
+        },
+        "outcome": {
+          "enum": ["matched", "ambiguous", "unmatched"]
+        },
+        "selectedWorkCode": {
+          "type": ["string", "null"]
+        }
+      }
+    }
+  }
+}

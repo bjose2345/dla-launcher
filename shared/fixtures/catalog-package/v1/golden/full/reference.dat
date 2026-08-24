@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<datafile xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="https://datomatic.no-intro.org/stuff https://datomatic.no-intro.org/stuff/schema_nointro_datfile_v3.xsd">
+	<header>
+		<id>1</id>
+		<name>DLsite</name>
+		<description>Works exported from DLsite Archive</description>
+		<version>20260805-120000</version>
+		<author>DLA</author>
+		<homepage>DLsite Archive Project</homepage>
+		<url>https://dlsitearchive.com</url>
+		<clrmamepro forcenodump="required" />
+	</header>
+	<work name="RJ000001">
+		<title>標準 &amp; Compact</title>
+		<site>Maniax</site>
+		<circle>Circle One</circle>
+		<release_date>2024-01-02</release_date>
+		<categories>Voice / ASMR</categories>
+		<tags>Healing, Binaural</tags>
+		<filetypes>WAV</filetypes>
+		<miscellanies>Original Work</miscellanies>
+		<languages>Japanese</languages>
+		<drm>None</drm>
+		<rom name="RJ000001.zip" size="123456" crc="A1B2C3D4" md5="11111111111111111111111111111111" sha1="2222222222222222222222222222222222222222" sha256="3333333333333333333333333333333333333333333333333333333333333333">
+			<file name="tracks/01.wav" size="100000" crc="ABCD0001" md5="77777777777777777777777777777777" sha1="8888888888888888888888888888888888888888" sha256="9999999999999999999999999999999999999999999999999999999999999999" />
+		</rom>
+	</work>
+	<work name="RJ000002-2025-03-04">
+		<title>Versioned Work</title>
+		<site>Maniax</site>
+		<circle>Circle Two</circle>
+		<release_date>2023-06-07</release_date>
+		<version>1.10</version>
+		<categories>Game</categories>
+		<tags>Fantasy, Adventure</tags>
+		<filetypes>Application</filetypes>
+		<miscellanies>DLsite Exclusive</miscellanies>
+		<languages>Japanese, English</languages>
+		<drm>PlayDRM</drm>
+		<rom name="RJ000002 (2025-03-04).part1.exe" size="654321" crc="0BADF00D" md5="44444444444444444444444444444444" sha1="5555555555555555555555555555555555555555" sha256="6666666666666666666666666666666666666666666666666666666666666666">
+			<file name="game/Game.exe" size="640000" crc="ABCD0002" md5="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" sha1="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" sha256="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" />
+		</rom>
+	</work>
+</datafile>

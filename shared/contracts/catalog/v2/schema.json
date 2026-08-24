@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:dla-launcher:catalog:v2",
+  "title": "DLA Launcher catalog fixture",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "snapshotId", "kind", "source", "works", "relations"],
+  "properties": {
+    "schemaVersion": {
+      "const": 2
+    },
+    "snapshotId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "enum": ["real", "synthetic"]
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "works": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/work"
+      }
+    },
+    "relations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/relation"
+      }
+    }
+  },
+  "$defs": {
+    "localizedReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "nameEnglish"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "nameEnglish": {
+          "type": "string"
+        }
+      }
+    },
+    "category": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "name", "nameEnglish"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "nameEnglish": {
+          "type": "string"
+        }
+      }
+    },
+    "work": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "sourceCode",
+        "title",
+        "titleEnglish",
+        "addedDate",
+        "releaseDate",
+        "updatedDate",
+        "ageRating",
+        "releaseType",
+        "mainImageUrls",
+        "thumbnailUrls",
+        "sampleImageUrls",
+        "circles",
+        "categories",
+        "tags",
+        "fileFormats",
+        "supportedLanguages",
+        "miscellanies",
+        "roms",
+        "rating"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "titleEnglish": {
+          "type": "string"
+        },
+        "addedDate": {
+          "type": "string"
+        },
+        "releaseDate": {
+          "type": "string"
+        },
+        "updatedDate": {
+          "type": "string"
+        },
+        "ageRating": {
+          "type": "string"
+        },
+        "releaseType": {
+          "type": "string"
+        },
+        "mainImageUrls": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uri"
+          },
+          "uniqueItems": true
+        },
+        "thumbnailUrls": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uri"
+          },
+          "uniqueItems": true
+        },
+        "sampleImageUrls": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uri"
+          },
+          "uniqueItems": true
+        },
+        "circles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/localizedReference"
+          }
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/category"
+          }
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/localizedReference"
+          }
+        },
+        "fileFormats": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/category"
+          }
+        },
+        "supportedLanguages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/category"
+          }
+        },
+        "miscellanies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/category"
+          }
+        },
+        "roms": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rom"
+          }
+        },
+        "rating": {
+          "oneOf": [
+            { "$ref": "#/$defs/rating" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "rom": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "size", "crc", "md5", "sha1", "sha256", "fileCount", "updateDate", "version"],
+      "properties": {
+        "name": { "type": "string" },
+        "size": { "type": "string" },
+        "crc": { "type": "string" },
+        "md5": { "type": "string" },
+        "sha1": { "type": "string" },
+        "sha256": { "type": "string" },
+        "fileCount": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "updateDate": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "ranking": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["range", "rank"],
+      "properties": {
+        "range": { "type": "string", "minLength": 1 },
+        "rank": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "rating": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "ratingCount", "totalSales", "rankings"],
+      "properties": {
+        "score": { "type": "number", "minimum": 0, "maximum": 5 },
+        "ratingCount": { "type": ["integer", "null"], "minimum": 0 },
+        "totalSales": { "type": ["integer", "null"], "minimum": 0 },
+        "rankings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ranking" }
+        }
+      }
+    },
+    "relation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["parentWorkCode", "childWorkCode", "relationTypeCode", "relationTypeLabel"],
+      "properties": {
+        "parentWorkCode": { "type": "string", "minLength": 1 },
+        "childWorkCode": { "type": "string", "minLength": 1 },
+        "relationTypeCode": { "type": "string", "minLength": 1 },
+        "relationTypeLabel": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

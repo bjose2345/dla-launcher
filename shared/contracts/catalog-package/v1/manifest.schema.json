@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:dla-launcher:catalog-package:manifest:v1",
+  "title": "DLA catalog package manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "formatVersion",
+    "catalogSchemaVersion",
+    "minimumLauncherVersion",
+    "snapshotId",
+    "createdAt",
+    "profile",
+    "source",
+    "fields",
+    "counts",
+    "payloads"
+  ],
+  "properties": {
+    "format": {
+      "const": "dla.catalog-package"
+    },
+    "formatVersion": {
+      "const": 1
+    },
+    "catalogSchemaVersion": {
+      "const": 1
+    },
+    "minimumLauncherVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"
+    },
+    "snapshotId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "profile": {
+      "description": "Current profiles are compact, full and custom. Complete and enriched are accepted only as legacy v1 aliases.",
+      "enum": ["compact", "full", "custom", "complete", "enriched"]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "fields": {
+      "type": "array",
+      "minItems": 19,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "work.code",
+          "work.title",
+          "work.source",
+          "work.site",
+          "work.circle.name",
+          "work.releaseDate",
+          "work.version",
+          "work.categories",
+          "work.tags",
+          "work.fileFormats",
+          "work.miscellanies",
+          "work.languages",
+          "work.drm",
+          "rom.name",
+          "rom.size",
+          "rom.crc",
+          "rom.md5",
+          "rom.sha1",
+          "rom.sha256",
+          "rom.contents.path",
+          "rom.contents.size",
+          "rom.contents.crc32",
+          "rom.contents.md5",
+          "rom.contents.sha1",
+          "rom.contents.sha256",
+          "work.titleEnglish",
+          "work.titleKana",
+          "work.titleRomaji",
+          "work.addedDate",
+          "work.updatedDate",
+          "work.ageRating",
+          "work.releaseType",
+          "work.sourceUrl",
+          "work.circle.code",
+          "work.circle.nameEnglish",
+          "work.categoryCodes",
+          "work.categoryNamesEnglish",
+          "work.tagCodes",
+          "work.tagNamesEnglish",
+          "work.fileFormatCodes",
+          "work.fileFormatNamesEnglish",
+          "work.languageCodes",
+          "work.languageNamesEnglish",
+          "work.miscellanyCodes",
+          "work.miscellanyNamesEnglish",
+          "work.images.main",
+          "work.images.thumbnail",
+          "work.images.samples",
+          "work.descriptions",
+          "work.rating.score",
+          "work.rating.count",
+          "work.rating.totalSales",
+          "work.rating.favorites",
+          "work.rating.rankings",
+          "work.relations",
+          "rom.fileCount",
+          "rom.updateDate"
+        ]
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workEntries", "uniqueWorks", "roms", "files", "relations"],
+      "properties": {
+        "workEntries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "uniqueWorks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "roms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "relations": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "payloads": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/payload"
+      }
+    }
+  },
+  "$defs": {
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "kind", "mediaType", "records", "uncompressedBytes", "sha256"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
+        },
+        "kind": {
+          "enum": ["dat", "enrichment", "relations"]
+        },
+        "mediaType": {
+          "enum": ["application/xml", "application/x-ndjson"]
+        },
+        "records": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "uncompressedBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    }
+  }
+}

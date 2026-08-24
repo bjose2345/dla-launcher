@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:dla-launcher:catalog:v1",
+  "title": "DLA Launcher catalog fixture",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "snapshotId", "kind", "source", "works"],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "snapshotId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "enum": ["real", "synthetic"]
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "works": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/work"
+      }
+    }
+  },
+  "$defs": {
+    "localizedReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "nameEnglish"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "nameEnglish": {
+          "type": "string"
+        }
+      }
+    },
+    "category": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "name", "nameEnglish"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "nameEnglish": {
+          "type": "string"
+        }
+      }
+    },
+    "work": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "sourceCode",
+        "title",
+        "titleEnglish",
+        "releaseDate",
+        "ageRating",
+        "releaseType",
+        "thumbnailUrls",
+        "circles",
+        "categories",
+        "tags"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "titleEnglish": {
+          "type": "string"
+        },
+        "releaseDate": {
+          "type": "string"
+        },
+        "ageRating": {
+          "type": "string"
+        },
+        "releaseType": {
+          "type": "string"
+        },
+        "thumbnailUrls": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uri"
+          },
+          "uniqueItems": true
+        },
+        "circles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/localizedReference"
+          }
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/category"
+          }
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/localizedReference"
+          }
+        }
+      }
+    }
+  }
+}

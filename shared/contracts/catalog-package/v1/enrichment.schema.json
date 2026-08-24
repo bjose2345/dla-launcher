@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:dla-launcher:catalog-package:enrichment:v1",
+  "title": "DLA catalog enrichment record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workCode", "fields"],
+  "properties": {
+    "workCode": {
+      "type": "string",
+      "minLength": 1
+    },
+    "fields": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "work.titleEnglish": { "$ref": "#/$defs/nullableText" },
+        "work.titleKana": { "$ref": "#/$defs/nullableText" },
+        "work.titleRomaji": { "$ref": "#/$defs/nullableText" },
+        "work.addedDate": { "$ref": "#/$defs/nullableDateTime" },
+        "work.updatedDate": { "$ref": "#/$defs/nullableDateTime" },
+        "work.ageRating": { "$ref": "#/$defs/nullableText" },
+        "work.releaseType": { "$ref": "#/$defs/nullableText" },
+        "work.sourceUrl": { "$ref": "#/$defs/nullableText" },
+        "work.circle.code": { "$ref": "#/$defs/nullableText" },
+        "work.circle.nameEnglish": { "$ref": "#/$defs/nullableText" },
+        "work.categoryCodes": { "$ref": "#/$defs/nullableTextArray" },
+        "work.categoryNamesEnglish": { "$ref": "#/$defs/nullableTextArray" },
+        "work.tagCodes": { "$ref": "#/$defs/nullableTextArray" },
+        "work.tagNamesEnglish": { "$ref": "#/$defs/nullableTextArray" },
+        "work.fileFormatCodes": { "$ref": "#/$defs/nullableTextArray" },
+        "work.fileFormatNamesEnglish": { "$ref": "#/$defs/nullableTextArray" },
+        "work.languageCodes": { "$ref": "#/$defs/nullableTextArray" },
+        "work.languageNamesEnglish": { "$ref": "#/$defs/nullableTextArray" },
+        "work.miscellanyCodes": { "$ref": "#/$defs/nullableTextArray" },
+        "work.miscellanyNamesEnglish": { "$ref": "#/$defs/nullableTextArray" },
+        "work.images.main": { "$ref": "#/$defs/nullableTextArray" },
+        "work.images.thumbnail": { "$ref": "#/$defs/nullableTextArray" },
+        "work.images.samples": { "$ref": "#/$defs/nullableTextArray" },
+        "work.descriptions": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["version", "html"],
+                "properties": {
+                  "version": { "type": "integer", "minimum": 1 },
+                  "html": { "type": "string" }
+                }
+              }
+            }
+          ]
+        },
+        "work.rating.score": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 5
+        },
+        "work.rating.count": { "$ref": "#/$defs/nullableCount" },
+        "work.rating.totalSales": { "$ref": "#/$defs/nullableCount" },
+        "work.rating.favorites": { "$ref": "#/$defs/nullableCount" },
+        "work.rating.rankings": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["range", "rank"],
+                "properties": {
+                  "range": { "type": "string", "minLength": 1 },
+                  "rank": { "type": "integer", "minimum": 1 }
+                }
+              }
+            }
+          ]
+        },
+        "rom.fileCount": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "array",
+              "items": { "$ref": "#/$defs/romCountEntry" }
+            }
+          ]
+        },
+        "rom.updateDate": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "array",
+              "items": { "$ref": "#/$defs/romDateEntry" }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "nullableText": {
+      "type": ["string", "null"]
+    },
+    "nullableDateTime": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "nullableTextArray": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      ]
+    },
+    "nullableCount": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "romCountEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["position", "value"],
+      "properties": {
+        "position": { "type": "integer", "minimum": 0 },
+        "value": { "$ref": "#/$defs/nullableCount" }
+      }
+    },
+    "romDateEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["position", "value"],
+      "properties": {
+        "position": { "type": "integer", "minimum": 0 },
+        "value": {
+          "type": ["string", "null"],
+          "format": "date"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,20 @@
+[package]
+name = "dla-sqlite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+dla-application.workspace = true
+dla-catalog.workspace = true
+dla-domain.workspace = true
+rusqlite.workspace = true
+rusqlite_migration.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+
+[dev-dependencies]
+dla-catalog = { workspace = true, features = ["test-fixtures"] }
+tempfile = "=3.27.0"

@@ -1,0 +1,1337 @@
+.import-page {
+  --import-gutter: max(16px, calc((100% - 1040px) / 2));
+
+  min-height: 0;
+  width: 100%;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0 0 80px;
+}
+
+.import-body {
+  display: grid;
+  gap: 20px;
+  padding: 26px var(--import-gutter) 0;
+}
+
+/* ── masthead ─────────────────────────────────────────────── */
+
+.import-masthead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 22px;
+  padding: 34px var(--import-gutter) 26px;
+  border-bottom: 1px solid var(--app-border);
+  background-color: var(--app-backdrop);
+  background-image: radial-gradient(color-mix(in oklch, var(--color-base-content) 13%, transparent) 0.8px, transparent 0.8px);
+  background-size: 17px 17px;
+}
+
+.import-masthead-title {
+  min-width: 0;
+}
+
+.import-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 6px;
+  color: var(--color-primary);
+  font-size: 0.62rem;
+  font-weight: 850;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.import-eyebrow svg {
+  width: 13px;
+  height: 13px;
+}
+
+.import-masthead-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.import-masthead h1 {
+  margin: 0;
+  font-size: clamp(1.7rem, 3.4vw, 2.5rem);
+  font-weight: 850;
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
+.import-count {
+  display: inline-grid;
+  min-width: 58px;
+  min-height: 34px;
+  padding: 0 12px;
+  place-items: center;
+  border: 1px solid var(--app-border);
+  clip-path: var(--app-chip);
+  background: color-mix(in oklch, var(--app-panel-raised) 88%, transparent);
+  color: var(--app-subtle);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.import-masthead p {
+  max-width: 62ch;
+  margin: 8px 0 0;
+  color: var(--app-muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+/* ── stepper ──────────────────────────────────────────────── */
+
+.import-stepper {
+  display: flex;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.import-step {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-chip);
+  color: var(--app-subtle);
+  font-size: 0.74rem;
+  font-weight: 690;
+  white-space: nowrap;
+}
+
+.import-step-dot {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+.import-step-dot svg {
+  display: block;
+  width: 13px;
+  height: 13px;
+  stroke-width: 2.4;
+}
+
+.import-step.is-done {
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent);
+  background: color-mix(in oklch, var(--color-primary) 14%, transparent);
+  color: var(--color-primary);
+}
+
+.import-step.is-done .import-step-dot {
+  opacity: 1;
+}
+
+.import-step.is-current {
+  background: var(--app-invert);
+  box-shadow: none;
+  color: var(--app-invert-ink);
+  font-weight: 800;
+}
+
+.import-step.is-current .import-step-dot {
+  opacity: 0.65;
+}
+
+.import-operation-badge {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  padding: 0 16px;
+  clip-path: var(--app-chip);
+  background: var(--color-primary);
+  color: var(--color-primary-content);
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.import-operation-badge.is-completed {
+  background: var(--color-success);
+  color: var(--color-success-content);
+}
+
+.import-operation-badge.is-cancelled,
+.import-operation-badge.is-failed {
+  background: var(--color-error);
+  color: var(--color-error-content);
+}
+
+/* ── dropzone ─────────────────────────────────────────────── */
+
+.import-drop {
+  display: grid;
+  width: 100%;
+  justify-items: center;
+  gap: 7px;
+  padding: 46px 24px 34px;
+  border: 1px solid var(--app-border);
+  clip-path: var(--app-notch);
+  background-color: var(--app-panel);
+  background-image: radial-gradient(color-mix(in oklch, var(--color-base-content) 11%, transparent) 0.8px, transparent 0.8px);
+  background-size: 17px 17px;
+  color: var(--color-base-content);
+  cursor: pointer;
+  font: inherit;
+  text-align: center;
+}
+
+.import-drop:hover:not(:disabled),
+.import-drop:disabled {
+  border-color: color-mix(in oklch, var(--color-primary) 55%, var(--app-border));
+}
+
+.import-drop:disabled {
+  cursor: progress;
+}
+
+.import-drop-icon {
+  position: relative;
+  display: grid;
+  width: 62px;
+  height: 62px;
+  margin-bottom: 12px;
+  place-items: center;
+}
+
+.import-drop-icon::before {
+  position: absolute;
+  inset: 6px;
+  border: 1px solid color-mix(in oklch, var(--color-primary) 70%, transparent);
+  background: color-mix(in oklch, var(--color-primary) 16%, transparent);
+  content: "";
+  rotate: 45deg;
+}
+
+.import-drop-icon svg {
+  position: relative;
+  z-index: 1;
+  width: 26px;
+  height: 26px;
+  color: var(--color-primary);
+}
+
+.import-drop strong {
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.import-drop .import-drop-hint {
+  color: var(--app-muted);
+  font-size: 0.84rem;
+}
+
+.import-drop small {
+  margin-top: 4px;
+  color: var(--app-subtle);
+  font-size: 0.72rem;
+}
+
+.import-drop-cta {
+  margin-top: 18px;
+  padding: 12px 26px;
+  clip-path: var(--app-chip);
+  background: var(--app-invert);
+  color: var(--app-invert-ink);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.import-drop:disabled .import-drop-cta {
+  background: var(--app-panel-raised);
+  color: var(--app-subtle);
+}
+
+/* ── panel shell ──────────────────────────────────────────── */
+
+.import-panel {
+  padding: 24px;
+  border: 1px solid var(--app-border);
+  clip-path: var(--app-notch);
+  background: var(--app-panel);
+}
+
+.import-panel.is-blocked {
+  border-color: color-mix(in oklch, var(--color-error) 50%, var(--app-border));
+}
+
+.import-tab {
+  display: inline-flex;
+  min-width: 168px;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 10px 30px 10px 18px;
+  clip-path: var(--app-tab);
+  background: var(--color-primary);
+  color: var(--color-primary-content);
+  font-size: 0.66rem;
+  font-weight: 850;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+}
+
+.import-tab small {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  opacity: 0.74;
+  text-transform: none;
+}
+
+.import-tab.is-success {
+  background: var(--color-success);
+  color: var(--color-success-content);
+}
+
+.import-tab.is-error {
+  background: var(--color-error);
+  color: var(--color-error-content);
+}
+
+/* ── package header ───────────────────────────────────────── */
+
+.import-package {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.import-package-icon {
+  position: relative;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  place-items: center;
+}
+
+.import-package-icon::before {
+  position: absolute;
+  inset: 3px;
+  border: 1px solid var(--app-border);
+  background: var(--app-panel-raised);
+  content: "";
+  rotate: 45deg;
+}
+
+.import-package-icon svg {
+  position: relative;
+  z-index: 1;
+  width: 18px;
+  height: 18px;
+  color: var(--color-primary);
+}
+
+.import-package-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.import-package-copy strong {
+  display: block;
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.import-package-copy span {
+  display: block;
+  margin-top: 2px;
+  color: var(--app-muted);
+  font-size: 0.74rem;
+}
+
+.import-profile-badge {
+  flex: none;
+  padding: 7px 15px;
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent);
+  clip-path: var(--app-chip);
+  background: color-mix(in oklch, var(--color-primary) 16%, transparent);
+  color: var(--color-primary);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* ── delta ────────────────────────────────────────────────── */
+
+.import-delta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 22px;
+  padding: 22px 0;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.import-delta-side small {
+  display: block;
+  color: var(--app-subtle);
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.import-delta-side b {
+  display: block;
+  margin-top: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 1.7rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.import-delta-side.is-next b {
+  color: var(--color-primary);
+}
+
+.import-delta-arrow {
+  width: 22px;
+  height: 22px;
+  color: var(--app-subtle);
+}
+
+.import-delta-gain {
+  margin-left: auto;
+  padding: 7px 14px;
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-success) 40%, transparent);
+  clip-path: var(--app-chip);
+  background: color-mix(in oklch, var(--color-success) 15%, transparent);
+  color: var(--color-success);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── outcome rows ─────────────────────────────────────────── */
+
+.import-outcome {
+  display: grid;
+  gap: 1px;
+  padding-top: 20px;
+}
+
+.import-outcome-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  padding: 9px 13px;
+  border-left: 2px solid var(--color-success);
+  background: color-mix(in oklch, var(--color-base-200) 60%, transparent);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.import-outcome-row svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  margin-top: 2px;
+  color: var(--color-success);
+}
+
+.import-outcome-row.is-warn {
+  border-left-color: var(--color-warning);
+}
+
+.import-outcome-row.is-warn svg {
+  color: var(--color-warning);
+}
+
+.import-outcome-row.is-error {
+  border-left-color: var(--color-error);
+  color: var(--color-error);
+}
+
+.import-outcome-row.is-error svg {
+  color: var(--color-error);
+}
+
+/* ── advanced details ─────────────────────────────────────── */
+
+.import-technical {
+  margin-top: 18px;
+}
+
+.import-technical summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 15px;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-chip);
+  background: var(--app-panel-raised);
+  color: var(--app-muted);
+  cursor: pointer;
+  font-size: 0.73rem;
+  list-style: none;
+}
+
+.import-technical summary::-webkit-details-marker {
+  display: none;
+}
+
+.import-technical summary:hover {
+  color: var(--color-base-content);
+}
+
+.import-technical summary svg {
+  width: 13px;
+  height: 13px;
+  transition: transform 150ms ease;
+}
+
+.import-technical[open] summary svg {
+  transform: rotate(90deg);
+}
+
+.import-technical-grid {
+  display: grid;
+  gap: 1px;
+  margin: 14px 0 0;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  background: var(--app-border);
+}
+
+.import-technical-grid > div {
+  padding: 11px 13px;
+  background: var(--app-panel);
+}
+
+.import-technical-grid dt {
+  color: var(--app-subtle);
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.import-technical-grid dd {
+  margin: 4px 0 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.import-field-list {
+  margin-top: 16px;
+}
+
+.import-field-list p {
+  margin: 0 0 8px;
+  color: var(--app-subtle);
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.import-field-list > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.import-field {
+  padding: 4px 10px;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-chip-sm);
+  color: var(--app-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.66rem;
+}
+
+.import-field.is-omitted {
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-warning) 40%, transparent);
+  color: var(--color-warning);
+}
+
+/* ── actions ──────────────────────────────────────────────── */
+
+.import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid var(--app-border);
+}
+
+.import-safety {
+  display: inline-flex;
+  min-width: 200px;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  color: var(--app-subtle);
+  font-size: 0.73rem;
+  line-height: 1.4;
+}
+
+.import-safety svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: var(--color-success);
+}
+
+.import-safety strong {
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.import-pair {
+  --import-seam: 12px;
+  --import-slant: 18px;
+  display: inline-flex;
+  align-items: stretch;
+  max-width: 100%;
+  flex-wrap: wrap;
+  background: var(--color-base-100);
+}
+
+.import-pair-secondary,
+.import-pair-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 14px 22px;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 850;
+  transition: filter 180ms ease, transform 180ms ease;
+}
+
+.import-pair-secondary svg,
+.import-pair-primary svg {
+  width: 16px;
+  height: 16px;
+}
+
+.import-pair-secondary {
+  padding-right: calc(22px + var(--import-slant));
+  clip-path: polygon(0 0, 100% 0, calc(100% - var(--import-slant)) 100%, 0 100%);
+  background: var(--app-invert);
+  color: var(--app-invert-ink);
+}
+
+.import-pair-primary {
+  margin-left: calc(var(--import-seam) - var(--import-slant));
+  padding-left: calc(22px + var(--import-slant));
+  clip-path: polygon(var(--import-slant) 0, 100% 0, 100% 100%, 0 100%);
+  background: var(--color-primary);
+  color: var(--color-primary-content);
+}
+
+.import-pair-secondary:hover:not(:disabled),
+.import-pair-primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+  transform: translateY(-2px);
+}
+
+.import-pair-secondary:disabled,
+.import-pair-primary:disabled {
+  background: var(--app-panel-raised);
+  color: var(--app-subtle);
+  cursor: not-allowed;
+}
+
+.import-pair-secondary:focus-visible,
+.import-pair-primary:focus-visible {
+  outline: 2px solid var(--color-base-content);
+  outline-offset: 3px;
+}
+
+.import-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-chip);
+  background: var(--app-panel-raised);
+  color: var(--app-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.import-button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.import-button:hover:not(:disabled) {
+  color: var(--color-base-content);
+}
+
+.import-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.import-button-danger {
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-error) 45%, transparent);
+  background: color-mix(in oklch, var(--color-error) 12%, transparent);
+  color: var(--color-error);
+}
+
+.import-button-solid-danger {
+  background: var(--color-error);
+  box-shadow: none;
+  color: var(--color-error-content);
+}
+
+/* ── run panel ────────────────────────────────────────────── */
+
+.import-run-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.import-run-head strong {
+  font-size: 1.28rem;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+}
+
+.import-percent {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 1.5rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+}
+
+.import-percent-idle {
+  color: var(--app-subtle);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.74rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.import-run-bar {
+  position: relative;
+  height: 8px;
+  margin-top: 14px;
+  overflow: hidden;
+  background: color-mix(in oklch, var(--color-base-content) 10%, transparent);
+}
+
+.import-run-bar i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  display: block;
+  overflow: hidden;
+  background: var(--color-primary);
+  transition: width 400ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.import-run-bar i::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, transparent 34%, rgb(255 255 255 / 40%) 50%, transparent 66%);
+  content: "";
+  transform: translateX(-130%);
+  animation: import-sheen 1.9s linear infinite;
+}
+
+.import-run-bar.is-indeterminate i {
+  width: 34%;
+  transition: none;
+  animation: import-pingpong 1.5s cubic-bezier(0.45, 0, 0.55, 1) infinite alternate;
+}
+
+@keyframes import-sheen {
+  to {
+    transform: translateX(130%);
+  }
+}
+
+@keyframes import-pingpong {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(194%);
+  }
+}
+
+.import-run-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  margin-top: 16px;
+  background: var(--app-border);
+}
+
+.import-run-metrics > span {
+  flex: 1 1 150px;
+  padding: 11px 14px;
+  background: var(--app-panel);
+}
+
+.import-run-metrics small {
+  display: block;
+  color: var(--app-subtle);
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.import-run-metrics b {
+  display: block;
+  margin-top: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+/* ── phase track ──────────────────────────────────────────── */
+
+.import-phases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.import-phase {
+  min-width: 0;
+  flex: 1 1 120px;
+}
+
+.import-phase-bar {
+  display: block;
+  height: 4px;
+  clip-path: var(--app-chip-sm);
+  background: color-mix(in oklch, var(--color-base-content) 12%, transparent);
+}
+
+.import-phase > span:last-child {
+  display: block;
+  margin-top: 7px;
+  color: var(--app-subtle);
+  font-size: 0.68rem;
+  font-weight: 650;
+}
+
+.import-phase.is-done .import-phase-bar {
+  background: color-mix(in oklch, var(--color-primary) 55%, transparent);
+}
+
+.import-phase.is-done > span:last-child {
+  color: var(--app-muted);
+}
+
+.import-phase.is-current .import-phase-bar {
+  background: var(--app-invert);
+  animation: import-phase-pulse 1.4s ease-in-out infinite;
+}
+
+.import-phase.is-current > span:last-child {
+  color: var(--color-base-content);
+  font-weight: 800;
+}
+
+@keyframes import-phase-pulse {
+  50% {
+    opacity: 0.42;
+  }
+}
+
+/* ── result ───────────────────────────────────────────────── */
+
+.import-result-figure {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.import-result-figure b {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 2.7rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: -0.05em;
+  line-height: 1;
+}
+
+.import-result-figure span {
+  color: var(--app-muted);
+  font-size: 0.82rem;
+}
+
+.import-result-help {
+  max-width: 56ch;
+  margin: 10px 0 0;
+  color: var(--app-muted);
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.import-detail-line {
+  margin: 14px 0 0;
+  padding: 9px 13px;
+  border-left: 2px solid var(--color-error);
+  background: color-mix(in oklch, var(--color-base-200) 60%, transparent);
+  color: var(--app-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.import-stopped-technical {
+  margin-top: 16px;
+}
+
+/* ── installed catalogs ───────────────────────────────────── */
+
+.import-catalogs {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.import-catalogs-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.import-catalogs-head h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.import-catalogs-head p {
+  margin: 2px 0 0;
+  color: var(--app-muted);
+  font-size: 0.78rem;
+}
+
+.import-disk-total {
+  padding: 6px 13px;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-chip);
+  color: var(--app-subtle);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.import-catalog-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.import-catalog {
+  display: grid;
+  align-items: center;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  padding: 15px 18px;
+  border: 1px solid var(--app-border);
+  border-left: 3px solid color-mix(in oklch, var(--color-base-content) 18%, transparent);
+  clip-path: var(--app-notch-sm);
+  background: var(--app-panel);
+}
+
+.import-catalog.is-active {
+  border-left-color: var(--app-invert);
+  background: color-mix(in oklch, var(--color-base-300) 45%, var(--color-base-200));
+}
+
+.import-catalog.is-embedded {
+  border-left-color: color-mix(in oklch, var(--color-base-content) 30%, transparent);
+}
+
+.import-catalog.is-failed {
+  border-left-color: var(--color-error);
+}
+
+.import-catalog-name {
+  min-width: 0;
+}
+
+.import-catalog-name strong {
+  display: block;
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.84rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.import-catalog-name span {
+  display: block;
+  margin-top: 3px;
+  color: var(--app-muted);
+  font-size: 0.71rem;
+}
+
+.import-catalog-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--app-subtle);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.import-catalog-size svg {
+  width: 14px;
+  height: 14px;
+}
+
+.import-catalog-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.import-catalog-current {
+  padding: 7px 15px;
+  clip-path: var(--app-chip);
+  background: var(--app-invert);
+  color: var(--app-invert-ink);
+  font-size: 0.66rem;
+  font-weight: 850;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.import-catalog-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-chip);
+  background: transparent;
+  color: var(--app-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.import-catalog-action svg {
+  width: 13px;
+  height: 13px;
+}
+
+.import-catalog-action:hover:not(:disabled) {
+  background: var(--app-panel-raised);
+  color: var(--color-base-content);
+}
+
+.import-catalog-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.import-catalog-action.is-danger {
+  color: color-mix(in oklch, var(--color-error) 85%, var(--color-base-content));
+}
+
+.import-catalog-action.is-danger:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-error) 50%, transparent);
+  background: color-mix(in oklch, var(--color-error) 12%, transparent);
+  color: var(--color-error);
+}
+
+.import-catalog-failure {
+  grid-column: 1 / -1;
+  color: var(--color-error);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.68rem;
+  overflow-wrap: anywhere;
+}
+
+.import-remove-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin-top: 14px;
+  padding: 15px 16px;
+  grid-column: 1 / -1;
+  border-left: 2px solid var(--color-error);
+  background: color-mix(in oklch, var(--color-error) 9%, transparent);
+}
+
+.import-remove-confirm > span {
+  min-width: 220px;
+  flex: 1;
+}
+
+.import-remove-confirm strong {
+  display: block;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.import-remove-confirm small {
+  display: block;
+  margin-top: 3px;
+  color: var(--app-muted);
+  font-size: 0.73rem;
+  line-height: 1.45;
+}
+
+.import-catalogs-state {
+  margin: 0;
+  padding: 34px 20px;
+  border: 1px dashed var(--app-border);
+  clip-path: var(--app-notch-sm);
+  color: var(--app-subtle);
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+/* ── skeleton ─────────────────────────────────────────────── */
+
+.import-skeleton {
+  display: grid;
+  align-items: center;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) 86px 132px;
+  padding: 15px 18px;
+  border: 1px solid var(--app-border);
+  border-left: 3px solid color-mix(in oklch, var(--color-base-content) 12%, transparent);
+  clip-path: var(--app-notch-sm);
+  background: var(--app-panel);
+}
+
+.import-shimmer {
+  display: block;
+  height: 11px;
+  background: linear-gradient(
+    100deg,
+    color-mix(in oklch, var(--color-base-content) 8%, transparent) 20%,
+    color-mix(in oklch, var(--color-base-content) 17%, transparent) 40%,
+    color-mix(in oklch, var(--color-base-content) 8%, transparent) 60%
+  );
+  background-size: 220% 100%;
+  animation: import-shimmer 1.4s linear infinite;
+}
+
+.import-shimmer + .import-shimmer {
+  margin-top: 7px;
+  height: 8px;
+}
+
+@keyframes import-shimmer {
+  to {
+    background-position: -220% 0;
+  }
+}
+
+/* ── callout ──────────────────────────────────────────────── */
+
+.import-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 13px 15px;
+  border-left: 2px solid var(--color-error);
+  background: color-mix(in oklch, var(--color-error) 10%, transparent);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.import-callout svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin-top: 1px;
+}
+
+.import-callout small {
+  display: block;
+  margin-top: 4px;
+  color: var(--app-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.7rem;
+  overflow-wrap: anywhere;
+}
+
+.import-callout-error {
+  color: var(--color-error);
+}
+
+.import-callout-error svg {
+  color: var(--color-error);
+}
+
+.import-callout-warning {
+  border-left-color: var(--color-warning);
+  background: color-mix(in oklch, var(--color-warning) 10%, transparent);
+  color: var(--color-warning);
+}
+
+.import-callout-warning svg {
+  color: var(--color-warning);
+}
+
+.import-spin {
+  animation: import-spin 900ms linear infinite;
+}
+
+@keyframes import-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 720px) {
+  .import-catalog,
+  .import-skeleton {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .import-catalog-actions {
+    flex-wrap: wrap;
+  }
+
+  .import-masthead {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .import-stepper {
+    width: 100%;
+  }
+
+  .import-step {
+    min-width: 0;
+    flex: 1 1 0;
+    justify-content: center;
+    padding: 0 8px;
+  }
+
+  .import-step > span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .import-operation-badge {
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 520px) {
+  .import-panel {
+    padding: 18px;
+  }
+
+  .import-masthead-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 9px;
+  }
+
+  .import-pair {
+    display: grid;
+    width: 100%;
+    gap: 6px;
+    background: transparent;
+  }
+
+  .import-pair-secondary,
+  .import-pair-primary {
+    width: 100%;
+    justify-content: center;
+    margin-left: 0;
+    padding: 13px 16px;
+    clip-path: var(--app-chip);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .import-spin,
+  .import-shimmer,
+  .import-run-bar i::after,
+  .import-phase.is-current .import-phase-bar {
+    animation: none;
+  }
+
+  .import-run-bar.is-indeterminate i {
+    width: 40%;
+    animation: none;
+    transform: translateX(75%);
+  }
+
+  .import-run-bar i {
+    transition: none;
+  }
+
+  .import-pair-secondary:hover:not(:disabled),
+  .import-pair-primary:hover:not(:disabled) {
+    transform: none;
+  }
+}

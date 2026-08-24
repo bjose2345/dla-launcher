@@ -1,0 +1,12 @@
+DLA Launcher
+Copyright (C) 2026 DLA Project contributors
+
+This distribution is licensed under the GNU Affero General Public License,
+version 3 only. See LICENSE for the complete terms.
+
+DLsite is a trademark of its respective owner. DLA Launcher and DLA Project
+are independent community projects and are not affiliated with or endorsed by
+DLsite or EISYS.
+
+Third-party dependencies remain under their respective licenses. Their package
+names and exact versions are recorded in pnpm-lock.yaml and tauri2/Cargo.lock.

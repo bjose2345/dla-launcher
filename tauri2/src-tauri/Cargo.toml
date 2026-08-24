@@ -1,0 +1,52 @@
+[package]
+name = "dla-launcher-tauri"
+version.workspace = true
+description = "Open-source library for your DLsite works"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "dla_launcher_tauri"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+serde_json.workspace = true
+tauri-build = { version = "=2.6.3", features = [] }
+
+[dependencies]
+dla-archive.workspace = true
+dla-application.workspace = true
+dla-android-package-tauri.workspace = true
+dla-catalog-import.workspace = true
+dla-catalog.workspace = true
+dla-cover-cache.workspace = true
+dla-domain.workspace = true
+dla-launch.workspace = true
+dla-media.workspace = true
+dla-scanner.workspace = true
+dla-search-tantivy.workspace = true
+dla-sqlite.workspace = true
+log = "=0.4.33"
+percent-encoding.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+time.workspace = true
+zip.workspace = true
+tauri = { version = "=2.11.5", features = [] }
+tauri-plugin-deep-link = "=2.4.9"
+tauri-plugin-log = "=2.9.0"
+tauri-plugin-opener = "=2.5.4"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-dialog = "=2.7.2"
+tauri-plugin-single-instance = "=2.4.3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "=0.18.2"
+webkit2gtk = { version = "=2.0.2", features = ["v2_40"] }
+
+[dev-dependencies]
+tempfile = "=3.27.0"

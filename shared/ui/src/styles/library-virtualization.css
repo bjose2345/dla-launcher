@@ -1,0 +1,23 @@
+.library-collection-grid-virtual {
+  position: relative;
+  display: block;
+  min-height: 1px;
+}
+
+.library-collection-virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(var(--library-grid-columns), minmax(0, 1fr));
+  gap: 16px;
+  padding-bottom: 22px;
+}
+
+@media (max-width: 680px) {
+  .library-collection-virtual-row {
+    gap: 10px;
+    padding-bottom: 20px;
+  }
+}

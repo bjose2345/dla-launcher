@@ -1,0 +1,24 @@
+[package]
+name = "dla-scanner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+dla-application.workspace = true
+dla-domain.workspace = true
+hex.workspace = true
+md-5.workspace = true
+rayon.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+time.workspace = true
+uuid.workspace = true
+walkdir.workspace = true
+
+[dev-dependencies]
+dla-catalog = { workspace = true, features = ["test-fixtures"] }
+dla-sqlite.workspace = true
+rusqlite.workspace = true
+tempfile = "=3.27.0"

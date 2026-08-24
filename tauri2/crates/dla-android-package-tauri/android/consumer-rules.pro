@@ -1,0 +1,2 @@
+-keep class org.dlaproject.launcher.androidpackage.AndroidPackagePlugin { *; }
+-keep class org.dlaproject.launcher.androidpackage.PackageInstallResultReceiver { *; }

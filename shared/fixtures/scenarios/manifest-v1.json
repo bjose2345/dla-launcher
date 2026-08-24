@@ -1,0 +1,250 @@
+{
+  "schemaVersion": 1,
+  "scenarios": [
+    {
+      "id": "empty-library",
+      "description": "A readable root with no candidate content.",
+      "entries": [],
+      "identities": [],
+      "issues": [],
+      "expected": {
+        "productCodes": [],
+        "outcome": "unmatched",
+        "selectedWorkCode": null
+      }
+    },
+    {
+      "id": "windows-game",
+      "description": "A Windows game whose directory and executable expose the same work code.",
+      "entries": [
+        {
+          "relativePath": "RJ01326398",
+          "source": "directory_name",
+          "kind": "directory",
+          "readable": true,
+          "symbolicLink": false
+        },
+        {
+          "relativePath": "RJ01326398/Game.exe",
+          "source": "file_name",
+          "kind": "file",
+          "readable": true,
+          "symbolicLink": false
+        }
+      ],
+      "identities": [
+        {
+          "workCode": "RJ01326398",
+          "confidence": "strong",
+          "reasonCodes": ["code_in_directory_name", "code_in_filename"]
+        }
+      ],
+      "issues": [],
+      "expected": {
+        "productCodes": ["RJ01326398"],
+        "outcome": "matched",
+        "selectedWorkCode": "RJ01326398"
+      }
+    },
+    {
+      "id": "audio-work",
+      "description": "An audio work with a normalized lower-case code in its folder name.",
+      "entries": [
+        {
+          "relativePath": "rj01653537",
+          "source": "directory_name",
+          "kind": "directory",
+          "readable": true,
+          "symbolicLink": false
+        },
+        {
+          "relativePath": "rj01653537/track01.flac",
+          "source": "file_name",
+          "kind": "file",
+          "readable": true,
+          "symbolicLink": false
+        }
+      ],
+      "identities": [
+        {
+          "workCode": "RJ01653537",
+          "confidence": "strong",
+          "reasonCodes": ["code_in_directory_name"]
+        }
+      ],
+      "issues": [],
+      "expected": {
+        "productCodes": ["RJ01653537"],
+        "outcome": "matched",
+        "selectedWorkCode": "RJ01653537"
+      }
+    },
+    {
+      "id": "image-work",
+      "description": "An image set identified by a BJ code in its directory.",
+      "entries": [
+        {
+          "relativePath": "BJ009272",
+          "source": "directory_name",
+          "kind": "directory",
+          "readable": true,
+          "symbolicLink": false
+        },
+        {
+          "relativePath": "BJ009272/images/001.webp",
+          "source": "file_name",
+          "kind": "file",
+          "readable": true,
+          "symbolicLink": false
+        }
+      ],
+      "identities": [
+        {
+          "workCode": "BJ009272",
+          "confidence": "strong",
+          "reasonCodes": ["code_in_directory_name"]
+        }
+      ],
+      "issues": [],
+      "expected": {
+        "productCodes": ["BJ009272"],
+        "outcome": "matched",
+        "selectedWorkCode": "BJ009272"
+      }
+    },
+    {
+      "id": "android-package",
+      "description": "An Android package identified by a VJ code in its filename.",
+      "entries": [
+        {
+          "relativePath": "downloads/VJ123456-app.apk",
+          "source": "file_name",
+          "kind": "file",
+          "readable": true,
+          "symbolicLink": false
+        }
+      ],
+      "identities": [
+        {
+          "workCode": "VJ123456",
+          "confidence": "strong",
+          "reasonCodes": ["code_in_filename"]
+        }
+      ],
+      "issues": [],
+      "expected": {
+        "productCodes": ["VJ123456"],
+        "outcome": "matched",
+        "selectedWorkCode": "VJ123456"
+      }
+    },
+    {
+      "id": "ambiguous-codes",
+      "description": "One archive name exposes two conflicting product identities.",
+      "entries": [
+        {
+          "relativePath": "imports/RJ01326398-RJ01653537.zip",
+          "source": "file_name",
+          "kind": "file",
+          "readable": true,
+          "symbolicLink": false
+        }
+      ],
+      "identities": [
+        {
+          "workCode": "RJ01326398",
+          "confidence": "strong",
+          "reasonCodes": ["code_in_filename"]
+        },
+        {
+          "workCode": "RJ01653537",
+          "confidence": "strong",
+          "reasonCodes": ["code_in_filename"]
+        }
+      ],
+      "issues": [],
+      "expected": {
+        "productCodes": ["RJ01326398", "RJ01653537"],
+        "outcome": "ambiguous",
+        "selectedWorkCode": null
+      }
+    },
+    {
+      "id": "exact-archive",
+      "description": "An exact archive hash overrides weaker filename evidence for the same work.",
+      "entries": [
+        {
+          "relativePath": "imports/BJ009272.zip",
+          "source": "file_name",
+          "kind": "file",
+          "readable": true,
+          "symbolicLink": false
+        }
+      ],
+      "identities": [
+        {
+          "workCode": "BJ009272",
+          "confidence": "strong",
+          "reasonCodes": ["code_in_filename"]
+        },
+        {
+          "workCode": "BJ009272",
+          "confidence": "exact",
+          "reasonCodes": ["archive_sha256_match"]
+        }
+      ],
+      "issues": [],
+      "expected": {
+        "productCodes": ["BJ009272"],
+        "outcome": "matched",
+        "selectedWorkCode": "BJ009272"
+      }
+    },
+    {
+      "id": "recoverable-error",
+      "description": "An unreadable child is recorded while the rest of the scan remains usable.",
+      "entries": [
+        {
+          "relativePath": "RJ01326398/private",
+          "source": "directory_name",
+          "kind": "directory",
+          "readable": false,
+          "symbolicLink": false
+        }
+      ],
+      "identities": [
+        {
+          "workCode": "RJ01326398",
+          "confidence": "strong",
+          "reasonCodes": ["code_in_directory_name"]
+        }
+      ],
+      "issues": ["permission_denied"],
+      "expected": {
+        "productCodes": ["RJ01326398"],
+        "outcome": "matched",
+        "selectedWorkCode": "RJ01326398"
+      }
+    },
+    {
+      "id": "symbolic-link",
+      "description": "A symbolic-link directory is observable but excluded by the default scan policy.",
+      "entries": [
+        {
+          "relativePath": "linked-library",
+          "source": "directory_name",
+          "kind": "directory",
+          "readable": true,
+          "symbolicLink": true
+        }
+      ],
+      "identities": [],
+      "issues": ["unsupported_entry"],
+      "expected": {
+        "productCodes": [],
+        "outcome": "unmatched",
+        "selectedWorkCode": null
+      }
+    }
+  ]
+}

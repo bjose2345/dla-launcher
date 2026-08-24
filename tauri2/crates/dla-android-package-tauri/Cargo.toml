@@ -1,0 +1,17 @@
+[package]
+name = "dla-android-package-tauri"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+links = "dla-android-package-tauri"
+
+[build-dependencies]
+tauri-plugin = { version = "=2.6.3", features = ["build"] }
+
+[dependencies]
+dla-application.workspace = true
+dla-domain.workspace = true
+serde.workspace = true
+tauri = { version = "=2.11.5", features = [] }

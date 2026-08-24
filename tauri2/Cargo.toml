@@ -1,0 +1,74 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/dla-archive",
+  "crates/dla-application",
+  "crates/dla-android-package-tauri",
+  "crates/dla-catalog-import",
+  "crates/dla-catalog",
+  "crates/dla-cover-cache",
+  "crates/dla-detection",
+  "crates/dla-domain",
+  "crates/dla-launch",
+  "crates/dla-media",
+  "crates/dla-scanner",
+  "crates/dla-search-tantivy",
+  "crates/dla-sqlite",
+  "src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85.0"
+license = "AGPL-3.0-only"
+authors = ["DLA Project"]
+
+[workspace.dependencies]
+dla-archive = { path = "crates/dla-archive" }
+dla-application = { path = "crates/dla-application" }
+dla-android-package-tauri = { path = "crates/dla-android-package-tauri" }
+dla-catalog-import = { path = "crates/dla-catalog-import" }
+dla-catalog = { path = "crates/dla-catalog" }
+dla-cover-cache = { path = "crates/dla-cover-cache" }
+dla-detection = { path = "crates/dla-detection" }
+dla-domain = { path = "crates/dla-domain" }
+dla-launch = { path = "crates/dla-launch" }
+dla-media = { path = "crates/dla-media" }
+dla-scanner = { path = "crates/dla-scanner" }
+dla-search-tantivy = { path = "crates/dla-search-tantivy" }
+dla-sqlite = { path = "crates/dla-sqlite" }
+encoding_rs = "=0.8.35"
+lindera = { version = "=5.2.0", default-features = false, features = ["embed-ipadic"] }
+lindera-tantivy = { version = "=5.0.1", default-features = false, features = ["embed-ipadic"] }
+libc = "=0.2.189"
+md-5 = "=0.11.0"
+percent-encoding = "=2.3.2"
+rayon = "=1.12.0"
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled-full"] }
+rusqlite_migration = "=2.6.0"
+fs2 = "=0.4.3"
+hex = "=0.4.3"
+quick-xml = "=0.41.0"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+sha1 = "=0.11.0"
+sha2 = "=0.11.0"
+symphonia = { version = "=0.6.1", features = ["all"] }
+tar = "=0.4.46"
+tantivy = { version = "=0.26.1", default-features = true }
+thiserror = "=2.0.20"
+time = { version = "=0.3.55", features = ["formatting"] }
+ureq = { version = "=3.4.0", default-features = false, features = ["rustls"] }
+url = "=2.5.8"
+uuid = { version = "=1.24.0", features = ["v4"] }
+walkdir = "=2.5.0"
+zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zstd = "=0.13.3"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
