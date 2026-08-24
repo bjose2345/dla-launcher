@@ -38,6 +38,26 @@ added only when the user imports a `.dla` package, available from the
 Linux and Windows are the active desktop targets. Android has emulator-backed
 runtime coverage. macOS and iOS are not currently release targets.
 
+## Linux support
+
+The supported Linux desktop baseline is x86_64 Debian 12 or Ubuntu 22.04 and
+newer. Native Wayland and X11 sessions are tested. RPM builds for other modern
+distributions are supported on a best-effort basis until each distribution
+receives a native runtime gate.
+
+AppImage distribution is temporarily withheld. The Tauri 2.11 AppImage bundler
+mixes build-host GLib, Wayland, and GStreamer libraries with newer host graphics
+stacks, which can leave a blank window on current Mesa systems. AppImage will
+return only after the upstream incompatibility is resolved and the artifact
+passes launch and multimedia gates on both the supported baseline and a current
+Wayland system.
+
+DLA Launcher requires a graphical Wayland or X11-compatible session; headless
+and direct-framebuffer systems are not supported. GTK selects the available
+display backend automatically, and WebKitGTK GPU compositing remains enabled by
+default. Users should launch the installed application normally rather than
+setting `GDK_BACKEND` or disabling compositing.
+
 ## Build from source
 
 Install the platform prerequisites in [Building](docs/BUILDING.md), then:
@@ -59,9 +79,9 @@ cd tauri2
 cargo tauri build --ci
 ```
 
-Windows produces MSI and NSIS installers. Linux produces the bundle types
-supported by the host. Android setup and release signing are documented in
-[Building](docs/BUILDING.md#android).
+Windows produces MSI and NSIS installers. Linux produces DEB and RPM packages;
+AppImage is currently excluded by the Linux release configuration. Android
+setup and release signing are documented in [Building](docs/BUILDING.md#android).
 
 ## Verify a change
 

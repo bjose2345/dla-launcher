@@ -89,11 +89,17 @@ export function libraryContentKind(
   ), "other");
 }
 
-export function featuredInstallationId(shelves: LibraryShelves): string | null {
-  return shelves.continueItems[0]?.installationId
-    ?? shelves.recent[0]?.installationId
-    ?? shelves.neverLaunched[0]
-    ?? shelves.installations[0]?.id
+export function featuredInstallationId(
+  shelves: LibraryShelves,
+  eligibleInstallationIds?: ReadonlySet<string>,
+): string | null {
+  const eligible = (installationId: string) => (
+    eligibleInstallationIds === undefined || eligibleInstallationIds.has(installationId)
+  );
+  return shelves.continueItems.find((item) => eligible(item.installationId))?.installationId
+    ?? shelves.recent.find((item) => eligible(item.installationId))?.installationId
+    ?? shelves.neverLaunched.find(eligible)
+    ?? shelves.installations.find((item) => eligible(item.id))?.id
     ?? null;
 }
 

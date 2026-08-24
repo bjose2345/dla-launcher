@@ -146,6 +146,11 @@ export function LibraryReviewPage({
 
   const current = installation.data;
   const invalidIdentity = draft.identityMode === "catalog_work" && !draft.identityWorkCode.trim();
+  const requiresReview = current.overrides.reviewedAt === null;
+  const saveCurrentReview = async () => {
+    if (invalidIdentity) return;
+    await save.mutateAsync(installationReviewRequest(current, draft));
+  };
   const submit = () => {
     if (invalidIdentity) return;
     save.mutate(installationReviewRequest(current, draft));
@@ -209,7 +214,7 @@ export function LibraryReviewPage({
             onClick={submit}
           >
             {save.isPending ? <LoaderCircle className="library-spin" aria-hidden="true" /> : <Save aria-hidden="true" />}
-            {t("library.saveReview")}
+            {t(requiresReview ? "library.addToLibrary" : "library.saveChanges")}
           </button>
         </footer>
       </section>
@@ -221,6 +226,9 @@ export function LibraryReviewPage({
           gateway={gateway}
           locale={locale}
           focusPreparation={focusPreparation}
+          requiresReview={requiresReview}
+          canFinalizeReview={!invalidIdentity && !save.isPending}
+          onPrepared={saveCurrentReview}
         />
       ) : null}
 
@@ -534,12 +542,18 @@ function PackageZone({
   gateway,
   locale,
   focusPreparation,
+  requiresReview,
+  canFinalizeReview,
+  onPrepared,
 }: {
   installation: Installation;
   inspection: PackageInspection;
   gateway: LibraryGateway;
   locale: string;
   focusPreparation: boolean;
+  requiresReview: boolean;
+  canFinalizeReview: boolean;
+  onPrepared: () => Promise<void>;
 }) {
   const { t } = usePresentation();
   const queryClient = useQueryClient();
@@ -549,6 +563,7 @@ function PackageZone({
     useState<PackageDestinationConflictPolicy>("refuse");
   const [retention, setRetention] = useState<ArchiveRetentionPolicy>(inspection.installPlan.archiveRetention);
   const sectionRef = useRef<HTMLElement>(null);
+  const pendingReviewOperationRef = useRef<string | null>(null);
   const preparedKey = useMemo(
     () => ["library", "prepared-package", installation.id] as const,
     [installation.id],
@@ -600,10 +615,13 @@ function PackageZone({
         retention,
       );
     },
-    onSuccess: (value) => queryClient.setQueryData<PackagePreparationProgress | null>(
-      packagePreparationProgressKey,
-      (currentProgress) => mergePackagePreparationProgress(currentProgress, value),
-    ),
+    onSuccess: (value) => {
+      if (requiresReview) pendingReviewOperationRef.current = value.operationId;
+      queryClient.setQueryData<PackagePreparationProgress | null>(
+        packagePreparationProgressKey,
+        (currentProgress) => mergePackagePreparationProgress(currentProgress, value),
+      );
+    },
   });
   const cancel = useMutation({
     mutationFn: (operationId: string) => gateway.cancelPackagePreparation(operationId),
@@ -638,6 +656,17 @@ function PackageZone({
   }, [installation.id, preparedKey, progress.data, queryClient]);
 
   useEffect(() => {
+    const value = progress.data;
+    if (
+      value?.stage !== "completed"
+      || value.installationId !== installation.id
+      || value.operationId !== pendingReviewOperationRef.current
+    ) return;
+    pendingReviewOperationRef.current = null;
+    void onPrepared().catch(() => undefined);
+  }, [installation.id, onPrepared, progress.data]);
+
+  useEffect(() => {
     if (!focusPreparation) return;
     const frame = window.requestAnimationFrame(() => {
       const section = sectionRef.current;
@@ -658,7 +687,9 @@ function PackageZone({
   const destinationAvailable = destinationPreview?.state === "available";
   const keepBothSelected = destinationConflictPolicy === "keep_both"
     && Boolean(destinationPreview?.keepBothDestinationName);
-  const destinationReady = destinationAvailable || keepBothSelected;
+  const replaceSelected = destinationConflictPolicy === "replace_existing"
+    && destinationPreview?.state === "occupied_unknown";
+  const destinationReady = destinationAvailable || keepBothSelected || replaceSelected;
 
   return (
     <section
@@ -702,27 +733,40 @@ function PackageZone({
           </div>
 
           {destinationPreview && destinationPreview.state !== "available" ? (
-            <div className={`review-destination-conflict${keepBothSelected ? " is-resolved" : ""}`} role="status">
+            <div className={`review-destination-conflict${keepBothSelected ? " is-resolved" : ""}${replaceSelected ? " is-destructive" : ""}`} role="status">
               {keepBothSelected ? <CheckCircle2 aria-hidden="true" /> : <AlertTriangle aria-hidden="true" />}
               <div>
-                <strong>{t(keepBothSelected
-                  ? "library.destinationKeepBothReady"
-                  : destinationPreview.state === "managed_same_installation"
-                    ? "library.destinationManagedSame"
-                    : "library.destinationOccupied")}</strong>
-                <span>{keepBothSelected && destinationPreview.keepBothDestinationName
-                  ? t("library.destinationKeepBothAs", { name: destinationPreview.keepBothDestinationName })
-                  : t(destinationPreview.state === "managed_same_installation"
-                    ? "library.destinationManagedSameHelp"
-                    : "library.destinationOccupiedHelp", { name: destinationPreview.destinationName })}</span>
+                <strong>{t(replaceSelected
+                  ? "library.destinationReplaceReady"
+                  : keepBothSelected
+                    ? "library.destinationKeepBothReady"
+                    : destinationPreview.state === "managed_same_installation"
+                      ? "library.destinationManagedSame"
+                      : destinationPreview.state === "managed_other_installation"
+                        ? "library.destinationManagedOther"
+                        : "library.destinationOccupied")}</strong>
+                <span>{replaceSelected
+                  ? t("library.destinationReplaceWarning", { name: destinationPreview.destinationName })
+                  : keepBothSelected && destinationPreview.keepBothDestinationName
+                    ? t("library.destinationKeepBothAs", { name: destinationPreview.keepBothDestinationName })
+                    : t(destinationPreview.state === "managed_same_installation"
+                      ? "library.destinationManagedSameHelp"
+                      : destinationPreview.state === "managed_other_installation"
+                        ? "library.destinationManagedOtherHelp"
+                        : "library.destinationOccupiedHelp", { name: destinationPreview.destinationName })}</span>
               </div>
               <div className="review-destination-actions">
-                {!keepBothSelected && destinationPreview.state !== "managed_same_installation"
+                {destinationPreview.state !== "managed_same_installation"
                   && destinationPreview.keepBothDestinationName ? (
-                    <button className="review-button" type="button" onClick={() => setDestinationConflictPolicy("keep_both")}>
+                    <button className="review-button" type="button" disabled={keepBothSelected} onClick={() => setDestinationConflictPolicy("keep_both")}>
                       <CopyPlus aria-hidden="true" />{t("library.keepBoth")}
                     </button>
                   ) : null}
+                {destinationPreview.state === "occupied_unknown" ? (
+                  <button className="review-button is-danger" type="button" disabled={replaceSelected} onClick={() => setDestinationConflictPolicy("replace_existing")}>
+                    <Trash2 aria-hidden="true" />{t("library.replaceExisting")}
+                  </button>
+                ) : null}
                 <button className="review-button" type="button" disabled={chooseDestination.isPending} onClick={() => chooseDestination.mutate()}>
                   <FolderOpen aria-hidden="true" />{t("library.chooseAnotherDestination")}
                 </button>
@@ -753,15 +797,18 @@ function PackageZone({
           ) : null}
 
           <footer className="review-foot">
-            <span><ShieldCheck aria-hidden="true" />{t("library.atomicPreparation")}</span>
+            <span><ShieldCheck aria-hidden="true" />{t(replaceSelected
+              ? "library.atomicReplacement"
+              : "library.atomicPreparation")}</span>
             <button
               className="review-button is-primary"
               type="button"
-              disabled={active || start.isPending || !destination || !destinationReady || inspection.safety !== "safe"}
+              disabled={active || start.isPending || !destination || !destinationReady
+                || inspection.safety !== "safe" || (requiresReview && !canFinalizeReview)}
               onClick={() => start.mutate()}
             >
               {active || start.isPending ? <LoaderCircle className="library-spin" aria-hidden="true" /> : <PackageOpen aria-hidden="true" />}
-              {t("library.prepareAndVerify")}
+              {t(requiresReview ? "library.installAndAdd" : "library.prepareAndVerify")}
             </button>
           </footer>
         </>
@@ -987,8 +1034,18 @@ function ManageZone({
         queryClient.invalidateQueries({ queryKey: ["library", "installations"] }),
         queryClient.invalidateQueries({ queryKey: ["library", "shelves"] }),
         queryClient.invalidateQueries({ queryKey: ["library", "installation-healths"] }),
+        queryClient.invalidateQueries({ queryKey: ["library", "prepared-packages"] }),
       ]);
       onRemoved();
+      queryClient.removeQueries({
+        queryKey: ["library", "installation", installation.id],
+        exact: true,
+      });
+      queryClient.removeQueries({ queryKey: healthKey, exact: true });
+      queryClient.removeQueries({
+        queryKey: ["library", "prepared-package", installation.id],
+        exact: true,
+      });
     },
   });
   const pending = health.isPending

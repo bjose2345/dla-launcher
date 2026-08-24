@@ -145,7 +145,7 @@ describe("LibraryReviewPage", () => {
     expect(screen.getAllByText("High").length).toBeGreaterThan(0);
   });
 
-  it("offers a safe keep-both destination without enabling overwrite", async () => {
+  it("offers a safe keep-both destination beside explicit replacement", async () => {
     const installation = readyInstallation();
     installation.detection.packageInspection = packageInspection();
     const gateway = libraryGateway({ installation });
@@ -170,6 +170,7 @@ describe("LibraryReviewPage", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Choose destination" }));
     expect(await screen.findByText("That name is already in use")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Replace existing" })).toBeTruthy();
     const prepare = screen.getByRole("button", { name: "Prepare and verify" }) as HTMLButtonElement;
     expect(prepare.disabled).toBe(true);
 
@@ -182,6 +183,44 @@ describe("LibraryReviewPage", () => {
       "installation-1",
       "destination-handle",
       "keep_both",
+      "delete_after_verified_install",
+    ));
+  });
+
+  it("requires a destructive warning before replacing an unknown destination", async () => {
+    const installation = readyInstallation();
+    installation.detection.packageInspection = packageInspection();
+    const gateway = libraryGateway({ installation });
+    gateway.selectInstallationDestination = vi.fn().mockResolvedValue({
+      accessHandle: "destination-handle",
+      displayPath: "/home/developer/DLA Library",
+    });
+    gateway.inspectPackageDestination = vi.fn().mockResolvedValue({
+      state: "occupied_unknown",
+      destinationName: "RJ01678999",
+      keepBothDestinationName: "RJ01678999 (2)",
+    });
+    gateway.startPackagePreparation = vi.fn().mockResolvedValue({
+      operationId: "preparation-1",
+      installationId: "installation-1",
+      stage: "queued",
+      counters: { totalBytes: 0, processedBytes: 0, totalFiles: 0, processedFiles: 0 },
+      currentPath: null,
+      detail: "queued",
+    });
+    renderReview(gateway);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Choose destination" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Replace existing" }));
+
+    expect(screen.getByText("The existing folder will be replaced")).toBeTruthy();
+    expect(screen.getByText(/including saves or other user files/)).toBeTruthy();
+    const prepare = screen.getByRole("button", { name: "Prepare and verify" });
+    fireEvent.click(prepare);
+    await waitFor(() => expect(gateway.startPackagePreparation).toHaveBeenCalledWith(
+      "installation-1",
+      "destination-handle",
+      "replace_existing",
       "delete_after_verified_install",
     ));
   });
@@ -206,6 +245,79 @@ describe("LibraryReviewPage", () => {
     expect(await screen.findByText("This work already owns that destination")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Keep both" })).toBeNull();
     expect((screen.getByRole("button", { name: "Prepare and verify" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("does not replace a destination managed by another library work", async () => {
+    const installation = readyInstallation();
+    installation.detection.packageInspection = packageInspection();
+    const gateway = libraryGateway({ installation });
+    gateway.selectInstallationDestination = vi.fn().mockResolvedValue({
+      accessHandle: "destination-handle",
+      displayPath: "/home/developer/DLA Library",
+    });
+    gateway.inspectPackageDestination = vi.fn().mockResolvedValue({
+      state: "managed_other_installation",
+      destinationName: "RJ01678999",
+      keepBothDestinationName: "RJ01678999 (2)",
+    });
+    renderReview(gateway);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Choose destination" }));
+
+    expect(await screen.findByText("Another library work owns that destination")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Replace existing" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Keep both" })).toBeTruthy();
+  });
+
+  it("adds an unreviewed package to the library after preparation completes", async () => {
+    const installation = readyInstallation();
+    installation.overrides.reviewedAt = null;
+    installation.detection.packageInspection = packageInspection();
+    let publish: ((progress: {
+      operationId: string;
+      installationId: string;
+      stage: "completed";
+      counters: { totalBytes: number; processedBytes: number; totalFiles: number; processedFiles: number };
+      currentPath: null;
+      detail: string;
+    }) => void) | undefined;
+    const gateway = libraryGateway({ installation });
+    gateway.selectInstallationDestination = vi.fn().mockResolvedValue({
+      accessHandle: "destination-handle",
+      displayPath: "/home/developer/DLA Library",
+    });
+    gateway.inspectPackageDestination = vi.fn().mockResolvedValue({
+      state: "available",
+      destinationName: "RJ01678999",
+      keepBothDestinationName: null,
+    });
+    gateway.startPackagePreparation = vi.fn().mockResolvedValue({
+      operationId: "preparation-1",
+      installationId: "installation-1",
+      stage: "queued",
+      counters: { totalBytes: 0, processedBytes: 0, totalFiles: 0, processedFiles: 0 },
+      currentPath: null,
+      detail: "queued",
+    });
+    gateway.subscribePackagePreparationProgress = vi.fn().mockImplementation(async (listener) => {
+      publish = listener;
+      return () => undefined;
+    });
+    renderReview(gateway);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Choose destination" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Install and add to library" }));
+    await waitFor(() => expect(gateway.startPackagePreparation).toHaveBeenCalled());
+    publish?.({
+      operationId: "preparation-1",
+      installationId: "installation-1",
+      stage: "completed",
+      counters: { totalBytes: 1, processedBytes: 1, totalFiles: 1, processedFiles: 1 },
+      currentPath: null,
+      detail: "completed",
+    });
+
+    await waitFor(() => expect(gateway.saveReview).toHaveBeenCalledTimes(1));
   });
 
   it("does not offer Repair when the report says it cannot be repaired", async () => {
@@ -242,15 +354,59 @@ describe("LibraryReviewPage", () => {
     fireEvent.click(within(confirmation).getByRole("button", { name: /Yes|Confirm|Remove/ }));
     await waitFor(() => expect(gateway.uninstallInstallation).toHaveBeenCalledWith("installation-1"));
   });
+
+  it("forgets cached package state so a removed installation can be prepared again", async () => {
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
+        mutations: { retry: false },
+      },
+    });
+    const preparedKey = ["library", "prepared-package", "installation-1"] as const;
+    client.setQueryData(preparedKey, {
+      installationId: "installation-1",
+      destinationRoot: "/home/developer/DLA Library/RJ01678999 (2)",
+    });
+    const onBack = vi.fn();
+    const gateway = libraryGateway();
+    const firstView = renderReview(gateway, { client, onBack });
+
+    const remove = await screen.findByRole("button", { name: "Remove entry" }) as HTMLButtonElement;
+    await waitFor(() => expect(remove.disabled).toBe(false));
+    fireEvent.click(remove);
+    const confirmation = await screen.findByRole("alertdialog");
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => expect(gateway.removeInstallation).toHaveBeenCalledWith("installation-1"));
+    expect(onBack).toHaveBeenCalledOnce();
+    expect(client.getQueryData(preparedKey)).toBeUndefined();
+
+    firstView.unmount();
+    const recreated = readyInstallation();
+    recreated.detection.packageInspection = packageInspection();
+    const recreatedGateway = libraryGateway({ installation: recreated });
+    renderReview(recreatedGateway, { client });
+
+    expect(await screen.findByRole("button", { name: "Choose destination" })).toBeTruthy();
+    expect(recreatedGateway.readPreparedPackage).toHaveBeenCalledWith("installation-1");
+  });
 });
 
-function renderReview(gateway: LibraryGateway) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+function renderReview(
+  gateway: LibraryGateway,
+  options: { client?: QueryClient; onBack?: () => void } = {},
+) {
+  const client = options.client
+    ?? new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
       <PresentationProvider>
         <KeyBindingsProvider>
-          <LibraryReviewPage installationId="installation-1" gateway={gateway} onBack={() => undefined} />
+          <LibraryReviewPage
+            installationId="installation-1"
+            gateway={gateway}
+            onBack={options.onBack ?? (() => undefined)}
+          />
         </KeyBindingsProvider>
       </PresentationProvider>
     </QueryClientProvider>,

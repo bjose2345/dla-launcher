@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { usePresentation } from "../../preferences/PresentationProvider";
 import { useCatalogFacetFilters } from "./CatalogFacetFiltersProvider";
+import { CatalogEmptyState, catalogSnapshotIsEmpty } from "./CatalogEmptyState";
 import { CatalogMonthlyResults } from "./CatalogMonthlyResults";
 import { catalogFacetFilterKey, catalogFacetCounts } from "./catalogFilters";
 import { reconcileCatalogMonth } from "./catalogMonth";
@@ -131,7 +132,9 @@ export function CatalogMonthlyPage({
         </section>
       )}
       {context.isPending && <CatalogMonthlyLoading />}
-      {contextValue && (
+      {contextValue && catalogSnapshotIsEmpty(contextValue.snapshot) ? (
+        <CatalogEmptyState />
+      ) : contextValue ? (
         <CatalogMonthlyResults
           route={route}
           filters={filters}
@@ -145,7 +148,7 @@ export function CatalogMonthlyPage({
           onOpenWork={onOpenWork}
           onRouteChange={onRouteChange}
         />
-      )}
+      ) : null}
     </main>
   );
 }

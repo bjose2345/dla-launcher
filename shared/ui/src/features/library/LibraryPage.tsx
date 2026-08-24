@@ -211,7 +211,12 @@ export function LibraryPage({
     return kind === undefined ? lens === "all" : matchesLibraryLens(lens, kind);
   };
   const lensEntries = collectionEntries.filter((entry) => inLens(entry.installation.id));
-  const featuredId = shelves.data ? featuredInstallationId(shelves.data) : null;
+  const lensInstallationIds = new Set(
+    lensEntries.map((entry) => entry.installation.id),
+  );
+  const featuredId = shelves.data
+    ? featuredInstallationId(shelves.data, lensInstallationIds)
+    : null;
   const featured = lensEntries.find((entry) => entry.installation.id === featuredId)
     ?? lensEntries[0]
     ?? null;

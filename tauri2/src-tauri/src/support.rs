@@ -134,16 +134,17 @@ impl SupportRuntime {
         Ok(())
     }
 
-    pub fn mark_clean_shutdown(&self) {
+    pub fn mark_clean_shutdown(&self) -> bool {
         if !self.inner.track_session {
-            return;
+            return false;
         }
         let Some(marker) = read_json::<RunMarker>(&self.inner.marker_path) else {
-            return;
+            return false;
         };
         if marker.run_id == self.inner.run_id {
-            let _ = fs::remove_file(&self.inner.marker_path);
+            return fs::remove_file(&self.inner.marker_path).is_ok();
         }
+        false
     }
 
     pub fn record_startup_failure(&self, error: &str) {
@@ -868,6 +869,14 @@ mod tests {
     use super::*;
 
     fn runtime(directory: &Path, previous_unclean: bool) -> SupportRuntime {
+        runtime_with_tracking(directory, previous_unclean, false)
+    }
+
+    fn runtime_with_tracking(
+        directory: &Path,
+        previous_unclean: bool,
+        track_session: bool,
+    ) -> SupportRuntime {
         let support_directory = directory.join("support");
         let fault_directory = support_directory.join("faults");
         let log_directory = directory.join("logs");
@@ -880,7 +889,7 @@ mod tests {
                 marker_path: support_directory.join(RUN_MARKER_FILE),
                 acknowledged_path: support_directory.join(ACKNOWLEDGED_FILE),
                 run_id: "test-run".to_owned(),
-                track_session: false,
+                track_session,
                 previous: Mutex::new(PreviousRun {
                     unclean: previous_unclean,
                     run_id: "previous-run".to_owned(),
@@ -891,6 +900,38 @@ mod tests {
                 }],
             }),
         }
+    }
+
+    #[test]
+    fn clean_shutdown_removes_the_current_run_marker() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let runtime = runtime_with_tracking(directory.path(), false, true);
+        runtime.write_run_marker(true).expect("write run marker");
+        assert!(runtime.inner.marker_path.is_file());
+
+        assert!(runtime.mark_clean_shutdown());
+
+        assert!(!runtime.inner.marker_path.exists());
+    }
+
+    #[test]
+    fn clean_shutdown_does_not_remove_another_run_marker() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let runtime = runtime_with_tracking(directory.path(), false, true);
+        let marker = RunMarker {
+            schema_version: SUPPORT_SCHEMA_VERSION,
+            run_id: "another-run".to_owned(),
+            started_at: now(),
+            startup_ready: true,
+        };
+        write_private(
+            &runtime.inner.marker_path,
+            &serde_json::to_vec(&marker).expect("serialize marker"),
+        )
+        .expect("write run marker");
+
+        assert!(!runtime.mark_clean_shutdown());
+        assert!(runtime.inner.marker_path.is_file());
     }
 
     #[test]

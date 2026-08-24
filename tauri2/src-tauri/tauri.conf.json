@@ -24,8 +24,8 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' https: data: dla-media: http://dla-media.localhost dla-cover: http://dla-cover.localhost; media-src 'self' dla-media: http://dla-media.localhost; frame-src https://chobit.cc https://*.chobit.cc dla-media: http://dla-media.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'",
-      "devCsp": "default-src 'self' http://localhost:1420; connect-src ipc: http://ipc.localhost http://localhost:1420 ws://localhost:1420; img-src 'self' https: data: dla-media: http://dla-media.localhost dla-cover: http://dla-cover.localhost; media-src 'self' dla-media: http://dla-media.localhost; frame-src https://chobit.cc https://*.chobit.cc dla-media: http://dla-media.localhost; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval' http://localhost:1420"
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost dla-media: http://dla-media.localhost; img-src 'self' https: data: dla-media: http://dla-media.localhost dla-cover: http://dla-cover.localhost; media-src 'self' dla-media: http://dla-media.localhost; frame-src https://chobit.cc https://*.chobit.cc dla-media: http://dla-media.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'",
+      "devCsp": "default-src 'self' http://localhost:1420; connect-src ipc: http://ipc.localhost http://localhost:1420 ws://localhost:1420 dla-media: http://dla-media.localhost; img-src 'self' https: data: dla-media: http://dla-media.localhost dla-cover: http://dla-cover.localhost; media-src 'self' dla-media: http://dla-media.localhost; frame-src https://chobit.cc https://*.chobit.cc dla-media: http://dla-media.localhost; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval' http://localhost:1420"
     }
   },
   "plugins": {
@@ -56,7 +56,16 @@
     ],
     "linux": {
       "deb": {
-        "desktopTemplate": "linux/dla-launcher.desktop.hbs"
+        "desktopTemplate": "linux/dla-launcher.desktop.hbs",
+        "recommends": [
+          "gstreamer1.0-gl",
+          "gstreamer1.0-libav",
+          "gstreamer1.0-plugins-bad",
+          "gstreamer1.0-plugins-base",
+          "gstreamer1.0-plugins-good",
+          "gstreamer1.0-plugins-ugly",
+          "p7zip-full"
+        ]
       },
       "rpm": {
         "desktopTemplate": "linux/dla-launcher.desktop.hbs"

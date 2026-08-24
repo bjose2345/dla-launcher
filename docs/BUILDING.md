@@ -42,6 +42,13 @@ sudo apt install \
   libayatana-appindicator3-dev \
   librsvg2-dev \
   pkg-config \
+  gstreamer1.0-gl \
+  gstreamer1.0-libav \
+  gstreamer1.0-plugins-bad \
+  gstreamer1.0-plugins-base \
+  gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-ugly \
+  gstreamer1.0-tools \
   p7zip-full
 ```
 
@@ -52,6 +59,37 @@ cd tauri2
 cargo tauri dev
 cargo tauri build --ci
 ```
+
+Release Linux bundles are built against the Debian 12 / Ubuntu 22.04 x86_64
+compatibility baseline. The platform-specific Tauri configuration produces DEB
+and RPM packages. Wayland and X11 are the tested display systems. RPM artifacts
+target other modern distributions on a best-effort basis until a native runtime
+gate is recorded for that distribution. Headless and direct-framebuffer
+environments are not supported.
+
+Do not set `GDK_BACKEND` in a package or desktop entry. GTK selects the native
+session backend, and WebKitGTK GPU compositing must remain enabled by default.
+Backend overrides and `WEBKIT_DISABLE_COMPOSITING_MODE=1` are troubleshooting
+measures, not supported release defaults.
+
+The DEB package recommends the GStreamer plugin families used by the built-in
+audio and video players, plus 7-Zip for RAR extraction. RPM users must install
+the equivalent packages supplied by their distribution.
+
+AppImage is deliberately excluded from the default Linux targets. With Tauri
+2.11.5, enabling `bundleMediaFramework` copies build-host GLib, Wayland, and
+GStreamer libraries into the artifact. On a newer Mesa/GLib host this currently
+causes an EGL failure and a blank WebKit window, matching
+[tauri-apps/tauri#15665](https://github.com/tauri-apps/tauri/issues/15665).
+Replacing those libraries with host files makes one machine work but is not a
+portable package, so do not publish a manually post-processed AppImage.
+
+AppImage can return to the release targets after Tauri exposes a supported
+library-exclusion fix and one artifact passes startup plus representative audio
+and video playback on both the oldest supported baseline and a current
+Wayland/Mesa system. If media libraries are bundled again, retain the copyright
+and license information for every component; `plugins-ugly` and `libav` require
+an explicit redistribution review.
 
 Wine is optional and is required only to launch reviewed Windows executables
 on Linux. A functioning 32-bit Wine environment is required for 32-bit titles.

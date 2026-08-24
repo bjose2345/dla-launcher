@@ -16,8 +16,9 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 
 use crate::installer::{
-    INSTALLATION_MARKER, SOURCE_CLEANUP_MARKER, STAGING_MARKER, SourceCleanupMarker,
-    read_installation_marker, read_staging_marker, validate_owned_installation,
+    INSTALLATION_MARKER, REPLACEMENT_MARKER, SOURCE_CLEANUP_MARKER, STAGING_MARKER,
+    SourceCleanupMarker, commit_replacement, read_installation_marker, read_staging_marker,
+    validate_owned_installation,
 };
 
 #[derive(Default)]
@@ -342,7 +343,7 @@ fn portable_relative(root: &Path, path: &Path) -> Result<RelativePath, LibraryMa
 }
 
 fn internal_file(path: &str) -> bool {
-    path == INSTALLATION_MARKER || path == STAGING_MARKER
+    [INSTALLATION_MARKER, STAGING_MARKER, REPLACEMENT_MARKER].contains(&path)
 }
 
 fn cleanup_destination_parent(
@@ -362,6 +363,12 @@ fn cleanup_destination_parent(
             }
         })
         .collect::<BTreeSet<_>>();
+    for name in &known_names {
+        let destination = parent.join(name);
+        if destination.join(REPLACEMENT_MARKER).is_file() {
+            commit_replacement(&destination).map_err(LibraryMaintenanceError::adapter)?;
+        }
+    }
     let entries = match fs::read_dir(parent) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),

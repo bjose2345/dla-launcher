@@ -41,6 +41,27 @@ describe("library home presentation", () => {
     } satisfies LibraryShelves;
     expect(featuredInstallationId(shelves)).toBe("resume");
   });
+
+  it("features the most relevant activity inside the active lens", () => {
+    const shelves = {
+      installations: [
+        { ...installation(), id: "video" },
+        { ...installation(), id: "audio" },
+      ],
+      recent: [
+        { installationId: "video", action: "play_video", kind: "media_session", occurredAt: "2026-08-13T11:00:00Z", active: false },
+        { installationId: "audio", action: "play_audio", kind: "media_session", occurredAt: "2026-08-13T10:00:00Z", active: false },
+      ],
+      continueItems: [
+        { installationId: "video", action: "play_video", relativePath: "movie.mp4", positionMs: 1, durationMs: 2, completed: false, updatedAt: "2026-08-13T11:00:00Z" },
+      ],
+      neverLaunched: [],
+      unfinished: [],
+      launchTotals: [],
+    } satisfies LibraryShelves;
+
+    expect(featuredInstallationId(shelves, new Set(["audio"]))).toBe("audio");
+  });
 });
 
 function installation(): Installation {

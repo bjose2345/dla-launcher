@@ -200,6 +200,11 @@
   background: color-mix(in oklch, var(--color-success) 9%, transparent);
 }
 
+.review-destination-conflict.is-destructive {
+  border-left-color: var(--color-error);
+  background: color-mix(in oklch, var(--color-error) 11%, transparent);
+}
+
 .review-destination-conflict > svg {
   width: 18px;
   height: 18px;
@@ -208,6 +213,10 @@
 
 .review-destination-conflict.is-resolved > svg {
   color: var(--color-success);
+}
+
+.review-destination-conflict.is-destructive > svg {
+  color: var(--color-error);
 }
 
 .review-destination-conflict > div:nth-child(2) {

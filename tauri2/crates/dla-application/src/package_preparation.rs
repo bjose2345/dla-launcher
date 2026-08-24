@@ -43,6 +43,7 @@ pub struct PackageInstallExecution {
 pub enum PackageDestinationConflictPolicy {
     Refuse,
     KeepBoth,
+    ReplaceExisting,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -150,6 +151,10 @@ pub trait PackageInstaller: Send + Sync {
     ) -> Result<PackageExtractionResult, PackagePreparationError>;
 
     fn rollback(&self, destination_root: &str) -> Result<(), PackagePreparationError>;
+
+    fn commit(&self, _destination_root: &str) -> Result<(), PackagePreparationError> {
+        Ok(())
+    }
 
     fn delete_sources(
         &self,
@@ -288,6 +293,7 @@ impl PackagePreparationService {
             let _ = self.installer.rollback(&prepared.destination_root);
             return Err(error);
         }
+        self.installer.commit(&prepared.destination_root)?;
 
         if request.archive_retention == ArchiveRetentionPolicy::DeleteAfterVerifiedInstall {
             progress.publish(&PackagePreparationProgress {
@@ -519,6 +525,7 @@ mod tests {
         cancel_after_extract: bool,
         delete_error: bool,
         rollbacks: Mutex<Vec<String>>,
+        commits: AtomicUsize,
         deletes: AtomicUsize,
     }
 
@@ -555,6 +562,11 @@ mod tests {
                 .lock()
                 .expect("rollbacks")
                 .push(destination_root.to_owned());
+            Ok(())
+        }
+
+        fn commit(&self, _destination_root: &str) -> Result<(), PackagePreparationError> {
+            self.commits.fetch_add(1, Ordering::AcqRel);
             Ok(())
         }
 
@@ -611,6 +623,7 @@ mod tests {
             installer.rollbacks.lock().expect("rollbacks").as_slice(),
             ["/library/RJ000001"]
         );
+        assert_eq!(installer.commits.load(Ordering::Acquire), 0);
     }
 
     #[test]
@@ -656,6 +669,7 @@ mod tests {
         assert!(prepared.source_cleanup_error.is_some());
         assert_eq!(installer.deletes.load(Ordering::Acquire), 1);
         assert!(installer.rollbacks.lock().expect("rollbacks").is_empty());
+        assert_eq!(installer.commits.load(Ordering::Acquire), 1);
         assert_eq!(preparations.saved.lock().expect("preparations").len(), 2);
     }
 
@@ -677,6 +691,7 @@ mod tests {
             cancel_after_extract,
             delete_error,
             rollbacks: Mutex::new(Vec::new()),
+            commits: AtomicUsize::new(0),
             deletes: AtomicUsize::new(0),
         }
     }

@@ -69,7 +69,7 @@ export interface PackageLaunchCandidate {
 export type ArchiveFormat = "zip" | "rar";
 export type PackageSourceSetKind = "single_archive" | "multipart_rar" | "multipart_rar_sfx";
 export type ArchiveRetentionPolicy = "keep" | "delete_after_verified_install";
-export type PackageDestinationConflictPolicy = "refuse" | "keep_both";
+export type PackageDestinationConflictPolicy = "refuse" | "keep_both" | "replace_existing";
 export type PackageDestinationState =
   | "available"
   | "occupied_unknown"

@@ -37,6 +37,7 @@ const MINIMUM_FREE_SPACE_MARGIN: u64 = 64 * 1024 * 1024;
 pub(crate) const INSTALLATION_MARKER: &str = ".dla-installation.json";
 pub(crate) const STAGING_MARKER: &str = ".dla-stage.json";
 pub(crate) const SOURCE_CLEANUP_MARKER: &str = ".dla-source-cleanup.json";
+pub(crate) const REPLACEMENT_MARKER: &str = ".dla-replacement.json";
 
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,6 +59,15 @@ pub(crate) struct StagingMarker {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SourceCleanupMarker {
     pub file_names: Vec<String>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReplacementMarker {
+    pub operation_id: String,
+    pub installation_id: dla_domain::installation::InstallationId,
+    pub destination_name: String,
+    pub backup_name: String,
 }
 
 #[derive(Default)]
@@ -100,6 +110,10 @@ impl PackageInstaller for DesktopPackageInstaller {
             .map_err(PackagePreparationError::adapter)?;
         validate_source_hashes(request, &sources, cancellation)?;
         let destination_parent = validate_destination_parent(&request.destination_parent)?;
+        recover_uncommitted_replacement(
+            &destination_parent.join(&request.destination_name),
+            &request.installation_id,
+        )?;
         let mut destination = select_destination(
             &destination_parent,
             &request.destination_name,
@@ -147,6 +161,19 @@ impl PackageInstaller for DesktopPackageInstaller {
                 "Activating the verified installation atomically",
             )?;
             cancellation.check()?;
+            let replacement = if request.destination_conflict_policy
+                == PackageDestinationConflictPolicy::ReplaceExisting
+                && destination.exists()
+            {
+                Some(begin_replacement(
+                    request,
+                    &destination_parent,
+                    &destination,
+                    &staging,
+                )?)
+            } else {
+                None
+            };
             loop {
                 match rename_directory_noreplace(&staging, &destination) {
                     Ok(()) => break,
@@ -160,7 +187,12 @@ impl PackageInstaller for DesktopPackageInstaller {
                             &request.destination_name,
                         )?);
                     }
-                    Err(error) => return Err(PackagePreparationError::adapter(error)),
+                    Err(error) => {
+                        if let Some(marker) = replacement.as_ref() {
+                            restore_replacement(&destination_parent, &staging, marker)?;
+                        }
+                        return Err(PackagePreparationError::adapter(error));
+                    }
                 }
             }
             Ok(PackageExtractionResult {
@@ -189,7 +221,14 @@ impl PackageInstaller for DesktopPackageInstaller {
                 "rollback target has no DLA installation marker",
             ));
         }
+        if destination.join(REPLACEMENT_MARKER).is_file() {
+            return rollback_replacement(destination);
+        }
         fs::remove_dir_all(destination).map_err(PackagePreparationError::adapter)
+    }
+
+    fn commit(&self, destination_root: &str) -> Result<(), PackagePreparationError> {
+        commit_replacement(Path::new(destination_root))
     }
 
     fn delete_sources(
@@ -387,7 +426,7 @@ fn restore_quarantined_sources(
 fn validate_internal_paths(manifest: &PackageManifest) -> Result<(), PackagePreparationError> {
     if manifest.entries.iter().any(|entry| {
         entry.relative_path.as_ref().is_some_and(|path| {
-            [INSTALLATION_MARKER, STAGING_MARKER]
+            [INSTALLATION_MARKER, STAGING_MARKER, REPLACEMENT_MARKER]
                 .iter()
                 .any(|reserved| path.as_str().eq_ignore_ascii_case(reserved))
         })
@@ -418,6 +457,7 @@ fn inspect_destination(
     installation_id: &dla_domain::installation::InstallationId,
 ) -> Result<PackageDestinationPreview, PackagePreparationError> {
     let destination = parent.join(destination_name);
+    recover_uncommitted_replacement(&destination, installation_id)?;
     let metadata = match fs::symlink_metadata(&destination) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -470,6 +510,178 @@ fn select_destination(
         (_, PackageDestinationConflictPolicy::KeepBoth) => {
             Ok(parent.join(next_available_destination_name(parent, destination_name)?))
         }
+        (
+            PackageDestinationState::OccupiedUnknown,
+            PackageDestinationConflictPolicy::ReplaceExisting,
+        ) => Ok(parent.join(destination_name)),
+        (_, PackageDestinationConflictPolicy::ReplaceExisting) => {
+            Err(PackagePreparationError::adapter(
+                "a DLA-managed destination cannot be replaced during package preparation",
+            ))
+        }
+    }
+}
+
+fn begin_replacement(
+    request: &PackageInstallExecution,
+    parent: &Path,
+    destination: &Path,
+    staging: &Path,
+) -> Result<ReplacementMarker, PackagePreparationError> {
+    let preview = inspect_destination(parent, &request.destination_name, &request.installation_id)?;
+    if preview.state != PackageDestinationState::OccupiedUnknown {
+        return Err(PackagePreparationError::adapter(
+            "only an unknown occupied destination can be replaced",
+        ));
+    }
+    let backup_name = format!(".dla-replaced-{}-{}", request.operation_id, Uuid::new_v4());
+    let backup = parent.join(&backup_name);
+    let marker = ReplacementMarker {
+        operation_id: request.operation_id.clone(),
+        installation_id: request.installation_id.clone(),
+        destination_name: request.destination_name.clone(),
+        backup_name,
+    };
+    fs::rename(destination, &backup).map_err(PackagePreparationError::adapter)?;
+    if let Err(error) = write_replacement_marker(staging, &marker) {
+        let _ = fs::rename(&backup, destination);
+        return Err(error);
+    }
+    Ok(marker)
+}
+
+fn write_replacement_marker(
+    root: &Path,
+    marker: &ReplacementMarker,
+) -> Result<(), PackagePreparationError> {
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(root.join(REPLACEMENT_MARKER))
+        .map_err(PackagePreparationError::adapter)?;
+    serde_json::to_writer(file, marker).map_err(PackagePreparationError::adapter)
+}
+
+fn read_replacement_marker(root: &Path) -> Result<ReplacementMarker, PackagePreparationError> {
+    let file =
+        File::open(root.join(REPLACEMENT_MARKER)).map_err(PackagePreparationError::adapter)?;
+    let marker: ReplacementMarker =
+        serde_json::from_reader(file).map_err(PackagePreparationError::adapter)?;
+    validate_replacement_marker(&marker)?;
+    Ok(marker)
+}
+
+fn validate_replacement_marker(marker: &ReplacementMarker) -> Result<(), PackagePreparationError> {
+    let valid_name = |name: &str| !name.is_empty() && Path::new(name).components().count() == 1;
+    if !valid_name(&marker.destination_name)
+        || !valid_name(&marker.backup_name)
+        || !marker.backup_name.starts_with(".dla-replaced-")
+    {
+        return Err(PackagePreparationError::adapter(
+            "replacement marker contains an invalid destination",
+        ));
+    }
+    Ok(())
+}
+
+fn restore_replacement(
+    parent: &Path,
+    staging: &Path,
+    marker: &ReplacementMarker,
+) -> Result<(), PackagePreparationError> {
+    let marker_path = staging.join(REPLACEMENT_MARKER);
+    if marker_path.exists() {
+        fs::remove_file(marker_path).map_err(PackagePreparationError::adapter)?;
+    }
+    fs::rename(
+        parent.join(&marker.backup_name),
+        parent.join(&marker.destination_name),
+    )
+    .map_err(PackagePreparationError::adapter)
+}
+
+fn rollback_replacement(destination: &Path) -> Result<(), PackagePreparationError> {
+    let marker = read_replacement_marker(destination)?;
+    validate_replacement_owner(destination, &marker)?;
+    let parent = destination
+        .parent()
+        .ok_or_else(|| PackagePreparationError::adapter("replacement destination has no parent"))?;
+    let backup = parent.join(&marker.backup_name);
+    if !backup.exists() {
+        return Err(PackagePreparationError::adapter(
+            "replacement backup is missing",
+        ));
+    }
+    let rejected = parent.join(format!(
+        ".dla-rejected-{}-{}",
+        marker.operation_id,
+        Uuid::new_v4()
+    ));
+    fs::rename(destination, &rejected).map_err(PackagePreparationError::adapter)?;
+    let original = parent.join(marker.destination_name);
+    if let Err(error) = fs::rename(&backup, &original) {
+        let _ = fs::rename(&rejected, destination);
+        return Err(PackagePreparationError::adapter(error));
+    }
+    let _ = fs::remove_dir_all(rejected);
+    Ok(())
+}
+
+pub(crate) fn commit_replacement(destination: &Path) -> Result<(), PackagePreparationError> {
+    let marker_path = destination.join(REPLACEMENT_MARKER);
+    if !marker_path.is_file() {
+        return Ok(());
+    }
+    let marker = read_replacement_marker(destination)?;
+    validate_replacement_owner(destination, &marker)?;
+    let parent = destination
+        .parent()
+        .ok_or_else(|| PackagePreparationError::adapter("replacement destination has no parent"))?;
+    fs::remove_file(marker_path).map_err(PackagePreparationError::adapter)?;
+    let backup = parent.join(marker.backup_name);
+    if backup.exists() {
+        let _ = remove_path(&backup);
+    }
+    Ok(())
+}
+
+fn validate_replacement_owner(
+    destination: &Path,
+    replacement: &ReplacementMarker,
+) -> Result<(), PackagePreparationError> {
+    let installation = read_installation_marker(destination)?;
+    if installation.installation_id != replacement.installation_id
+        || installation.operation_id != replacement.operation_id
+    {
+        return Err(PackagePreparationError::adapter(
+            "replacement marker does not match the verified installation",
+        ));
+    }
+    Ok(())
+}
+
+fn recover_uncommitted_replacement(
+    destination: &Path,
+    installation_id: &dla_domain::installation::InstallationId,
+) -> Result<(), PackagePreparationError> {
+    if !destination.join(REPLACEMENT_MARKER).is_file() {
+        return Ok(());
+    }
+    let ownership = read_installation_marker(destination)?;
+    if ownership.installation_id != *installation_id {
+        return Err(PackagePreparationError::adapter(
+            "interrupted replacement belongs to another installation",
+        ));
+    }
+    rollback_replacement(destination)
+}
+
+fn remove_path(path: &Path) -> std::io::Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
     }
 }
 
@@ -1100,6 +1312,52 @@ mod tests {
                 .and_then(|name| name.to_str()),
             Some("Occupied (2)")
         );
+
+        let replace = directory.path().join("Replace");
+        fs::create_dir(&replace).expect("replace destination");
+        fs::write(replace.join("save.dat"), b"existing progress").expect("existing progress");
+        let replace_request = PackageInstallExecution {
+            operation_id: Uuid::new_v4().to_string(),
+            destination_name: "Replace".to_owned(),
+            destination_conflict_policy: PackageDestinationConflictPolicy::ReplaceExisting,
+            ..request.clone()
+        };
+        let installer = DesktopPackageInstaller::new();
+        let replaced = installer
+            .extract(
+                &replace_request,
+                &PackagePreparationCancellationToken::default(),
+                &progress,
+            )
+            .expect("replace extraction");
+        assert!(replace.join("Work/Game.exe").is_file());
+        assert!(replace.join(REPLACEMENT_MARKER).is_file());
+        installer
+            .rollback(&replaced.destination_root)
+            .expect("replacement rollback");
+        assert_eq!(
+            fs::read(replace.join("save.dat")).expect("restored progress"),
+            b"existing progress"
+        );
+        assert!(!replace.join("Work/Game.exe").exists());
+
+        let committed_request = PackageInstallExecution {
+            operation_id: Uuid::new_v4().to_string(),
+            ..replace_request
+        };
+        let committed = installer
+            .extract(
+                &committed_request,
+                &PackagePreparationCancellationToken::default(),
+                &progress,
+            )
+            .expect("committed replacement");
+        installer
+            .commit(&committed.destination_root)
+            .expect("commit replacement");
+        assert!(replace.join("Work/Game.exe").is_file());
+        assert!(!replace.join("save.dat").exists());
+        assert!(!replace.join(REPLACEMENT_MARKER).exists());
     }
 
     #[test]
@@ -1217,32 +1475,32 @@ mod tests {
 
     #[test]
     fn rejects_archive_entries_reserved_for_launcher_metadata() {
-        let manifest = PackageManifest {
-            format: ArchiveFormat::Zip,
-            entries: vec![dla_domain::package::PackageManifestEntry {
-                entry_index: 0,
-                relative_path: Some(
-                    RelativePath::parse(".DLA-INSTALLATION.JSON").expect("reserved path"),
-                ),
-                raw_name: ".DLA-INSTALLATION.JSON".to_owned(),
-                is_directory: false,
-                is_symlink: false,
-                encrypted: false,
-                compressed_size: 1,
-                uncompressed_size: 1,
-                crc32: 0,
-            }],
-            file_count: 1,
-            directory_count: 0,
-            total_compressed_bytes: 1,
-            total_uncompressed_bytes: 1,
-            common_root: None,
-            safety: PackageSafety::Safe,
-            issues: Vec::new(),
-        };
+        for reserved in [".DLA-INSTALLATION.JSON", ".DLA-REPLACEMENT.JSON"] {
+            let manifest = PackageManifest {
+                format: ArchiveFormat::Zip,
+                entries: vec![dla_domain::package::PackageManifestEntry {
+                    entry_index: 0,
+                    relative_path: Some(RelativePath::parse(reserved).expect("reserved path")),
+                    raw_name: reserved.to_owned(),
+                    is_directory: false,
+                    is_symlink: false,
+                    encrypted: false,
+                    compressed_size: 1,
+                    uncompressed_size: 1,
+                    crc32: 0,
+                }],
+                file_count: 1,
+                directory_count: 0,
+                total_compressed_bytes: 1,
+                total_uncompressed_bytes: 1,
+                common_root: None,
+                safety: PackageSafety::Safe,
+                issues: Vec::new(),
+            };
 
-        let error = validate_internal_paths(&manifest).expect_err("reserved path");
+            let error = validate_internal_paths(&manifest).expect_err("reserved path");
 
-        assert!(error.to_string().contains("reserved"));
+            assert!(error.to_string().contains("reserved"));
+        }
     }
 }

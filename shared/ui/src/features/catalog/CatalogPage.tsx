@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 
 import { useCatalogFacetFilters } from "./CatalogFacetFiltersProvider";
 import { CatalogResults } from "./CatalogResults";
+import { CatalogEmptyState, catalogSnapshotIsEmpty } from "./CatalogEmptyState";
 import { catalogRequest, nextCatalogOffset } from "./query";
 import type { CatalogGateway, CatalogRouteState, CatalogTimeline } from "./types";
 import { usePresentation } from "../../preferences/PresentationProvider";
@@ -60,7 +61,9 @@ function LegacyCatalogPage({ filters, gateway, onOpenWork }: Omit<CatalogPagePro
 
       {catalog.isPending && <CatalogLoading />}
 
-      {firstPage && (
+      {firstPage && catalogSnapshotIsEmpty(firstPage.snapshot) ? (
+        <CatalogEmptyState />
+      ) : firstPage ? (
         <CatalogResults
           works={works}
           total={total}
@@ -76,7 +79,7 @@ function LegacyCatalogPage({ filters, gateway, onOpenWork }: Omit<CatalogPagePro
           onTimelineChange={setTimeline}
           onFacetFiltersChange={setFacetFilters}
         />
-      )}
+      ) : null}
     </main>
   );
 }

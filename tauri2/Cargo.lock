@@ -1136,6 +1136,7 @@ dependencies = [
  "dla-search-tantivy",
  "dla-sqlite",
  "gtk",
+ "libc",
  "log",
  "percent-encoding",
  "serde",

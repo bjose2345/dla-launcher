@@ -132,6 +132,8 @@ pub fn run() {
             }
             support::install_panic_capture(support.clone());
             app.manage(support.clone());
+            #[cfg(target_os = "linux")]
+            install_linux_termination_handlers(app.handle());
             log::info!(
                 target: "dla::lifecycle",
                 "event=startup_begin run_id={} diagnostic_mode={diagnostic_mode}",
@@ -547,13 +549,31 @@ pub fn run() {
         if matches!(event, tauri::RunEvent::Ready) {
             read_only_navigation::signal_runtime_ready(app);
         }
-        if matches!(event, tauri::RunEvent::Exit)
+        if matches!(event, tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. })
             && let Some(support) = app.try_state::<SupportRuntime>()
+            && support.mark_clean_shutdown()
         {
             log::info!(target: "dla::lifecycle", "event=clean_shutdown run_id={}", support.run_id());
-            support.mark_clean_shutdown();
         }
     });
+}
+
+#[cfg(target_os = "linux")]
+fn install_linux_termination_handlers(app: &tauri::AppHandle) {
+    for signal in [libc::SIGINT, libc::SIGTERM] {
+        let app = app.clone();
+        gtk::glib::source::unix_signal_add_once(signal, move || {
+            if let Some(support) = app.try_state::<SupportRuntime>() {
+                log::info!(
+                    target: "dla::lifecycle",
+                    "event=termination_requested signal={signal} run_id={}",
+                    support.run_id()
+                );
+                let _ = support.mark_clean_shutdown();
+            }
+            app.exit(0);
+        });
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -600,5 +620,34 @@ fn reveal_main_window(app: &tauri::AppHandle) {
                 let _ = main_window.set_focus();
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn content_security_policy_allows_private_audio_materialization() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("Tauri config");
+        let security = &config["app"]["security"];
+        for field in ["csp", "devCsp"] {
+            let policy = security[field].as_str().expect("content security policy");
+            let connect = policy
+                .split(';')
+                .find(|directive| directive.trim_start().starts_with("connect-src "))
+                .expect("connect-src directive");
+            assert!(connect.contains("dla-media:"));
+            assert!(connect.contains("http://dla-media.localhost"));
+        }
+    }
+
+    #[test]
+    fn linux_release_targets_exclude_the_unverified_appimage() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.linux.conf.json")).expect("Linux config");
+        assert_eq!(
+            config["bundle"]["targets"],
+            serde_json::json!(["deb", "rpm"])
+        );
     }
 }
