@@ -6,9 +6,9 @@ React, TypeScript, Vite, TanStack, SQLite, and Tantivy.
 
 This repository is the distributable product source. It contains no catalog
 database, imported package, user library, ROM collection, or personal path.
-The launcher creates empty local databases on first run; catalog information is
-added only when the user imports a `.dla` package. Small synthetic fixtures are
-kept solely for automated tests and are not loaded by production builds.
+The launcher creates empty local databases on first run. Catalog information is
+added only when the user imports a `.dla` package, available from the
+[DLA website](https://dlsitearchive.com/).
 
 > DLA Launcher is pre-release software. Back up irreplaceable files and review
 > destructive confirmations carefully.
