@@ -13,6 +13,16 @@ added only when the user imports a `.dla` package, available from the
 > DLA Launcher is pre-release software. Back up irreplaceable files and review
 > destructive confirmations carefully.
 
+## Screenshots
+
+### Catalog
+
+![DLA Launcher catalog](docs/images/readme/catalog.webp)
+
+| Library | Built-in reader |
+| --- | --- |
+| ![DLA Launcher library](docs/images/readme/library.webp) | ![DLA Launcher document reader](docs/images/readme/reader.webp) |
+
 ## Current capabilities
 
 - Import and atomically switch versioned `.dla` catalog packages.
