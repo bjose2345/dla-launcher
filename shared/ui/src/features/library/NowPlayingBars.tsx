@@ -44,9 +44,11 @@ export function envelopeLevel(previous: number, target: number, release: number)
 export function NowPlayingBars({
   installationId,
   alwaysVisible = false,
+  liveSpectrum = false,
 }: {
   installationId: string;
   alwaysVisible?: boolean;
+  liveSpectrum?: boolean;
 }) {
   const { t } = usePresentation();
   const playback = useMediaPlayback();
@@ -55,7 +57,11 @@ export function NowPlayingBars({
   const current = playback.session?.action === "play_audio"
     && playback.session.installationId === installationId;
   const playing = current && playback.playing;
-  const analyser = playing ? playback.analyser : null;
+  const analyser = playing && liveSpectrum ? playback.analyser : null;
+
+  useEffect(() => {
+    if (playing && liveSpectrum) playback.enableAnalyser();
+  }, [liveSpectrum, playback.enableAnalyser, playing]);
 
   useEffect(() => {
     const container = containerRef.current;

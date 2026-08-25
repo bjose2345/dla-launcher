@@ -95,6 +95,7 @@ interface MediaPlaybackValue {
   error: string;
   failure: MediaAssetFailure | null;
   analyser: AnalyserNode | null;
+  enableAnalyser: () => void;
   videoDisplay: VideoDisplayControls | null;
   playbackRate: number;
   setPlaybackRate: (rate: number) => void;
@@ -152,6 +153,7 @@ export function MediaPlaybackProvider({
   const [volume, setStoredVolume] = useState(1);
   const [playbackRate, setStoredPlaybackRate] = useState(1);
   const [error, setError] = useState("");
+  const [decodeFailure, setDecodeFailure] = useState<MediaAssetFailure | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
 
@@ -204,7 +206,6 @@ export function MediaPlaybackProvider({
     resumePlaybackRef.current = false;
     setError("");
     try {
-      const analyserReady = ensureAnalyser();
       if (resumePlayback) {
         element.currentTime = resumePlaybackPosition(
           element.currentTime,
@@ -212,8 +213,7 @@ export function MediaPlaybackProvider({
           element.ended,
         );
       }
-      const playbackStarted = element.play();
-      await Promise.all([analyserReady, playbackStarted]);
+      await element.play();
       if (!shouldPlayRef.current) {
         element.pause();
         return false;
@@ -226,7 +226,7 @@ export function MediaPlaybackProvider({
       setError(cause instanceof Error ? cause.message : String(cause));
       return false;
     }
-  }, [ensureAnalyser, playable.url]);
+  }, [playable.url]);
 
   const invalidateActivity = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ["library", "shelves"] });
@@ -283,6 +283,7 @@ export function MediaPlaybackProvider({
     setDurationSeconds(next.progress.durationMs === null ? null : next.progress.durationMs / 1_000);
     setPlaying(false);
     setError("");
+    setDecodeFailure(null);
     reportedSecondRef.current = -1;
     setPrepareRequest((current) => current + 1);
     return next;
@@ -299,7 +300,6 @@ export function MediaPlaybackProvider({
   const openWork = useCallback(async (installationId: string) => {
     try {
       stopPublishedVideo();
-      void ensureAnalyser();
       const element = audioRef.current;
       if (session?.installationId === installationId && element && playable.url) {
         resumePlaybackRef.current = element.paused;
@@ -311,18 +311,17 @@ export function MediaPlaybackProvider({
       setError(cause instanceof Error ? cause.message : String(cause));
       return null;
     }
-  }, [adopt, ensureAnalyser, gateway, playable.url, playCurrent, session, stopPublishedVideo]);
+  }, [adopt, gateway, playable.url, playCurrent, session, stopPublishedVideo]);
 
   const openVoiceQueue = useCallback(async () => {
     try {
       stopPublishedVideo();
-      void ensureAnalyser();
       return adopt(await gateway.openPersonalizedVoiceQueue());
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       return null;
     }
-  }, [adopt, ensureAnalyser, gateway, stopPublishedVideo]);
+  }, [adopt, gateway, stopPublishedVideo]);
 
   const closeAudio = useCallback(() => {
     const current = sessionRef.current;
@@ -377,6 +376,7 @@ export function MediaPlaybackProvider({
     setDurationSeconds(null);
     setPlaying(false);
     setError("");
+    setDecodeFailure(null);
     reportedSecondRef.current = -1;
     setPrepareRequest((current) => current + 1);
   }, []);
@@ -464,6 +464,22 @@ export function MediaPlaybackProvider({
     if (active) active.close();
     else closeAudio();
   }, [closeAudio]);
+
+  useEffect(() => {
+    const element = audioRef.current;
+    if (!element) return;
+    preparedSourceRef.current = "";
+    setDecodeFailure(null);
+    if (!playable.url) {
+      if (element.hasAttribute("src")) {
+        element.removeAttribute("src");
+        element.load();
+      }
+      return;
+    }
+    element.src = playable.url;
+    element.load();
+  }, [playable.url]);
 
   useEffect(() => {
     const element = audioRef.current;
@@ -566,6 +582,7 @@ export function MediaPlaybackProvider({
 
   const handlePlaybackReady = () => {
     const element = audioRef.current;
+    setDecodeFailure(null);
     if (
       element
       && element.paused
@@ -575,6 +592,17 @@ export function MediaPlaybackProvider({
       void playCurrent();
     }
   };
+
+  const handlePlaybackError = () => {
+    const mediaError = audioRef.current?.error;
+    setPlaying(false);
+    setDecodeFailure("unavailable");
+    setError(mediaError?.message || `Media playback failed with code ${mediaError?.code ?? 0}`);
+  };
+
+  const enableAnalyser = useCallback(() => {
+    void ensureAnalyser();
+  }, [ensureAnalyser]);
 
   const handleEnded = () => {
     const element = audioRef.current;
@@ -602,8 +630,9 @@ export function MediaPlaybackProvider({
     volume: videoPlayback?.volume ?? volume,
     loading: videoPlayback?.loading ?? playable.loading,
     error: videoPlayback?.error ?? error,
-    failure: videoPlayback?.failure ?? playable.failure,
+    failure: videoPlayback?.failure ?? playable.failure ?? decodeFailure,
     analyser: videoPlayback ? null : analyser,
+    enableAnalyser,
     playbackRate,
     setPlaybackRate,
     bufferedSeconds: videoPlayback?.bufferedSeconds ?? 0,
@@ -632,7 +661,8 @@ export function MediaPlaybackProvider({
     publishVideoPlayback,
     releaseVideoPlayback,
   }), [
-    analyser, close, durationSeconds, error, item, items, openVoiceQueue, openWork, playable.failure, playable.loading,
+    analyser, close, decodeFailure, durationSeconds, enableAnalyser, error, item, items, openVoiceQueue, openWork,
+    playable.failure, playable.loading,
     playing, positionSeconds, publishVideoPlayback, releaseVideoPlayback, seek, selectOrdinal, session,
     setRepeatMode, setShuffle, setVolume, skip, step, toggle, videoPlayback, volume,
   ]);
@@ -663,7 +693,6 @@ export function MediaPlaybackProvider({
       {children}
       <audio
         ref={audioRef}
-        src={playable.url || undefined}
         preload="auto"
         onTimeUpdate={handleTimeUpdate}
         onPlay={handlePlay}
@@ -671,6 +700,7 @@ export function MediaPlaybackProvider({
         onCanPlay={handlePlaybackReady}
         onSeeked={handlePlaybackReady}
         onEnded={handleEnded}
+        onError={handlePlaybackError}
       />
     </MediaPlaybackContext.Provider>
   );

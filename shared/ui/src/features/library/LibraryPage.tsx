@@ -749,7 +749,11 @@ function LibraryFeature({
               className={`library-feature-visualizer-layer is-analyser${visualizerMode === "analyser" ? " is-active" : ""}`}
               aria-hidden={visualizerMode !== "analyser"}
             >
-              <NowPlayingBars installationId={installation.id} alwaysVisible />
+              <NowPlayingBars
+                installationId={installation.id}
+                alwaysVisible
+                liveSpectrum={visualizerMode === "analyser"}
+              />
             </div>
           </div>
         ) : null}

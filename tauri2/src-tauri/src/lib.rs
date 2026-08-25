@@ -638,6 +638,11 @@ mod tests {
                 .expect("connect-src directive");
             assert!(connect.contains("dla-media:"));
             assert!(connect.contains("http://dla-media.localhost"));
+            let media = policy
+                .split(';')
+                .find(|directive| directive.trim_start().starts_with("media-src "))
+                .expect("media-src directive");
+            assert!(media.contains("blob:"));
         }
     }
 
