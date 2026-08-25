@@ -54,6 +54,24 @@ describe("work detail presentation", () => {
     ]);
   });
 
+  it("preserves sample fallback groups after native cache URL wrapping", () => {
+    const cacheUrl = (source: string) => `dla-cover://localhost/${encodeURIComponent(source)}`;
+    const mirrorOne = "https://img.dlsitearchive.com/works/RJ1/images/RJ1_img_smp1.webp";
+    const mirrorTwo = "https://img.dlsitearchive.com/works/RJ1/images/RJ1_img_smp2.webp";
+    const originalOne = "https://img.dlsite.jp/modpub/images2/work/RJ1_img_smp1.webp";
+    const originalTwo = "https://img.dlsite.jp/modpub/images2/work/RJ1_img_smp2.webp";
+
+    expect(sampleImageChains([
+      cacheUrl(mirrorOne),
+      cacheUrl(mirrorTwo),
+      cacheUrl(originalOne),
+      cacheUrl(originalTwo),
+    ])).toEqual([
+      [cacheUrl(mirrorOne), cacheUrl(originalOne)],
+      [cacheUrl(mirrorTwo), cacheUrl(originalTwo)],
+    ]);
+  });
+
   it("builds only recognized DLsite product links", () => {
     expect(dlsiteWorkUrl(work)).toBe("https://www.dlsite.com/maniax/work/=/product_id/RJ01234567.html");
     expect(dlsiteWorkUrl({ ...work, code: "BJ123", sourceCode: "other" })).toBeNull();

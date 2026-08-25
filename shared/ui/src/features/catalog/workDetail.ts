@@ -43,6 +43,10 @@ export function displayName(name: string, nameEnglish: string, english: boolean)
 }
 
 function imageAssetKey(value: string): string {
+  return imageAssetKeyFromValue(value, true);
+}
+
+function imageAssetKeyFromValue(value: string, unwrapSource: boolean): string {
   let path = value.split(/[?#]/, 1)[0] ?? value;
   try {
     path = new URL(value).pathname;
@@ -50,6 +54,19 @@ function imageAssetKey(value: string): string {
     path = path.replaceAll("\\", "/");
   }
   const filename = (path.split("/").at(-1) ?? "").toLowerCase();
+  if (unwrapSource) {
+    const source = decodeWrappedImageSource(filename);
+    if (source) return imageAssetKeyFromValue(source, false);
+  }
   const stem = filename.replace(/\.(?:avif|gif|jpe?g|png|webp)$/i, "");
   return stem ? `asset:${stem}` : `url:${value}`;
+}
+
+function decodeWrappedImageSource(value: string): string | null {
+  try {
+    const decoded = decodeURIComponent(value);
+    return decoded !== value && /^https?:\/\//i.test(decoded) ? decoded : null;
+  } catch {
+    return null;
+  }
 }
