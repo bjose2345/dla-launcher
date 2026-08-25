@@ -397,6 +397,10 @@
   box-shadow: inset 0 0 0 1px var(--color-error);
 }
 
+.review-retention {
+  margin-top: 16px;
+}
+
 .review-retention[disabled] {
   opacity: 0.55;
 }

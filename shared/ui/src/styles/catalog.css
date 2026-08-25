@@ -269,42 +269,42 @@
 .catalog-day-density {
   display: grid;
   justify-items: end;
-  gap: 3px;
+  gap: 4px;
 }
 
 .catalog-day-density > div {
   display: flex;
-  height: 31px;
+  height: 40px;
   align-items: end;
-  gap: 2px;
+  gap: 3px;
 }
 
 .catalog-day-density button {
-  width: 6px;
+  width: 7px;
   height: var(--density-height);
   padding: 0;
   border: 0;
-  background: color-mix(in oklch, var(--color-base-content) 42%, transparent);
-  clip-path: polygon(50% 0, 100% 4px, 100% 100%, 0 100%, 0 4px);
+  background: color-mix(in oklch, var(--color-base-content) 25%, transparent);
+  clip-path: polygon(0 3px, 100% 0, 100% 100%, 0 100%);
   cursor: pointer;
-  transition: height 180ms cubic-bezier(0.16, 1, 0.3, 1), background-color 150ms ease;
+  transition: background-color 150ms ease;
 }
 
 .catalog-day-density button:hover:not(:disabled) {
-  background: var(--color-primary);
+  background: color-mix(in oklch, var(--color-primary) 70%, transparent);
 }
 
 .catalog-day-density button:disabled {
+  background: color-mix(in oklch, var(--color-base-content) 10%, transparent);
   cursor: default;
-  opacity: 0.25;
 }
 
 .catalog-day-density small {
   color: var(--app-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.53rem;
-  font-weight: 750;
-  letter-spacing: 0.16em;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 

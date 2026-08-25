@@ -602,7 +602,7 @@ function CatalogDayDensity({
             aria-label={t("catalog.dayCountAria", { day: bucket.day, count: bucket.count.toLocaleString(locale) })}
             onClick={() => onDayClick(bucket.day)}
             style={{
-              "--density-height": `${4 + (26 * Math.max(0.08, bucket.count / maximum))}px`,
+              "--density-height": `${6 + (bucket.count / maximum) * 30}px`,
             } as CSSProperties}
             key={bucket.day}
           />
