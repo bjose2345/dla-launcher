@@ -451,6 +451,8 @@
   "library.destinationOccupiedHelp": "{name} уже существует. Сохраните оба варианта, замените его после проверки или выберите другую папку.",
   "library.destinationManagedOther": "Это место принадлежит другой работе в библиотеке",
   "library.destinationManagedOtherHelp": "Управляемую установку нельзя заменить здесь. Сохраните обе, воспользуйтесь экраном обслуживания или выберите другую папку.",
+  "library.destinationManagedOrphaned": "В этой папке осталась предыдущая установка",
+  "library.destinationManagedOrphanedHelp": "Её записи в библиотеке больше нет. Сохраните обе, замените папку после проверки или выберите другую папку.",
   "library.destinationManagedSame": "Эта работа уже использует это место назначения",
   "library.destinationManagedSameHelp": "Используйте обслуживание библиотеки для существующей установки или выберите другую папку.",
   "library.keepBoth": "Сохранить оба",

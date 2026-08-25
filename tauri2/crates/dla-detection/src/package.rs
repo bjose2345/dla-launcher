@@ -9,9 +9,9 @@ use dla_domain::{
         InferenceConfidence, InstallationPlatform, LaunchActionKind, MediaType, RelativePath,
     },
     package::{
-        ArchiveRetentionPolicy, CatalogPackageContext, InstallPlan, PackageClassification,
-        PackageContentKind, PackageInspection, PackageLaunchCandidate, PackageManifest,
-        PackageSafety, PackageSourceSet, PackageSourceSetKind, SourceArtifact,
+        ArchiveRetentionPolicy, CatalogPackageContext, CatalogPackageRelease, InstallPlan,
+        PackageClassification, PackageContentKind, PackageInspection, PackageLaunchCandidate,
+        PackageManifest, PackageSafety, PackageSourceSet, PackageSourceSetKind, SourceArtifact,
     },
 };
 
@@ -56,6 +56,13 @@ pub fn classify_package(
         source_set: Some(PackageSourceSet {
             kind: PackageSourceSetKind::SingleArchive,
             volumes: vec![source],
+        }),
+        catalog_release: catalog.map(|context| CatalogPackageRelease {
+            rom_position: context.rom_position,
+            rom_count: context.rom_count,
+            name: context.rom.name.clone(),
+            version: context.rom.version.clone(),
+            update_date: context.rom.update_date.clone(),
         }),
         format: manifest.format,
         safety: manifest.safety,

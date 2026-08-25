@@ -451,6 +451,8 @@
   "library.destinationOccupiedHelp": "{name} ist bereits vorhanden. Behalten Sie beide, ersetzen Sie es nach der Überprüfung oder wählen Sie einen anderen Ordner.",
   "library.destinationManagedOther": "Ein anderes Bibliothekswerk besitzt dieses Ziel",
   "library.destinationManagedOtherHelp": "Eine verwaltete Installation kann hier nicht ersetzt werden. Behalten Sie beide, verwenden Sie deren Wartungsseite oder wählen Sie einen anderen Ordner.",
+  "library.destinationManagedOrphaned": "Eine frühere Installation ist noch in diesem Ordner vorhanden",
+  "library.destinationManagedOrphanedHelp": "Der zugehörige Bibliothekseintrag existiert nicht mehr. Behalten Sie beide, ersetzen Sie den Ordner nach der Überprüfung oder wählen Sie einen anderen Ordner.",
   "library.destinationManagedSame": "Dieses Werk besitzt dieses Ziel bereits",
   "library.destinationManagedSameHelp": "Verwenden Sie die Bibliothekswartung für die bestehende Installation oder wählen Sie einen anderen Ordner.",
   "library.keepBoth": "Beide behalten",

@@ -74,7 +74,8 @@ export type PackageDestinationState =
   | "available"
   | "occupied_unknown"
   | "managed_same_installation"
-  | "managed_other_installation";
+  | "managed_other_installation"
+  | "managed_orphaned_installation";
 
 export interface PackageSourceArtifact {
   scanEntryId: string;
@@ -98,6 +99,13 @@ export interface PackageInspection {
     sha256: string | null;
   };
   sourceSet?: PackageSourceSet | null;
+  catalogRelease?: {
+    romPosition: number;
+    romCount: number;
+    name: string;
+    version: string;
+    updateDate: string;
+  } | null;
   format: ArchiveFormat;
   safety: PackageSafety;
   entryCount: number;

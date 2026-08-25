@@ -313,6 +313,7 @@ impl LibraryMaintenanceService {
             destination_parent: parent.to_string_lossy().into_owned(),
             destination_name: name.to_owned(),
             destination_conflict_policy: PackageDestinationConflictPolicy::Refuse,
+            replace_managed_installation_id: None,
             inspection,
             source_set: prepared.source_set.clone(),
         };

@@ -34,6 +34,7 @@ pub struct PackageInstallExecution {
     pub destination_parent: String,
     pub destination_name: String,
     pub destination_conflict_policy: PackageDestinationConflictPolicy,
+    pub replace_managed_installation_id: Option<InstallationId>,
     pub inspection: PackageInspection,
     pub source_set: PackageSourceSet,
 }
@@ -53,6 +54,7 @@ pub enum PackageDestinationState {
     OccupiedUnknown,
     ManagedSameInstallation,
     ManagedOtherInstallation,
+    ManagedOrphanedInstallation,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -61,6 +63,8 @@ pub struct PackageDestinationPreview {
     pub state: PackageDestinationState,
     pub destination_name: String,
     pub keep_both_destination_name: Option<String>,
+    #[serde(skip)]
+    pub managed_installation_id: Option<InstallationId>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -261,13 +265,31 @@ impl PackagePreparationService {
             "Validating destination, package volumes, and available disk space",
         ))?;
 
+        let destination_name = destination_name(&installation, &inspection);
+        let destination_preview =
+            self.inspect_destination_preview(PackageDestinationInspection {
+                installation_id: request.installation_id.clone(),
+                destination_parent: request.destination_parent.clone(),
+                destination_name: destination_name.clone(),
+            })?;
+        let replace_managed_installation_id = match (
+            request.destination_conflict_policy,
+            destination_preview.state,
+        ) {
+            (
+                PackageDestinationConflictPolicy::ReplaceExisting,
+                PackageDestinationState::ManagedOrphanedInstallation,
+            ) => destination_preview.managed_installation_id,
+            _ => None,
+        };
         let execution = PackageInstallExecution {
             operation_id: request.operation_id.clone(),
             installation_id: request.installation_id.clone(),
             source_root: installation.root_path.clone(),
             destination_parent: request.destination_parent.clone(),
-            destination_name: destination_name(&installation, &inspection),
+            destination_name,
             destination_conflict_policy: request.destination_conflict_policy,
+            replace_managed_installation_id,
             inspection: inspection.clone(),
             source_set: source_set.clone(),
         };
@@ -346,12 +368,25 @@ impl PackagePreparationService {
                 prepared.destination_root,
             ));
         }
-        self.installer
-            .inspect_destination(&PackageDestinationInspection {
-                installation_id: installation_id.clone(),
-                destination_parent,
-                destination_name: destination_name(&installation, inspection),
-            })
+        self.inspect_destination_preview(PackageDestinationInspection {
+            installation_id: installation_id.clone(),
+            destination_parent,
+            destination_name: destination_name(&installation, inspection),
+        })
+    }
+
+    fn inspect_destination_preview(
+        &self,
+        request: PackageDestinationInspection,
+    ) -> Result<PackageDestinationPreview, PackagePreparationError> {
+        let mut preview = self.installer.inspect_destination(&request)?;
+        if preview.state == PackageDestinationState::ManagedOtherInstallation
+            && let Some(owner) = preview.managed_installation_id.as_ref()
+            && self.installations.read(owner)?.is_none()
+        {
+            preview.state = PackageDestinationState::ManagedOrphanedInstallation;
+        }
+        Ok(preview)
     }
 }
 
@@ -375,7 +410,21 @@ fn destination_name(installation: &Installation, inspection: &PackageInspection)
         .split('.')
         .next()
         .unwrap_or("DLA Work");
-    sanitize_directory_name(identity.unwrap_or(fallback))
+    let base = sanitize_directory_name(identity.unwrap_or(fallback));
+    let Some(release) = inspection.catalog_release.as_ref() else {
+        return base;
+    };
+    if release.rom_count <= 1 || release.rom_position == 0 {
+        return base;
+    }
+    let label = [release.version.as_str(), release.update_date.as_str()]
+        .into_iter()
+        .find(|value| !value.trim().is_empty())
+        .map(str::trim)
+        .map(sanitize_directory_name)
+        .filter(|value| value != "DLA Work")
+        .unwrap_or_else(|| format!("Package {}", release.rom_position + 1));
+    sanitize_directory_name(&format!("{base} ({label})"))
 }
 
 fn sanitize_directory_name(value: &str) -> String {
@@ -437,8 +486,8 @@ mod tests {
             RelativePath,
         },
         package::{
-            ArchiveFormat, InstallPlan, PackageClassification, PackageContentKind,
-            PackageSourceSetKind, SourceArtifact, SourceArtifactKind,
+            ArchiveFormat, CatalogPackageRelease, InstallPlan, PackageClassification,
+            PackageContentKind, PackageSourceSetKind, SourceArtifact, SourceArtifactKind,
         },
         scanner::ScanEntryId,
     };
@@ -525,6 +574,8 @@ mod tests {
         cancel_after_extract: bool,
         delete_error: bool,
         rollbacks: Mutex<Vec<String>>,
+        executions: Mutex<Vec<PackageInstallExecution>>,
+        destination_preview: Mutex<Option<PackageDestinationPreview>>,
         commits: AtomicUsize,
         deletes: AtomicUsize,
     }
@@ -534,19 +585,32 @@ mod tests {
             &self,
             request: &PackageDestinationInspection,
         ) -> Result<PackageDestinationPreview, PackagePreparationError> {
+            if let Some(preview) = self
+                .destination_preview
+                .lock()
+                .expect("destination preview")
+                .clone()
+            {
+                return Ok(preview);
+            }
             Ok(PackageDestinationPreview {
                 state: PackageDestinationState::Available,
                 destination_name: request.destination_name.clone(),
                 keep_both_destination_name: None,
+                managed_installation_id: None,
             })
         }
 
         fn extract(
             &self,
-            _request: &PackageInstallExecution,
+            request: &PackageInstallExecution,
             cancellation: &PackagePreparationCancellationToken,
             _progress: &dyn PackagePreparationProgressSink,
         ) -> Result<PackageExtractionResult, PackagePreparationError> {
+            self.executions
+                .lock()
+                .expect("executions")
+                .push(request.clone());
             if self.cancel_after_extract {
                 cancellation.cancel();
             }
@@ -599,6 +663,104 @@ mod tests {
     fn destination_names_never_preserve_native_path_metacharacters() {
         assert_eq!(sanitize_directory_name("RJ:01/Bad*Name"), "RJ_01_Bad_Name");
         assert_eq!(sanitize_directory_name("..."), "DLA Work");
+    }
+
+    #[test]
+    fn exact_catalog_releases_use_stable_versioned_destination_names() {
+        let mut installation = installation();
+        installation.detection.catalog_identity = Some(dla_domain::installation::CatalogIdentity {
+            work_code: "RJ01678999".to_owned(),
+            confidence: dla_domain::scanner::ScanMatchConfidence::Exact,
+            reason_codes: vec!["archive_sha256_match".to_owned()],
+        });
+        installation
+            .detection
+            .package_inspection
+            .as_mut()
+            .expect("inspection")
+            .catalog_release = Some(CatalogPackageRelease {
+            rom_position: 0,
+            rom_count: 2,
+            name: "RJ01678999.zip".to_owned(),
+            version: "2.0".to_owned(),
+            update_date: "2026-08-24".to_owned(),
+        });
+        let inspection = installation
+            .detection
+            .package_inspection
+            .as_ref()
+            .expect("inspection");
+        assert_eq!(destination_name(&installation, inspection), "RJ01678999");
+
+        installation
+            .detection
+            .package_inspection
+            .as_mut()
+            .expect("inspection")
+            .catalog_release = Some(CatalogPackageRelease {
+            rom_position: 1,
+            rom_count: 2,
+            name: "RJ01678999-old.zip".to_owned(),
+            version: String::new(),
+            update_date: "2020-02-02".to_owned(),
+        });
+        assert_eq!(
+            destination_name(
+                &installation,
+                installation
+                    .detection
+                    .package_inspection
+                    .as_ref()
+                    .expect("inspection"),
+            ),
+            "RJ01678999 (2020-02-02)"
+        );
+    }
+
+    #[test]
+    fn orphaned_managed_destinations_require_explicit_replacement_authorization() {
+        let preparations = Arc::new(MemoryPreparations {
+            saved: Mutex::new(Vec::new()),
+            fail_next_save: std::sync::atomic::AtomicBool::new(false),
+        });
+        let installer = Arc::new(recording_installer(false, false));
+        *installer
+            .destination_preview
+            .lock()
+            .expect("destination preview") = Some(PackageDestinationPreview {
+            state: PackageDestinationState::ManagedOtherInstallation,
+            destination_name: "RJ000001".to_owned(),
+            keep_both_destination_name: Some("RJ000001 (2)".to_owned()),
+            managed_installation_id: Some(InstallationId("removed-installation".to_owned())),
+        });
+        let service = service(Arc::clone(&preparations), Arc::clone(&installer));
+        let preview = service
+            .inspect_destination(
+                &InstallationId("installation".to_owned()),
+                "/library".to_owned(),
+            )
+            .expect("preview");
+        assert_eq!(
+            preview.state,
+            PackageDestinationState::ManagedOrphanedInstallation
+        );
+
+        let mut replacement = request(ArchiveRetentionPolicy::Keep);
+        replacement.destination_conflict_policy = PackageDestinationConflictPolicy::ReplaceExisting;
+        service
+            .execute(
+                replacement,
+                &PackagePreparationCancellationToken::default(),
+                &NoopProgress,
+            )
+            .expect("replacement");
+        assert_eq!(
+            installer.executions.lock().expect("executions")[0]
+                .replace_managed_installation_id
+                .as_ref()
+                .map(|id| id.0.as_str()),
+            Some("removed-installation")
+        );
     }
 
     #[test]
@@ -691,6 +853,8 @@ mod tests {
             cancel_after_extract,
             delete_error,
             rollbacks: Mutex::new(Vec::new()),
+            executions: Mutex::new(Vec::new()),
+            destination_preview: Mutex::new(None),
             commits: AtomicUsize::new(0),
             deletes: AtomicUsize::new(0),
         }
@@ -734,6 +898,7 @@ mod tests {
                 package_inspection: Some(PackageInspection {
                     source,
                     source_set: Some(source_set),
+                    catalog_release: None,
                     format: ArchiveFormat::Zip,
                     safety: PackageSafety::Safe,
                     entry_count: 2,

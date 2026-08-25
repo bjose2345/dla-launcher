@@ -451,6 +451,8 @@
   "library.destinationOccupiedHelp": "{name} existe déjà. Conservez les deux, remplacez-le après vérification ou choisissez un autre dossier.",
   "library.destinationManagedOther": "Une autre œuvre de la bibliothèque possède cette destination",
   "library.destinationManagedOtherHelp": "Une installation gérée ne peut pas être remplacée ici. Conservez les deux, utilisez son écran de maintenance ou choisissez un autre dossier.",
+  "library.destinationManagedOrphaned": "Une installation précédente subsiste dans ce dossier",
+  "library.destinationManagedOrphanedHelp": "Son entrée de bibliothèque n’existe plus. Conservez les deux, remplacez-la après vérification ou choisissez un autre dossier.",
   "library.destinationManagedSame": "Cette œuvre possède déjà cette destination",
   "library.destinationManagedSameHelp": "Utilisez la maintenance de la bibliothèque pour l’installation existante ou choisissez un autre dossier.",
   "library.keepBoth": "Conserver les deux",

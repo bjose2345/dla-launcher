@@ -269,6 +269,45 @@ describe("LibraryReviewPage", () => {
     expect(screen.getByRole("button", { name: "Keep both" })).toBeTruthy();
   });
 
+  it("allows an explicitly warned replacement when a managed folder has no Library owner", async () => {
+    const installation = readyInstallation();
+    installation.detection.packageInspection = packageInspection();
+    const gateway = libraryGateway({ installation });
+    gateway.selectInstallationDestination = vi.fn().mockResolvedValue({
+      accessHandle: "destination-handle",
+      displayPath: "/home/developer/DLA Library",
+    });
+    gateway.inspectPackageDestination = vi.fn().mockResolvedValue({
+      state: "managed_orphaned_installation",
+      destinationName: "RJ01678999",
+      keepBothDestinationName: "RJ01678999 (2)",
+    });
+    gateway.startPackagePreparation = vi.fn().mockResolvedValue({
+      operationId: "preparation-1",
+      installationId: "installation-1",
+      stage: "queued",
+      counters: { totalBytes: 0, processedBytes: 0, totalFiles: 0, processedFiles: 0 },
+      currentPath: null,
+      detail: "queued",
+    });
+    renderReview(gateway);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Choose destination" }));
+
+    expect(await screen.findByText("A previous installation remains in this folder")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Keep both" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Replace existing" }));
+    expect(screen.getByText(/including saves or other user files/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Prepare and verify" }));
+
+    await waitFor(() => expect(gateway.startPackagePreparation).toHaveBeenCalledWith(
+      "installation-1",
+      "destination-handle",
+      "replace_existing",
+      "delete_after_verified_install",
+    ));
+  });
+
   it("adds an unreviewed package to the library after preparation completes", async () => {
     const installation = readyInstallation();
     installation.overrides.reviewedAt = null;

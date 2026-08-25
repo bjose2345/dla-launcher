@@ -119,6 +119,7 @@ impl PackageInstaller for DesktopPackageInstaller {
             &request.destination_name,
             &request.installation_id,
             request.destination_conflict_policy,
+            request.replace_managed_installation_id.as_ref(),
         )?;
         validate_available_space(&destination_parent, manifest.total_uncompressed_bytes)?;
         let staging = destination_parent.join(format!(
@@ -269,6 +270,7 @@ impl PackageInstaller for DesktopPackageInstaller {
             destination_parent: parent.to_string_lossy().into_owned(),
             destination_name: repair_name,
             destination_conflict_policy: PackageDestinationConflictPolicy::Refuse,
+            replace_managed_installation_id: None,
             inspection: request.inspection.clone(),
             source_set: request.source_set.clone(),
         };
@@ -465,16 +467,22 @@ fn inspect_destination(
                 state: PackageDestinationState::Available,
                 destination_name: destination_name.to_owned(),
                 keep_both_destination_name: None,
+                managed_installation_id: None,
             });
         }
         Err(error) => return Err(PackagePreparationError::adapter(error)),
     };
+    let mut managed_installation_id = None;
     let state = if metadata.is_dir() && !metadata.file_type().is_symlink() {
         match read_installation_marker(&destination) {
             Ok(marker) if marker.installation_id == *installation_id => {
+                managed_installation_id = Some(marker.installation_id);
                 PackageDestinationState::ManagedSameInstallation
             }
-            Ok(_) => PackageDestinationState::ManagedOtherInstallation,
+            Ok(marker) => {
+                managed_installation_id = Some(marker.installation_id);
+                PackageDestinationState::ManagedOtherInstallation
+            }
             Err(_) => PackageDestinationState::OccupiedUnknown,
         }
     } else {
@@ -487,6 +495,7 @@ fn inspect_destination(
         state,
         destination_name: destination_name.to_owned(),
         keep_both_destination_name,
+        managed_installation_id,
     })
 }
 
@@ -495,6 +504,7 @@ fn select_destination(
     destination_name: &str,
     installation_id: &dla_domain::installation::InstallationId,
     policy: PackageDestinationConflictPolicy,
+    replace_managed_installation_id: Option<&dla_domain::installation::InstallationId>,
 ) -> Result<PathBuf, PackagePreparationError> {
     let preview = inspect_destination(parent, destination_name, installation_id)?;
     match (preview.state, policy) {
@@ -514,6 +524,12 @@ fn select_destination(
             PackageDestinationState::OccupiedUnknown,
             PackageDestinationConflictPolicy::ReplaceExisting,
         ) => Ok(parent.join(destination_name)),
+        (
+            PackageDestinationState::ManagedOtherInstallation,
+            PackageDestinationConflictPolicy::ReplaceExisting,
+        ) if preview.managed_installation_id.as_ref() == replace_managed_installation_id => {
+            Ok(parent.join(destination_name))
+        }
         (_, PackageDestinationConflictPolicy::ReplaceExisting) => {
             Err(PackagePreparationError::adapter(
                 "a DLA-managed destination cannot be replaced during package preparation",
@@ -529,9 +545,13 @@ fn begin_replacement(
     staging: &Path,
 ) -> Result<ReplacementMarker, PackagePreparationError> {
     let preview = inspect_destination(parent, &request.destination_name, &request.installation_id)?;
-    if preview.state != PackageDestinationState::OccupiedUnknown {
+    let authorized_managed_replacement = preview.state
+        == PackageDestinationState::ManagedOtherInstallation
+        && preview.managed_installation_id == request.replace_managed_installation_id;
+    if preview.state != PackageDestinationState::OccupiedUnknown && !authorized_managed_replacement
+    {
         return Err(PackagePreparationError::adapter(
-            "only an unknown occupied destination can be replaced",
+            "only an unknown or explicitly authorized orphaned destination can be replaced",
         ));
     }
     let backup_name = format!(".dla-replaced-{}-{}", request.operation_id, Uuid::new_v4());
@@ -1228,9 +1248,11 @@ mod tests {
             destination_parent: directory.path().to_string_lossy().into_owned(),
             destination_name: "Installed".to_owned(),
             destination_conflict_policy: PackageDestinationConflictPolicy::Refuse,
+            replace_managed_installation_id: None,
             inspection: PackageInspection {
                 source: source_set.volumes[0].clone(),
                 source_set: Some(source_set.clone()),
+                catalog_release: None,
                 format: ArchiveFormat::Zip,
                 safety: PackageSafety::Safe,
                 entry_count: manifest.entries.len() as u64,
@@ -1358,6 +1380,79 @@ mod tests {
         assert!(replace.join("Work/Game.exe").is_file());
         assert!(!replace.join("save.dat").exists());
         assert!(!replace.join(REPLACEMENT_MARKER).exists());
+
+        let orphaned = directory.path().join("Orphaned");
+        fs::create_dir(&orphaned).expect("orphaned destination");
+        fs::write(orphaned.join("save.dat"), b"orphaned progress").expect("orphaned save");
+        fs::write(
+            orphaned.join(INSTALLATION_MARKER),
+            serde_json::to_vec(&InstallationMarker {
+                operation_id: "removed-operation".to_owned(),
+                installation_id: InstallationId("removed-installation".to_owned()),
+                installed_file_count: 1,
+                installed_bytes: 17,
+            })
+            .expect("orphaned marker"),
+        )
+        .expect("orphaned marker");
+        let orphaned_request = PackageInstallExecution {
+            operation_id: Uuid::new_v4().to_string(),
+            destination_name: "Orphaned".to_owned(),
+            destination_conflict_policy: PackageDestinationConflictPolicy::ReplaceExisting,
+            replace_managed_installation_id: Some(InstallationId(
+                "removed-installation".to_owned(),
+            )),
+            ..request.clone()
+        };
+        let installed = installer
+            .extract(
+                &orphaned_request,
+                &PackagePreparationCancellationToken::default(),
+                &progress,
+            )
+            .expect("authorized orphan replacement");
+        installer
+            .commit(&installed.destination_root)
+            .expect("commit orphan replacement");
+        assert!(!orphaned.join("save.dat").exists());
+        assert_eq!(
+            read_installation_marker(&orphaned)
+                .expect("replacement marker")
+                .installation_id,
+            InstallationId("installation".to_owned())
+        );
+
+        let protected = directory.path().join("Protected");
+        fs::create_dir(&protected).expect("protected destination");
+        fs::write(
+            protected.join(INSTALLATION_MARKER),
+            serde_json::to_vec(&InstallationMarker {
+                operation_id: "active-operation".to_owned(),
+                installation_id: InstallationId("active-installation".to_owned()),
+                installed_file_count: 1,
+                installed_bytes: 1,
+            })
+            .expect("protected marker"),
+        )
+        .expect("protected marker");
+        let protected_request = PackageInstallExecution {
+            operation_id: Uuid::new_v4().to_string(),
+            destination_name: "Protected".to_owned(),
+            destination_conflict_policy: PackageDestinationConflictPolicy::ReplaceExisting,
+            replace_managed_installation_id: Some(InstallationId(
+                "different-installation".to_owned(),
+            )),
+            ..request
+        };
+        let error = installer
+            .extract(
+                &protected_request,
+                &PackagePreparationCancellationToken::default(),
+                &progress,
+            )
+            .expect_err("active managed destination remains protected");
+        assert!(error.to_string().contains("cannot be replaced"));
+        assert!(protected.join(INSTALLATION_MARKER).is_file());
     }
 
     #[test]
@@ -1421,6 +1516,13 @@ mod tests {
         assert_eq!(
             inspect("Other").keep_both_destination_name.as_deref(),
             Some("Other (2)")
+        );
+        assert_eq!(
+            inspect("Other")
+                .managed_installation_id
+                .as_ref()
+                .map(|id| id.0.as_str()),
+            Some("other-installation")
         );
     }
 

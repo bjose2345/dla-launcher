@@ -114,8 +114,19 @@ pub struct CatalogPackageContext {
     pub category_names: Vec<String>,
     pub file_format_names: Vec<String>,
     pub rom_position: usize,
+    pub rom_count: usize,
     pub rom: CatalogRom,
     pub contents: Option<CatalogRomContents>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogPackageRelease {
+    pub rom_position: usize,
+    pub rom_count: usize,
+    pub name: String,
+    pub version: String,
+    pub update_date: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -157,6 +168,8 @@ pub struct PackageInspection {
     pub source: SourceArtifact,
     #[serde(default)]
     pub source_set: Option<PackageSourceSet>,
+    #[serde(default)]
+    pub catalog_release: Option<CatalogPackageRelease>,
     pub format: ArchiveFormat,
     pub safety: PackageSafety,
     pub entry_count: u64,

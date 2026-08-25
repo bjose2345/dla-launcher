@@ -930,6 +930,7 @@ mod tests {
                 sha256: Some("fixture-sha256".to_owned()),
             },
             source_set: None,
+            catalog_release: None,
             format: ArchiveFormat::Zip,
             safety: PackageSafety::Safe,
             entry_count: 3,

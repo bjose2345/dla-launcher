@@ -451,6 +451,8 @@
   "library.destinationOccupiedHelp": "{name} esiste già. Conservali entrambi, sostituiscilo dopo la verifica oppure scegli un'altra cartella.",
   "library.destinationManagedOther": "Un'altra opera della raccolta possiede questa destinazione",
   "library.destinationManagedOtherHelp": "Un'installazione gestita non può essere sostituita qui. Conservale entrambe, usa la relativa schermata di manutenzione o scegli un'altra cartella.",
+  "library.destinationManagedOrphaned": "In questa cartella è rimasta un’installazione precedente",
+  "library.destinationManagedOrphanedHelp": "La relativa voce della raccolta non esiste più. Conservale entrambe, sostituiscila dopo la verifica o scegli un’altra cartella.",
   "library.destinationManagedSame": "Quest'opera possiede già questa destinazione",
   "library.destinationManagedSameHelp": "Usa la manutenzione della libreria per l'installazione esistente oppure scegli un'altra cartella.",
   "library.keepBoth": "Conserva entrambi",

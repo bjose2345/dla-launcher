@@ -688,7 +688,8 @@ function PackageZone({
   const keepBothSelected = destinationConflictPolicy === "keep_both"
     && Boolean(destinationPreview?.keepBothDestinationName);
   const replaceSelected = destinationConflictPolicy === "replace_existing"
-    && destinationPreview?.state === "occupied_unknown";
+    && (destinationPreview?.state === "occupied_unknown"
+      || destinationPreview?.state === "managed_orphaned_installation");
   const destinationReady = destinationAvailable || keepBothSelected || replaceSelected;
 
   return (
@@ -742,6 +743,8 @@ function PackageZone({
                     ? "library.destinationKeepBothReady"
                     : destinationPreview.state === "managed_same_installation"
                       ? "library.destinationManagedSame"
+                      : destinationPreview.state === "managed_orphaned_installation"
+                        ? "library.destinationManagedOrphaned"
                       : destinationPreview.state === "managed_other_installation"
                         ? "library.destinationManagedOther"
                         : "library.destinationOccupied")}</strong>
@@ -751,6 +754,8 @@ function PackageZone({
                     ? t("library.destinationKeepBothAs", { name: destinationPreview.keepBothDestinationName })
                     : t(destinationPreview.state === "managed_same_installation"
                       ? "library.destinationManagedSameHelp"
+                      : destinationPreview.state === "managed_orphaned_installation"
+                        ? "library.destinationManagedOrphanedHelp"
                       : destinationPreview.state === "managed_other_installation"
                         ? "library.destinationManagedOtherHelp"
                         : "library.destinationOccupiedHelp", { name: destinationPreview.destinationName })}</span>
@@ -762,7 +767,8 @@ function PackageZone({
                       <CopyPlus aria-hidden="true" />{t("library.keepBoth")}
                     </button>
                   ) : null}
-                {destinationPreview.state === "occupied_unknown" ? (
+                {destinationPreview.state === "occupied_unknown"
+                  || destinationPreview.state === "managed_orphaned_installation" ? (
                   <button className="review-button is-danger" type="button" disabled={replaceSelected} onClick={() => setDestinationConflictPolicy("replace_existing")}>
                     <Trash2 aria-hidden="true" />{t("library.replaceExisting")}
                   </button>

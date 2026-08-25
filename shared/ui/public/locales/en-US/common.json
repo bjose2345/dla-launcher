@@ -451,6 +451,8 @@
   "library.destinationOccupiedHelp": "{name} already exists. Keep both, replace it after verification, or choose another folder.",
   "library.destinationManagedOther": "Another library work owns that destination",
   "library.destinationManagedOtherHelp": "A managed installation cannot be replaced here. Keep both, use its maintenance screen, or choose another folder.",
+  "library.destinationManagedOrphaned": "A previous installation remains in this folder",
+  "library.destinationManagedOrphanedHelp": "Its Library entry no longer exists. Keep both, replace it after verification, or choose another folder.",
   "library.destinationManagedSame": "This work already owns that destination",
   "library.destinationManagedSameHelp": "Use Library maintenance for the existing installation, or choose another folder.",
   "library.keepBoth": "Keep both",

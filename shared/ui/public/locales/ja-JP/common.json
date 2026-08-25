@@ -451,6 +451,8 @@
   "library.destinationOccupiedHelp": "{name} は既に存在します。両方を残すか、検証後に置き換えるか、別のフォルダーを選択してください。",
   "library.destinationManagedOther": "別のライブラリ作品がこの保存先を使用しています",
   "library.destinationManagedOtherHelp": "管理対象のインストールはここでは置き換えられません。両方を残すか、そのメンテナンス画面を使用するか、別のフォルダーを選択してください。",
+  "library.destinationManagedOrphaned": "以前のインストールがこのフォルダーに残っています",
+  "library.destinationManagedOrphanedHelp": "対応するライブラリエントリは存在しません。両方を残すか、検証後に置き換えるか、別のフォルダーを選択してください。",
   "library.destinationManagedSame": "この作品は既にその保存先を使用しています",
   "library.destinationManagedSameHelp": "既存のインストールにはライブラリのメンテナンスを使用するか、別のフォルダーを選択してください。",
   "library.keepBoth": "両方を残す",

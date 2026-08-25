@@ -304,6 +304,7 @@ fn catalog_package_context(
         category_names,
         file_format_names,
         rom_position,
+        rom_count: detail.roms.len(),
         rom: detail.roms[rom_position].clone(),
         contents,
     }))
