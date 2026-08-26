@@ -7,7 +7,6 @@ import {
   LoaderCircle,
   PanelRightOpen,
   Pause,
-  Play,
   RotateCw,
   Video,
 } from "lucide-react";
@@ -859,9 +858,12 @@ export function VideoPlayer({
             loop={repeatMode === "one" || (repeatMode === "all" && items.length === 1)}
             onLoadedMetadata={handleLoadedMetadata}
             onCanPlay={() => {
+              setMediaLoading(false);
               if (!readyRef.current && !restoringRef.current) finishPreparation();
               else if (shouldPlayRef.current) void attemptPlay();
             }}
+            onPlaying={() => setMediaLoading(false)}
+            onWaiting={() => setMediaLoading(true)}
             onSeeked={handleSeeked}
             onPlay={handlePlay}
             onPause={handlePause}
@@ -891,13 +893,6 @@ export function VideoPlayer({
         ) : null}
         {!nativeGateway ? <span className="video-player-vignette" aria-hidden="true" /> : null}
 
-        {!nativeGateway && loading && !errorMessage ? (
-          <div className="video-player-loading" aria-live="polite">
-            <LoaderCircle className="library-spin" aria-hidden="true" />
-            <span>{t("media.video.loading")}</span>
-          </div>
-        ) : null}
-
         {errorMessage ? (
           <div className="video-player-error" role="alert">
             <AlertTriangle aria-hidden="true" />
@@ -905,12 +900,6 @@ export function VideoPlayer({
             <span>{currentItem ? mediaItemName(currentItem) : t("media.noItems")}</span>
             <button type="button" onClick={retry}><RotateCw aria-hidden="true" />{t("media.video.retry")}</button>
           </div>
-        ) : null}
-
-        {!nativeGateway && !hasStarted && !playing && !loading && !errorMessage && currentItem ? (
-          <button className="video-player-center-play" type="button" aria-label={t("media.play")} onClick={toggle}>
-            <Play fill="currentColor" aria-hidden="true" />
-          </button>
         ) : null}
 
         {saveError ? (

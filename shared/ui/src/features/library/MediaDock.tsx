@@ -63,10 +63,10 @@ export function MediaDock({ onExpand }: { onExpand: (installationId: string) => 
     >
       <div className="media-dock-now">
         <span className="media-dock-art" aria-hidden="true">
-          {playback.loading
-            ? <LoaderCircle className="library-spin" />
-            : session.action === "play_video"
-              ? <Video fill="currentColor" />
+          {session.action === "play_video"
+            ? <Video fill="currentColor" />
+            : playback.loading
+              ? <LoaderCircle className="library-spin" />
               : <Play fill="currentColor" />}
         </span>
         <span className="media-dock-copy">
@@ -111,7 +111,11 @@ export function MediaDock({ onExpand }: { onExpand: (installationId: string) => 
           <button
             className="media-dock-play"
             type="button"
-            aria-label={t(playback.playing ? "media.pause" : "media.play")}
+            aria-label={t(playback.loading && isVideo
+              ? "media.video.loading"
+              : playback.playing
+                ? "media.pause"
+                : "media.play")}
             disabled={playback.loading}
             onClick={playback.toggle}
           >

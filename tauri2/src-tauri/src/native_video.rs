@@ -27,6 +27,7 @@ pub struct NativeVideoController {
 struct ActiveNativeVideo {
     label: String,
     session_id: String,
+    viewport: NativeVideoViewport,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -302,6 +303,7 @@ impl NativeVideoController {
             .map_err(|_| "native video state is unavailable")? = Some(ActiveNativeVideo {
             label: label.clone(),
             session_id: request.session_id,
+            viewport: request.viewport,
         });
         Ok(OpenNativeVideoResponse {
             surface_id: label,
@@ -321,7 +323,45 @@ impl NativeVideoController {
         let window = app
             .get_webview_window(&label)
             .ok_or_else(|| "native video surface is unavailable".to_owned())?;
+        position_video_window(app, &window, viewport)?;
+        if let Some(active) = self
+            .active
+            .lock()
+            .map_err(|_| "native video state is unavailable")?
+            .as_mut()
+            && active.session_id == session_id
+            && active.label == surface_id
+        {
+            active.viewport = viewport;
+        }
+        Ok(())
+    }
+
+    pub fn reposition_active(&self, app: &AppHandle) -> Result<(), String> {
+        let active = self
+            .active
+            .lock()
+            .map_err(|_| "native video state is unavailable")?
+            .as_ref()
+            .map(|active| (active.label.clone(), active.viewport));
+        let Some((label, viewport)) = active else {
+            return Ok(());
+        };
+        let Some(window) = app.get_webview_window(&label) else {
+            let mut active = self
+                .active
+                .lock()
+                .map_err(|_| "native video state is unavailable")?;
+            if active.as_ref().is_some_and(|active| active.label == label) {
+                *active = None;
+            }
+            return Ok(());
+        };
         position_video_window(app, &window, viewport)
+    }
+
+    pub fn close_all(&self, app: &AppHandle) -> Result<(), String> {
+        self.close_active(app)
     }
 
     pub fn control(
@@ -420,30 +460,39 @@ fn position_video_window(
     video: &tauri::WebviewWindow,
     viewport: NativeVideoViewport,
 ) -> Result<(), String> {
-    use tauri::{PhysicalPosition, PhysicalSize};
-
     let main = app
         .get_webview_window("main")
         .ok_or_else(|| "main window is unavailable".to_owned())?;
     let scale = main.scale_factor().map_err(|error| error.to_string())?;
     let origin = main.inner_position().map_err(|error| error.to_string())?;
-    let x = f64::from(origin.x) + viewport.x * scale;
-    let y = f64::from(origin.y) + viewport.y * scale;
-    let width = (viewport.width * scale).round().max(1.0) as u32;
-    let height = (viewport.height * scale).round().max(1.0) as u32;
-    let target_position = PhysicalPosition::new(x.round() as i32, y.round() as i32);
+    let (target_position, target_size) = video_window_bounds(origin, scale, viewport);
     if video.outer_position().map_err(|error| error.to_string())? != target_position {
         video
             .set_position(target_position)
             .map_err(|error| error.to_string())?;
     }
-    let target_size = PhysicalSize::new(width, height);
     if video.inner_size().map_err(|error| error.to_string())? != target_size {
         video
             .set_size(target_size)
             .map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+#[cfg(desktop)]
+fn video_window_bounds(
+    origin: tauri::PhysicalPosition<i32>,
+    scale: f64,
+    viewport: NativeVideoViewport,
+) -> (tauri::PhysicalPosition<i32>, tauri::PhysicalSize<u32>) {
+    let x = f64::from(origin.x) + viewport.x * scale;
+    let y = f64::from(origin.y) + viewport.y * scale;
+    let width = (viewport.width * scale).round().max(1.0) as u32;
+    let height = (viewport.height * scale).round().max(1.0) as u32;
+    (
+        tauri::PhysicalPosition::new(x.round() as i32, y.round() as i32),
+        tauri::PhysicalSize::new(width, height),
+    )
 }
 
 #[cfg(desktop)]
@@ -550,6 +599,25 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    #[test]
+    fn video_bounds_follow_the_main_window_origin() {
+        let viewport = NativeVideoViewport {
+            x: 120.0,
+            y: 80.0,
+            width: 800.0,
+            height: 450.0,
+        };
+        let (initial_position, size) =
+            video_window_bounds(tauri::PhysicalPosition::new(140, 90), 2.0, viewport);
+        let (moved_position, moved_size) =
+            video_window_bounds(tauri::PhysicalPosition::new(400, 300), 2.0, viewport);
+
+        assert_eq!(initial_position, tauri::PhysicalPosition::new(380, 250));
+        assert_eq!(moved_position, tauri::PhysicalPosition::new(640, 460));
+        assert_eq!(size, tauri::PhysicalSize::new(1600, 900));
+        assert_eq!(moved_size, size);
     }
 
     #[test]

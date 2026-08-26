@@ -156,6 +156,15 @@ describe("stylesheets", () => {
     expect(text.match(/\{\s*\}/g) ?? []).toEqual([]);
   });
 
+  it("removes global navigation chrome only while the video player is mounted", () => {
+    const video = sources["./video-player.css"] ?? "";
+
+    expect(video).toContain(".app-frame:has(.video-player-page) > .app-topbar");
+    expect(video).toContain(".app-frame:has(.video-player-page) .app-sidebar");
+    expect(video).not.toContain(".app-frame:has(.media-dock) > .app-topbar");
+    expect(video).not.toContain(".app-frame:has(.media-dock) .app-sidebar");
+  });
+
   it("catches the splice that brace counting misses", () => {
     // Reproduces the exact corruption a bad selector-group edit produced: a rule's
     // closing brace glued to the next selector list, with a rule silently swallowed.

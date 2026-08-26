@@ -536,6 +536,34 @@ pub fn run() {
             support::open_support_project,
             read_only_navigation::read_current_read_only_deep_links,
         ])
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+            let Some(state) = window.app_handle().try_state::<AppState>() else {
+                return;
+            };
+            let result = match event {
+                tauri::WindowEvent::Moved(_)
+                | tauri::WindowEvent::Resized(_)
+                | tauri::WindowEvent::ScaleFactorChanged { .. } => {
+                    state.native_video.reposition_active(window.app_handle())
+                }
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    let result = state.native_video.close_all(window.app_handle());
+                    window.app_handle().exit(0);
+                    result
+                }
+                tauri::WindowEvent::Destroyed => {
+                    state.native_video.close_all(window.app_handle())
+                }
+                _ => Ok(()),
+            };
+            if let Err(error) = result {
+                log::warn!(target: "dla::media", "event=native_video_window_sync_failed error={error}");
+            }
+        })
         .build(tauri::generate_context!())
         .expect("error while building Tauri application");
     app.run(|app, event| {

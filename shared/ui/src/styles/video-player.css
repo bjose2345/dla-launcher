@@ -249,7 +249,6 @@
 .video-player-back,
 .video-player-finish,
 .video-player-icon-button,
-.video-player-center-play,
 .video-player-error button,
 .video-player-drawer button {
   border: 0;
@@ -370,7 +369,6 @@
   padding: 0;
 }
 
-.video-player-loading,
 .video-player-error {
   position: absolute;
   z-index: 9;
@@ -387,18 +385,6 @@
   text-align: center;
   transform: translate(-50%, -50%);
   backdrop-filter: blur(18px);
-}
-
-.video-player-loading {
-  gap: 10px;
-  color: var(--app-muted);
-  font-size: 0.66rem;
-}
-
-.video-player-loading svg {
-  width: 28px;
-  height: 28px;
-  color: var(--color-primary);
 }
 
 .video-player-error {
@@ -442,38 +428,6 @@
 .video-player-error button svg {
   width: 15px;
   height: 15px;
-}
-
-.video-player-center-play {
-  position: absolute;
-  z-index: 8;
-  top: 50%;
-  left: 50%;
-  display: grid;
-  width: 78px;
-  height: 78px;
-  place-items: center;
-  border: 1px solid color-mix(in oklch, white 28%, transparent);
-  border-radius: 999px;
-  background: color-mix(in oklch, var(--color-primary) 82%, transparent);
-  box-shadow: 0 18px 50px rgb(0 0 0 / 46%);
-  color: var(--color-primary-content);
-  transform: translate(-50%, -50%);
-  backdrop-filter: blur(12px);
-  transition:
-    transform 160ms ease-out,
-    background 160ms ease-out;
-}
-
-.video-player-center-play:hover {
-  background: var(--color-primary);
-  transform: translate(-50%, -50%) scale(1.06);
-}
-
-.video-player-center-play svg {
-  width: 30px;
-  height: 30px;
-  margin-left: 4px;
 }
 
 .video-player-save-error {
@@ -669,24 +623,24 @@
 }
 
 .app-frame:fullscreen,
-.app-frame:has(.video-player-page.is-fullscreen) {
+.app-frame:has(.video-player-page) {
   width: 100vw;
   height: 100vh;
   background: #000;
 }
 
 .app-frame:fullscreen > .app-topbar,
-.app-frame:has(.video-player-page.is-fullscreen) > .app-topbar {
+.app-frame:has(.video-player-page) > .app-topbar {
   display: none;
 }
 
 .app-frame:fullscreen .app-sidebar,
-.app-frame:has(.video-player-page.is-fullscreen) .app-sidebar {
+.app-frame:has(.video-player-page) .app-sidebar {
   display: none;
 }
 
 .app-frame:fullscreen .video-player-page,
-.app-frame:has(.video-player-page.is-fullscreen) .video-player-page {
+.app-frame:has(.video-player-page) .video-player-page {
   width: 100%;
   height: 100%;
   background: #000;
@@ -747,11 +701,6 @@
     min-height: 40px;
   }
 
-  .video-player-center-play {
-    width: 64px;
-    height: 64px;
-  }
-
   .video-player-drawer {
     width: min(92vw, 430px);
   }
@@ -789,7 +738,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .video-player-topbar,
-  .video-player-center-play,
   .video-player-drawer {
     transition: none;
   }

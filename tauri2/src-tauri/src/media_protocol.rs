@@ -339,21 +339,18 @@ video::cue{color:#fff;background:rgba(5,5,8,.82);font-family:Inter,"Noto Sans JP
 #playlist{display:flex;min-width:0;align-items:center;gap:6px;margin:0;padding:7px 10px;overflow-x:auto;overflow-y:hidden;list-style:none;scrollbar-width:thin}#playlist li{min-width:min(300px,32vw)}#playlist button{display:grid;width:100%;min-height:48px;grid-template-columns:26px minmax(0,1fr) auto;gap:9px;padding:8px 10px;text-align:left}#playlist button.is-active{border-color:rgba(241,80,121,.5);background:rgba(241,80,121,.12)}#playlist button span{color:#88818c;font-size:10px;font-variant-numeric:tabular-nums}#playlist button strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}#playlist button i{color:#ff648b;font-size:10px;font-style:normal;text-transform:uppercase}
 #chrome[data-drawer="open"] #chromeMain{opacity:0;pointer-events:none;transform:translateX(-32px)}#chrome[data-drawer="open"] #playlistPanel{opacity:1;pointer-events:auto;transform:none}
 body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacity:0;pointer-events:none;transform:translateY(calc(-100% - 24px));box-shadow:none}body[data-chrome="hidden"] #chromeShade{opacity:0}
-#poster,#loading,#error{position:fixed;inset:0}
-#poster{display:grid;place-items:center;overflow:hidden;background:radial-gradient(circle at 50% 35%,rgba(238,72,126,.22),transparent 46%),linear-gradient(145deg,#15131e,#07070b 70%)}
+#poster,#error{position:fixed;inset:0}
+#poster{display:grid;place-items:center;overflow:hidden;background:radial-gradient(circle at 50% 35%,rgba(238,72,126,.22),transparent 46%),linear-gradient(145deg,#15131e,#07070b 70%);pointer-events:none}
 #poster img{width:100%;height:100%;object-fit:cover;filter:brightness(.66) saturate(.9)}
 #poster .copy{position:absolute;z-index:2;display:grid;max-width:min(560px,80%);justify-items:center;gap:8px;text-align:center;text-shadow:0 3px 18px #000}
 #poster strong{font-size:clamp(18px,3vw,34px)}#poster small{color:#b6afb9;font-size:13px}
-.play{display:grid;width:74px;height:74px;margin-bottom:10px;place-items:center;border:1px solid rgba(255,255,255,.28);border-radius:50%;background:#f15079;color:#251018;box-shadow:0 18px 48px rgba(0,0,0,.45);cursor:pointer;font-size:30px}
-#loading{display:none;place-items:center;background:rgba(5,5,8,.34);pointer-events:none}
-#loading::after{width:34px;height:34px;border:3px solid rgba(255,255,255,.22);border-top-color:#f15079;border-radius:50%;content:"";animation:spin .8s linear infinite}
 #error{display:none;place-items:center;padding:28px;background:#050508}
 #error>div{display:grid;width:min(470px,90%);justify-items:center;gap:12px;padding:28px;border:1px solid rgba(255,255,255,.15);border-radius:18px;background:#15131e;text-align:center}
 #error strong{font-size:16px}#error small{color:#aaa2ad}#error button{padding:10px 16px;border:0;border-radius:10px;background:#f15079;color:#251018;font-weight:800;cursor:pointer}
-[hidden]{display:none!important}@keyframes spin{to{transform:rotate(360deg)}}
+[hidden]{display:none!important}
 @media(max-width:980px){#chromeMain{grid-template-columns:auto minmax(0,1fr) auto auto}#position{display:none}#back span:last-child,#finish span:last-child{display:none}#back,#finish{width:44px;padding:0!important}}
 @media(max-width:680px){#chrome{top:8px;right:8px;left:8px;min-height:56px;border-radius:12px}#chromeMain{min-height:56px;gap:7px;padding:6px}#playerLabel,#videoItem{display:none}#videoTitle{margin:0;font-size:13px}#back,#finish,#playlistToggle{width:40px;min-height:40px}#playlistPanel header strong{display:none}#playlist li{min-width:min(260px,58vw)}}
-@media(prefers-reduced-motion:reduce){#loading::after{animation-duration:1.8s}#chrome,#chromeShade,#chromeMain,#playlistPanel{transition:none}}
+@media(prefers-reduced-motion:reduce){#chrome,#chromeShade,#chromeMain,#playlistPanel{transition:none}}
 </style>
 </head>
 <body data-fit="contain" data-chrome="visible">
@@ -373,8 +370,7 @@ body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacit
     <button id="playlistClose" type="button"><span class="glyph">▤</span></button>
   </div>
 </section>
-<div id="poster"><img id="posterImage" alt="" hidden><div class="copy"><button id="posterPlay" class="play" type="button" aria-label="">▶</button><strong id="title"></strong><small id="itemName"></small></div></div>
-<div id="loading"><span></span></div>
+<div id="poster"><img id="posterImage" alt="" hidden><div class="copy"><strong id="title"></strong><small id="itemName"></small></div></div>
 <div id="error"><div><strong id="errorTitle"></strong><small id="errorDetail"></small><button id="retry" type="button"></button></div></div>
 <script>
 (() => {
@@ -383,7 +379,6 @@ body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacit
   const video = document.querySelector("#video");
   const poster = document.querySelector("#poster");
   const posterImage = document.querySelector("#posterImage");
-  const loading = document.querySelector("#loading");
   const error = document.querySelector("#error");
   const chrome = document.querySelector("#chrome");
   const playlist = document.querySelector("#playlist");
@@ -494,9 +489,8 @@ body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacit
   };
   const play = async () => {
     error.style.display = "none";
-    loading.style.display = "grid";
     try { await video.play(); }
-    catch { loading.style.display = "none"; snapshot("error", video.error?.code ?? 4); }
+    catch { snapshot("error", video.error?.code ?? 4); }
   };
   const pause = () => video.pause();
   window.__dlaVideo = {
@@ -529,7 +523,6 @@ body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacit
       document.querySelector("#playlistToggle").ariaLabel = next.labels?.openPlaylist || "";
       document.querySelector("#playlistClose").ariaLabel = next.labels?.closePlaylist || "";
       renderPlaylist(Array.isArray(next.playlist) ? next.playlist : [], next.ordinal, next.labels?.nowPlaying || "");
-      document.querySelector("#posterPlay").ariaLabel = next.labels?.play || "";
       document.querySelector("#errorTitle").textContent = next.labels?.playbackFailed || "";
       document.querySelector("#errorDetail").textContent = next.labels?.codecUnsupported || "";
       document.querySelector("#retry").textContent = next.labels?.retry || "";
@@ -551,22 +544,21 @@ body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacit
         case "muted": video.muted = Boolean(request.enabled); break;
         case "fit": setVideoFit(request.fit); break;
         case "subtitle": selectSubtitle(request.subtitleTrack); break;
-        case "retry": error.style.display = "none"; loading.style.display = "grid"; video.load(); break;
+        case "retry": error.style.display = "none"; video.load(); break;
       }
     }
   };
-  video.addEventListener("loadstart", () => { loading.style.display = "grid"; snapshot("loading"); });
+  video.addEventListener("loadstart", () => snapshot("loading"));
   video.addEventListener("loadedmetadata", () => { applyVideoFit(); applyPosition(); snapshot("metadata"); });
-  video.addEventListener("canplay", () => { loading.style.display = "none"; snapshot("ready"); if (configured && autoPlay && video.paused) void play(); });
-  video.addEventListener("playing", () => { poster.hidden = true; loading.style.display = "none"; snapshot("playing"); scheduleChromeHide(); });
-  video.addEventListener("pause", () => { loading.style.display = "none"; revealChrome(); snapshot("paused"); });
+  video.addEventListener("canplay", () => { snapshot("ready"); if (configured && autoPlay && video.paused) void play(); });
+  video.addEventListener("playing", () => { poster.hidden = true; snapshot("playing"); scheduleChromeHide(); });
+  video.addEventListener("pause", () => { revealChrome(); snapshot("paused"); });
   video.addEventListener("timeupdate", () => snapshot("time"));
-  video.addEventListener("waiting", () => { loading.style.display = "grid"; snapshot("waiting"); });
+  video.addEventListener("waiting", () => snapshot("waiting"));
   video.addEventListener("ended", () => { revealChrome(); snapshot("ended"); });
-  video.addEventListener("error", () => { loading.style.display = "none"; poster.hidden = true; error.style.display = "grid"; revealChrome(); snapshot("error", video.error?.code ?? 4); });
+  video.addEventListener("error", () => { poster.hidden = true; error.style.display = "grid"; revealChrome(); snapshot("error", video.error?.code ?? 4); });
   const toggle = () => video.paused ? void play() : pause();
   video.addEventListener("click", () => { revealChrome(); toggle(); });
-  document.querySelector("#posterPlay").addEventListener("click", play);
   document.querySelector("#retry").addEventListener("click", () => window.__dlaVideo.command({ command: "retry" }));
   document.querySelector("#back").addEventListener("click", () => snapshot("back"));
   finish.addEventListener("click", () => {
@@ -971,5 +963,15 @@ mod tests {
         assert!(!document.contains("file:///tmp/<script>"));
         assert!(!document.contains("__DLA_VIDEO_SOURCE__"));
         assert!(!document.contains("__DLA_VIDEO_SUBTITLES__"));
+    }
+
+    #[test]
+    fn video_document_reports_loading_without_a_center_overlay() {
+        let document = video_document("dla-media://localhost/session/0", &[]);
+
+        assert!(!document.contains("id=\"posterPlay\""));
+        assert!(!document.contains("id=\"loading\""));
+        assert!(document.contains("snapshot(\"loading\")"));
+        assert!(document.contains("snapshot(\"waiting\")"));
     }
 }
