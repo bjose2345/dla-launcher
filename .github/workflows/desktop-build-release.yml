@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: desktop-build-${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   COREPACK_ENABLE_DOWNLOAD_PROMPT: 0
@@ -89,9 +93,63 @@ jobs:
       - name: Install the pinned Tauri CLI
         run: cargo install tauri-cli --version ${{ env.TAURI_CLI_VERSION }} --locked
 
-      - name: Build release bundles
+      - name: Prepare the MSI version override
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $script = @'
+          const { version } = require("./package.json");
+          const match = version.match(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/);
+          if (!match) throw new Error(`Invalid application version: ${version}`);
+
+          const [, major, minor, patch, prerelease] = match;
+          if (Number(major) > 255 || Number(minor) > 255 || Number(patch) > 65535) {
+            throw new Error(`Application version is outside the MSI version range: ${version}`);
+          }
+
+          let build = 65535;
+          if (prerelease) {
+            const conventional = prerelease.match(/^(alpha|beta|rc)\.(\d+)$/);
+            const numeric = prerelease.match(/^\d+$/);
+            if (conventional) {
+              const sequence = Number(conventional[2]);
+              if (sequence > 9999) throw new Error(`Prerelease sequence is too large for MSI: ${version}`);
+              build = { alpha: 10000, beta: 20000, rc: 30000 }[conventional[1]] + sequence;
+            } else if (numeric && Number(prerelease) < 40000) {
+              build = Number(prerelease);
+            } else {
+              let hash = 2166136261;
+              for (const byte of Buffer.from(prerelease)) {
+                hash ^= byte;
+                hash = Math.imul(hash, 16777619) >>> 0;
+              }
+              build = 40000 + (hash % 25535);
+            }
+          }
+
+          process.stdout.write(`${major}.${minor}.${patch}.${build}`);
+          '@
+
+          $msiVersion = $script | node
+          $config = @{
+            bundle = @{
+              windows = @{
+                wix = @{ version = $msiVersion }
+              }
+            }
+          }
+          $config | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 tauri2/tauri.windows-ci.conf.json
+          Write-Host "Using MSI package version $msiVersion for application version $((Get-Content package.json | ConvertFrom-Json).version)."
+
+      - name: Build Linux release bundles
+        if: runner.os == 'Linux'
         working-directory: tauri2
         run: cargo tauri build --ci --bundles ${{ matrix.bundles }}
+
+      - name: Build Windows release bundles
+        if: runner.os == 'Windows'
+        working-directory: tauri2
+        run: cargo tauri build --ci --bundles ${{ matrix.bundles }} --config tauri.windows-ci.conf.json
 
       - name: Upload installers
         uses: actions/upload-artifact@v4
