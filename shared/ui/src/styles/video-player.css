@@ -62,11 +62,6 @@
   padding: 5px 14px 7px;
 }
 
-/* Linux video is a separate native window, so an open dock menu needs real layout space. */
-.media-dock.is-video.has-open-menu {
-  padding-top: 61px;
-}
-
 .media-dock.is-video .media-dock-center {
   display: contents;
 }

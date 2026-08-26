@@ -129,6 +129,7 @@ export function LibraryTable({
           className="library-table-open"
           type="button"
           aria-label={t("library.home.details")}
+          disabled={collectionState(context.row.original.entry) === "running"}
           onClick={() => {
             const entry = context.row.original.entry;
             if (entry.action) onActivate(entry);

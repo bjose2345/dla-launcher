@@ -94,22 +94,7 @@ function entry({
       }
       : null,
     latestLaunch: status
-      ? {
-        id: "activity",
-        installationId: "work",
-        action: "read_images",
-        targetPath: null,
-        adapter: null,
-        status,
-        processId: null,
-        error: null,
-        attemptedAt: "2026-08-13T10:00:00Z",
-        startedAt: "2026-08-13T10:00:00Z",
-        endedAt: null,
-        durationMs: null,
-        exitCode: null,
-        stopRequestedAt: null,
-      }
+      ? { status }
       : null,
     launchTotals: null,
   };

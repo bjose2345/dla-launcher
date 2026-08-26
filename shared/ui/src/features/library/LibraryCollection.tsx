@@ -32,7 +32,7 @@ export interface LibraryCollectionEntry {
   work?: CatalogWork;
   action: LaunchActionKind | null;
   resume: MediaResume | null;
-  latestLaunch: LaunchActivity | null;
+  latestLaunch: Pick<LaunchActivity, "status"> | null;
   launchTotals: LibraryLaunchTotals | null;
   health: InstallationHealthReport | null;
 }
@@ -166,6 +166,8 @@ function LibraryCollectionCard({
   const creator = libraryDisplayCreator(installation, work, preferEnglish);
   const kind = libraryContentKind(installation, action);
   const progress = resumePercent(resume);
+  const running = entry.latestLaunch !== null
+    && launchActivityIsActive(entry.latestLaunch.status);
   const activateLabel = action && action !== "launch_executable"
     ? t(mediaActionMessageKey(action))
     : action === "launch_executable"
@@ -194,9 +196,15 @@ function LibraryCollectionCard({
         {showPlayTime && entry.launchTotals ? <LibraryPlayTime totals={entry.launchTotals} /> : null}
       </div>
       <footer>
-        <button className="library-collection-action" type="button" disabled={busy} onClick={onActivate}>
+        <button className="library-collection-action" type="button" disabled={busy || running} onClick={onActivate}>
           {action ? <Play fill="currentColor" aria-hidden="true" /> : <ListChecks aria-hidden="true" />}
-          {busy ? t("detail.launching") : resume ? t("library.home.resume") : activateLabel}
+          {busy
+            ? t("detail.launching")
+            : running
+              ? t("library.launchStatus.running")
+              : resume
+                ? t("library.home.resume")
+                : activateLabel}
         </button>
         <button className="library-collection-manage" type="button" title={t("library.home.manage")} onClick={onOpenReview}>
           <ListChecks aria-hidden="true" /><span>{t("library.home.manage")}</span>

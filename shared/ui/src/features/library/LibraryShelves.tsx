@@ -13,8 +13,6 @@ import { launchActionMessageKey } from "../../i18n/domainLabels";
 import type { MessageKey } from "../../preferences/preferences";
 import { LibraryArtwork } from "./LibraryArtwork";
 import { ContentCarousel } from "../../carousel/ContentCarousel";
-import { useMediaPlayback } from "./MediaPlaybackProvider";
-import { isReaderAction, useImageReader } from "./ImageReaderProvider";
 import {
   libraryContentKind,
   libraryDisplayCreator,
@@ -22,12 +20,12 @@ import {
 } from "./libraryHome";
 import { effectiveIdentity } from "./libraryPresentation";
 import {
-  installationMediaAction,
-  isMediaLaunchAction,
+  installationPrimaryAction,
   mediaActionMessageKey,
 } from "./mediaSession";
 import type {
   Installation,
+  LaunchActionKind,
   LibraryRecentActivity,
   LibraryShelves as LibraryShelvesModel,
   MediaResume,
@@ -39,8 +37,8 @@ interface LibraryShelvesProps {
   workByCode: Map<string, CatalogWork>;
   preparedByInstallation: Map<string, PreparedPackageInstallation | null>;
   inLens: (installationId: string) => boolean;
-  onOpenReview: (installationId: string) => void | Promise<void>;
-  onOpenMedia: (installationId: string) => void | Promise<void>;
+  blockedExecutableInstallations: ReadonlySet<string>;
+  onActivate: (installationId: string, action: LaunchActionKind | null) => void;
 }
 
 interface ShelfDefinition {
@@ -51,10 +49,15 @@ interface ShelfDefinition {
   content: ReactNode[];
 }
 
-export function LibraryShelves({ shelves, workByCode, preparedByInstallation, inLens, onOpenReview, onOpenMedia }: LibraryShelvesProps) {
+export function LibraryShelves({
+  shelves,
+  workByCode,
+  preparedByInstallation,
+  inLens,
+  blockedExecutableInstallations,
+  onActivate,
+}: LibraryShelvesProps) {
   const { locale, t } = usePresentation();
-  const playback = useMediaPlayback();
-  const reader = useImageReader();
   const installations = new Map(shelves.installations.map((installation) => [installation.id, installation]));
   const recent = shelves.recent.flatMap((activity) => {
     const installation = installations.get(activity.installationId);
@@ -79,15 +82,9 @@ export function LibraryShelves({ shelves, workByCode, preparedByInstallation, in
           installation={installation}
           work={workForInstallation(installation, workByCode)}
           locale={locale}
+          disabled={blockedExecutableInstallations.has(installation.id)}
           key={installation.id}
-          onOpen={() => {
-            if (activity.action === "play_audio") void playback.openWork(installation.id);
-            else if (activity.action && isReaderAction(activity.action)) {
-              void reader.open(installation.id);
-            }
-            else if (recentActivityOpensMedia(activity)) void onOpenMedia(installation.id);
-            else void onOpenReview(installation.id);
-          }}
+          onOpen={() => onActivate(installation.id, activity.action)}
         />
       )),
     },
@@ -96,16 +93,22 @@ export function LibraryShelves({ shelves, workByCode, preparedByInstallation, in
       title: "library.shelf.neverLaunched",
       help: "library.shelf.neverLaunchedHelp",
       icon: Sparkles,
-      content: neverLaunched.map((installation) => (
-        <NeverLaunchedShelfCard
-          installation={installation}
-          prepared={preparedByInstallation.get(installation.id) ?? null}
-          work={workForInstallation(installation, workByCode)}
-          key={installation.id}
-          onOpenMedia={onOpenMedia}
-          onOpenReview={onOpenReview}
-        />
-      )),
+      content: neverLaunched.map((installation) => {
+        const action = installationPrimaryAction(
+          installation,
+          preparedByInstallation.get(installation.id),
+        );
+        return (
+          <NeverLaunchedShelfCard
+            installation={installation}
+            action={action}
+            work={workForInstallation(installation, workByCode)}
+            disabled={blockedExecutableInstallations.has(installation.id)}
+            key={installation.id}
+            onOpen={() => onActivate(installation.id, action)}
+          />
+        );
+      }),
     },
     {
       key: "unfinished",
@@ -118,11 +121,7 @@ export function LibraryShelves({ shelves, workByCode, preparedByInstallation, in
           resume={resume}
           work={workForInstallation(installation, workByCode)}
           key={`${installation.id}:${resume.action}`}
-          onOpen={() => {
-            if (resume.action === "play_audio") void playback.openWork(installation.id);
-            else if (isReaderAction(resume.action)) void reader.open(installation.id);
-            else void onOpenMedia(installation.id);
-          }}
+          onOpen={() => onActivate(installation.id, resume.action)}
         />
       )),
     },
@@ -159,12 +158,14 @@ function RecentShelfCard({
   installation,
   work,
   locale,
+  disabled,
   onOpen,
 }: {
   activity: LibraryRecentActivity;
   installation: Installation;
   work?: CatalogWork;
   locale: string;
+  disabled: boolean;
   onOpen: () => void;
 }) {
   const { t } = usePresentation();
@@ -175,7 +176,12 @@ function RecentShelfCard({
   const title = libraryDisplayTitle(installation, work, locale !== "ja-JP");
   const creator = libraryDisplayCreator(installation, work, locale !== "ja-JP");
   return (
-    <button className="library-shelf-card" type="button" onClick={onOpen}>
+    <button
+      className="library-shelf-card"
+      type="button"
+      disabled={disabled || (activity.kind === "executable_launch" && activity.active)}
+      onClick={onOpen}
+    >
       <span className="library-shelf-card-art">
         <LibraryArtwork kind={kind} title={title} work={work} />
         <span className="library-shelf-card-overlay" aria-hidden="true" />
@@ -234,28 +240,23 @@ function ResumeShelfCard({
 
 function NeverLaunchedShelfCard({
   installation,
-  prepared,
+  action,
   work,
-  onOpenMedia,
-  onOpenReview,
+  disabled,
+  onOpen,
 }: {
   installation: Installation;
-  prepared: PreparedPackageInstallation | null;
+  action: LaunchActionKind | null;
   work?: CatalogWork;
-  onOpenMedia: (installationId: string) => void | Promise<void>;
-  onOpenReview: (installationId: string) => void | Promise<void>;
+  disabled: boolean;
+  onOpen: () => void;
 }) {
   const { locale, t } = usePresentation();
-  const mediaAction = installationMediaAction(installation, prepared);
-  const kind = libraryContentKind(installation, mediaAction);
+  const kind = libraryContentKind(installation, action);
   const title = libraryDisplayTitle(installation, work, locale !== "ja-JP");
   const creator = libraryDisplayCreator(installation, work, locale !== "ja-JP");
-  const open = () => {
-    if (mediaAction) void onOpenMedia(installation.id);
-    else void onOpenReview(installation.id);
-  };
   return (
-    <button className="library-shelf-card" type="button" onClick={open}>
+    <button className="library-shelf-card" type="button" disabled={disabled} onClick={onOpen}>
       <span className="library-shelf-card-art">
         <LibraryArtwork kind={kind} title={title} work={work} />
         <span className="library-shelf-card-overlay" aria-hidden="true" />
@@ -264,7 +265,11 @@ function NeverLaunchedShelfCard({
       <strong>{title}</strong>
       <code title={installation.rootPath}>{creator}</code>
       <span className="library-shelf-card-footer">
-        <span>{t(mediaAction ? mediaActionMessageKey(mediaAction) : "library.shelf.review")}</span>
+        <span>{t(action === "launch_executable"
+          ? "detail.play"
+          : action
+            ? mediaActionMessageKey(action)
+            : "library.shelf.review")}</span>
         <ArrowRight aria-hidden="true" />
       </span>
     </button>
@@ -287,12 +292,6 @@ function resolveResumes(
     const installation = installations.get(resume.installationId);
     return installation ? [{ resume, installation }] : [];
   });
-}
-
-export function recentActivityOpensMedia(activity: LibraryRecentActivity): boolean {
-  return activity.kind === "media_session"
-    && activity.action !== null
-    && isMediaLaunchAction(activity.action);
 }
 
 export function shelfResumePercent(resume: MediaResume): number | null {

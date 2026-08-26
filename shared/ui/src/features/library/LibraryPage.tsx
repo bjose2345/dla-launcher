@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -60,6 +60,7 @@ import {
 import type {
   Installation,
   InstallationHealthReport,
+  LaunchActionKind,
   LaunchActivity,
   LibraryGateway,
   LocalPersonalization,
@@ -106,13 +107,12 @@ export function LibraryPage({
   const queryClient = useQueryClient();
   const [lens, setLens] = useState<LibraryLens>("all");
   const [view, setView] = useState<LibraryView>("shelves");
+  const [refreshing, setRefreshing] = useState(false);
   const [confirmRemoveAndroidApp, setConfirmRemoveAndroidApp] = useState<string | null>(null);
+  const previousActiveLaunches = useRef<Set<string>>(new Set());
   const shelves = useQuery({
     queryKey: ["library", "shelves"],
     queryFn: () => gateway.readShelves(),
-    refetchInterval: (query) => query.state.data?.recent.some((activity) => (
-      activity.kind === "executable_launch" && activity.active
-    )) ? 750 : false,
   });
   const androidApps = useQuery({
     queryKey: ["library", "android-apps"],
@@ -123,10 +123,28 @@ export function LibraryPage({
   const launches = useQuery({
     queryKey: ["library", "launches", "recent"],
     queryFn: () => gateway.listRecentLaunches(50),
+    select: (activities) => activities.map(({ id, installationId, status }) => ({
+      id,
+      installationId,
+      status,
+    })),
     refetchInterval: (query) => query.state.data?.some((activity) => (
       launchActivityIsActive(activity.status)
     )) ? 750 : false,
   });
+  const activeLaunchIds = (launches.data ?? []).flatMap((activity) => (
+    launchActivityIsActive(activity.status) ? [activity.id] : []
+  ));
+  const activeLaunchKey = [...activeLaunchIds].sort().join("\0");
+
+  useEffect(() => {
+    const current = new Set(activeLaunchIds);
+    const launchSettled = [...previousActiveLaunches.current].some((id) => !current.has(id));
+    previousActiveLaunches.current = current;
+    if (launchSettled) {
+      void queryClient.invalidateQueries({ queryKey: ["library", "shelves"] });
+    }
+  }, [activeLaunchKey, queryClient]);
   const personalization = useQuery({
     queryKey: ["library", "personalization"],
     queryFn: () => gateway.readLocalPersonalization(),
@@ -184,6 +202,10 @@ export function LibraryPage({
       health: healthByInstallation.get(installation.id) ?? null,
     };
   });
+  const entryByInstallation = new Map(collectionEntries.map((entry) => [
+    entry.installation.id,
+    entry,
+  ]));
   const kindByInstallation = new Map(collectionEntries.map((entry) => [
     entry.installation.id,
     libraryContentKind(entry.installation, entry.action),
@@ -236,16 +258,22 @@ export function LibraryPage({
   const readyCount = readyWorkKeys.size;
   const activeCount = shelves.data?.unfinished.length ?? 0;
 
-  const refresh = () => {
-    void Promise.all([
-      shelves.refetch(),
-      androidApps.refetch(),
-      launches.refetch(),
-      personalization.refetch(),
-      preparedPackages.refetch(),
-      installationHealth.refetch(),
-      catalogWorks.refetch(),
-    ]);
+  const refresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        shelves.refetch(),
+        androidApps.refetch(),
+        launches.refetch(),
+        personalization.refetch(),
+        preparedPackages.refetch(),
+        installationHealth.refetch(),
+        catalogWorks.refetch(),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
   };
   const invalidateActivity = async () => {
     await Promise.all([
@@ -287,29 +315,38 @@ export function LibraryPage({
       setConfirmRemoveAndroidApp(null);
     },
   });
-  const activate = (entry: LibraryCollectionEntry) => {
-    if (!entry.action) {
+  const activate = (
+    entry: LibraryCollectionEntry,
+    requestedAction: LaunchActionKind | null = entry.action,
+  ) => {
+    if (!requestedAction) {
       void onOpenReview(entry.installation.id);
-    } else if (entry.action === "play_audio") {
+    } else if (requestedAction === "play_audio") {
       if (playback.session?.installationId === entry.installation.id) playback.toggle();
       else void playback.openWork(entry.installation.id);
-    } else if (isReaderAction(entry.action)) {
+    } else if (isReaderAction(requestedAction)) {
       void reader.open(entry.installation.id);
-    } else if (isMediaLaunchAction(entry.action)) {
+    } else if (isMediaLaunchAction(requestedAction)) {
       void onOpenMedia(entry.installation.id);
-    } else if (entry.action === "launch_executable") {
+    } else if (requestedAction === "launch_executable") {
+      if (launch.isPending && launch.variables === entry.installation.id) return;
+      if (entry.latestLaunch && launchActivityIsActive(entry.latestLaunch.status)) return;
       launch.mutate(entry.installation.id);
     } else {
       void onOpenReview(entry.installation.id);
     }
   };
-  const fetching = shelves.isFetching
-    || androidApps.isFetching
-    || launches.isFetching
-    || personalization.isFetching
-    || preparedPackages.isFetching
-    || catalogWorks.isFetching;
   const metadataErrors = [preparedPackages.error, catalogWorks.error];
+  const blockedExecutableInstallations = new Set(collectionEntries.flatMap((entry) => (
+    entry.action === "launch_executable"
+      && entry.latestLaunch
+      && launchActivityIsActive(entry.latestLaunch.status)
+      ? [entry.installation.id]
+      : []
+  )));
+  if (launch.isPending && launch.variables) {
+    blockedExecutableInstallations.add(launch.variables);
+  }
 
   return (
     <main className="library-page">
@@ -351,10 +388,12 @@ export function LibraryPage({
             type="button"
             title={t("library.refresh")}
             aria-label={t("library.refresh")}
-            disabled={fetching}
-            onClick={refresh}
+            disabled={refreshing}
+            onClick={() => { void refresh(); }}
           >
-            {fetching ? <LoaderCircle className="library-spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
+            {refreshing
+              ? <LoaderCircle className="library-spin" aria-hidden="true" />
+              : <RefreshCw aria-hidden="true" />}
           </button>
         </div>
       </section>
@@ -433,8 +472,11 @@ export function LibraryPage({
                   workByCode={workByCode}
                   preparedByInstallation={preparedByInstallation}
                   inLens={inLens}
-                  onOpenMedia={onOpenMedia}
-                  onOpenReview={onOpenReview}
+                  blockedExecutableInstallations={blockedExecutableInstallations}
+                  onActivate={(installationId, action) => {
+                    const entry = entryByInstallation.get(installationId);
+                    if (entry) activate(entry, action);
+                  }}
                 />
               ) : null}
 
@@ -628,6 +670,8 @@ function LibraryFeature({
   );
   const currentHere = playback.session?.installationId === entry.installation.id;
   const playingHere = currentHere && playback.playing;
+  const running = entry.latestLaunch !== null
+    && launchActivityIsActive(entry.latestLaunch.status);
   const playbackFor = async (
     installationId: string,
     ordinal: number,
@@ -813,13 +857,19 @@ function LibraryFeature({
           <button
             className="library-feature-primary"
             type="button"
-            disabled={busy}
+            disabled={busy || running}
             onClick={currentHere ? playback.toggle : onActivate}
           >
             {playingHere
               ? <Pause fill="currentColor" aria-hidden="true" />
               : action ? <Play fill="currentColor" aria-hidden="true" /> : <ListChecks aria-hidden="true" />}
-            {busy ? t("detail.launching") : playingHere ? t("media.pause") : actionLabel}
+            {busy
+              ? t("detail.launching")
+              : running
+                ? t("library.launchStatus.running")
+                : playingHere
+                  ? t("media.pause")
+                  : actionLabel}
           </button>
           {onOpenWork ? (
             <button className="library-feature-secondary" type="button" onClick={onOpenWork}>

@@ -30,16 +30,28 @@ describe("library home presentation", () => {
     expect(libraryContentKind(value, null)).toBe("audio");
   });
 
-  it("features resume activity before recent and newly reviewed works", () => {
+  it("features a newer resume ahead of older launch activity", () => {
     const shelves = {
       installations: [{ ...installation(), id: "fallback" }],
       recent: [{ installationId: "recent", action: "play_audio", kind: "media_session", occurredAt: "2026-08-13T10:00:00Z", active: false }],
-      continueItems: [{ installationId: "resume", action: "play_audio", relativePath: "01.mp3", positionMs: 1, durationMs: 2, completed: false, updatedAt: "2026-08-13T10:00:00Z" }],
+      continueItems: [{ installationId: "resume", action: "play_audio", relativePath: "01.mp3", positionMs: 1, durationMs: 2, completed: false, updatedAt: "2026-08-13T11:00:00Z" }],
       neverLaunched: ["new"],
       unfinished: [],
       launchTotals: [],
     } satisfies LibraryShelves;
     expect(featuredInstallationId(shelves)).toBe("resume");
+  });
+
+  it("features a newer launch ahead of older unfinished activity", () => {
+    const shelves = {
+      installations: [{ ...installation(), id: "fallback" }],
+      recent: [{ installationId: "recent", action: "launch_executable", kind: "executable_launch", occurredAt: "2026-08-13T11:00:00Z", active: false }],
+      continueItems: [{ installationId: "resume", action: "open_document", relativePath: "book.pdf", positionMs: 1, durationMs: 2, completed: false, updatedAt: "2026-08-13T10:00:00Z" }],
+      neverLaunched: ["new"],
+      unfinished: [],
+      launchTotals: [],
+    } satisfies LibraryShelves;
+    expect(featuredInstallationId(shelves)).toBe("recent");
   });
 
   it("features the most relevant activity inside the active lens", () => {

@@ -19,6 +19,7 @@ export function MediaDockMenu({
   icon,
   active = false,
   open,
+  gap,
   onOpenChange,
 }: {
   label: string;
@@ -26,6 +27,7 @@ export function MediaDockMenu({
   icon?: ReactNode;
   active?: boolean;
   open: boolean;
+  gap?: number;
   onOpenChange: (open: boolean) => void;
 }) {
   const { t } = usePresentation();
@@ -54,6 +56,7 @@ export function MediaDockMenu({
           ariaLabel={label}
           side="top"
           align="end"
+          gap={gap}
           maximumWidth={1040}
           onClose={() => onOpenChange(false)}
           onClick={(event) => {

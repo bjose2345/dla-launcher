@@ -190,9 +190,11 @@ export function AnchoredPopover({
     };
     document.addEventListener("pointerdown", closeOutside, true);
     window.addEventListener("keydown", closeWithEscape, true);
+    window.addEventListener("blur", onClose);
     return () => {
       document.removeEventListener("pointerdown", closeOutside, true);
       window.removeEventListener("keydown", closeWithEscape, true);
+      window.removeEventListener("blur", onClose);
     };
   }, [anchorRef, onClose]);
 

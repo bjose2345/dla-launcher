@@ -165,6 +165,14 @@ describe("stylesheets", () => {
     expect(video).not.toContain(".app-frame:has(.media-dock) .app-sidebar");
   });
 
+  it("does not resize the video workspace when a dock menu opens", () => {
+    const video = sources["./video-player.css"] ?? "";
+    const mediaDock = libraryComponents["../features/library/MediaDock.tsx"] ?? "";
+
+    expect(video).not.toContain(".media-dock.is-video.has-open-menu");
+    expect(mediaDock).not.toContain("has-open-menu");
+  });
+
   it("catches the splice that brace counting misses", () => {
     // Reproduces the exact corruption a bad selector-group edit produced: a rule's
     // closing brace glued to the next selector list, with a rule silently swallowed.

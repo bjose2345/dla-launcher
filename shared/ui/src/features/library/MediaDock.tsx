@@ -56,9 +56,7 @@ export function MediaDock({ onExpand }: { onExpand: (installationId: string) => 
     && playback.items.length > 1;
   return (
     <section
-      className={
-        `media-dock${isVideo ? " is-video" : ""}${isVideo && openMenu ? " has-open-menu" : ""}`
-      }
+      className={`media-dock${isVideo ? " is-video" : ""}`}
       aria-label={t("media.dock")}
     >
       <div className="media-dock-now">
@@ -189,6 +187,7 @@ export function MediaDock({ onExpand }: { onExpand: (installationId: string) => 
             icon={<Captions aria-hidden="true" />}
             label={t("media.video.subtitles")}
             open={openMenu === "subtitles"}
+            gap={isVideo ? -16 : 8}
             onOpenChange={(open) => setOpenMenu(open ? "subtitles" : null)}
           >
             <MediaDockMenuGroup labelKey="media.video.subtitles">
@@ -211,6 +210,7 @@ export function MediaDock({ onExpand }: { onExpand: (installationId: string) => 
         <MediaDockMenu
           label={t("media.menu.more")}
           open={openMenu === "more"}
+          gap={isVideo ? -16 : 8}
           onOpenChange={(open) => setOpenMenu(open ? "more" : null)}
         >
           <MediaDockMenuGroup labelKey="media.menu.speed">

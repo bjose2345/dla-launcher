@@ -96,8 +96,32 @@ export function featuredInstallationId(
   const eligible = (installationId: string) => (
     eligibleInstallationIds === undefined || eligibleInstallationIds.has(installationId)
   );
-  return shelves.continueItems.find((item) => eligible(item.installationId))?.installationId
-    ?? shelves.recent.find((item) => eligible(item.installationId))?.installationId
+  const newestActivity = [
+    ...shelves.continueItems.map((item) => ({
+      installationId: item.installationId,
+      occurredAt: item.updatedAt,
+      recentLaunch: false,
+    })),
+    ...shelves.recent.map((item) => ({
+      installationId: item.installationId,
+      occurredAt: item.occurredAt,
+      recentLaunch: true,
+    })),
+  ].filter((item) => eligible(item.installationId)).reduce<{
+    installationId: string;
+    occurredAt: string;
+    recentLaunch: boolean;
+  } | null>((selected, candidate) => {
+    if (!selected) return candidate;
+    const selectedTime = Date.parse(selected.occurredAt);
+    const candidateTime = Date.parse(candidate.occurredAt);
+    if (!Number.isFinite(selectedTime)) return candidate;
+    if (!Number.isFinite(candidateTime)) return selected;
+    if (candidateTime !== selectedTime) return candidateTime > selectedTime ? candidate : selected;
+    return candidate.recentLaunch && !selected.recentLaunch ? candidate : selected;
+  }, null);
+
+  return newestActivity?.installationId
     ?? shelves.neverLaunched.find(eligible)
     ?? shelves.installations.find((item) => eligible(item.id))?.id
     ?? null;

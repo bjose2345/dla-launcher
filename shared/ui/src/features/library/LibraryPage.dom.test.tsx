@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CatalogDetailGateway } from "../catalog";
@@ -13,9 +13,12 @@ import { LibraryPage } from "./LibraryPage";
 import { MediaPlaybackProvider } from "./MediaPlaybackProvider";
 import type {
   Installation,
+  LaunchActionKind,
+  LaunchActivity,
   LibraryGateway,
   LibraryShelves,
   PersonalizedRecommendationItem,
+  PreparedPackageInstallation,
 } from "./types";
 
 afterEach(() => {
@@ -151,6 +154,110 @@ describe("LibraryPage data loading", () => {
     expect(screen.queryByRole("heading", { name: "Your library is empty" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Open app" }));
     await waitFor(() => expect(androidGateway.launch).toHaveBeenCalledWith(item.association.id));
+  });
+});
+
+describe("Library executable actions", () => {
+  it("launches a prepared executable from Recent instead of opening its review", async () => {
+    const onOpenReview = vi.fn();
+    const { gateway } = renderExecutableLibrary({ onOpenReview });
+
+    const recent = (await screen.findByRole("heading", { name: "Recent" })).closest("section");
+    expect(recent).toBeTruthy();
+    const card = within(recent!).getByRole("button", { name: /RJ00000003/ });
+    await screen.findByRole("button", { name: "Play" });
+    fireEvent.click(card);
+
+    await waitFor(() => expect(gateway.launchInstallation).toHaveBeenCalledWith("installation-app"));
+    expect(onOpenReview).not.toHaveBeenCalled();
+  });
+
+  it("launches a prepared executable from Never launched instead of opening its review", async () => {
+    const onOpenReview = vi.fn();
+    const { gateway } = renderExecutableLibrary({ onOpenReview, shelf: "never" });
+
+    const neverLaunched = (await screen.findByRole("heading", { name: "Never launched" }))
+      .closest("section");
+    expect(neverLaunched).toBeTruthy();
+    const card = within(neverLaunched!).getByRole("button", { name: /RJ00000003/ });
+    await within(card).findByText("Play");
+    fireEvent.click(card);
+
+    await waitFor(() => expect(gateway.launchInstallation).toHaveBeenCalledWith("installation-app"));
+    expect(onOpenReview).not.toHaveBeenCalled();
+  });
+
+  it("coalesces repeated executable activation while launch is pending", async () => {
+    let resolveLaunch: ((activity: LaunchActivity) => void) | undefined;
+    const launchResult = new Promise<LaunchActivity>((resolve) => {
+      resolveLaunch = resolve;
+    });
+    const { gateway } = renderExecutableLibrary({ launchResult });
+
+    const recent = (await screen.findByRole("heading", { name: "Recent" })).closest("section");
+    expect(recent).toBeTruthy();
+    const card = within(recent!).getByRole("button", { name: /RJ00000003/ });
+    await screen.findByRole("button", { name: "Play" });
+    fireEvent.click(card);
+    await waitFor(() => expect(gateway.launchInstallation).toHaveBeenCalledTimes(1));
+    fireEvent.click(card);
+
+    expect(gateway.launchInstallation).toHaveBeenCalledTimes(1);
+    resolveLaunch?.(executableActivity("running"));
+    await waitFor(() => expect(card.getAttribute("disabled")).not.toBeNull());
+  });
+
+  it("preserves the media action recorded by a Recent shelf item", async () => {
+    const onOpenMedia = vi.fn();
+    const { gateway } = renderExecutableLibrary({
+      onOpenMedia,
+      recentAction: "play_video",
+    });
+
+    const recent = (await screen.findByRole("heading", { name: "Recent" })).closest("section");
+    expect(recent).toBeTruthy();
+    fireEvent.click(within(recent!).getByRole("button", { name: /RJ00000003/ }));
+
+    await waitFor(() => expect(onOpenMedia).toHaveBeenCalledWith("installation-app"));
+    expect(gateway.launchInstallation).not.toHaveBeenCalled();
+  });
+
+  it("keeps Play disabled while the executable launch is active", async () => {
+    const { gateway } = renderExecutableLibrary({ running: true });
+
+    const running = await screen.findByRole("button", { name: "Running" }) as HTMLButtonElement;
+    expect(running.disabled).toBe(true);
+    fireEvent.click(running);
+    expect(gateway.launchInstallation).not.toHaveBeenCalled();
+  });
+
+  it("polls launch status without reloading shelves until the app exits", async () => {
+    vi.useFakeTimers();
+    try {
+      const { readShelves, listRecentLaunches } = renderExecutableLibrary({ running: true });
+
+      await vi.waitFor(() => expect(readShelves).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(listRecentLaunches).toHaveBeenCalledTimes(1));
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(800);
+      });
+
+      expect(listRecentLaunches).toHaveBeenCalledTimes(2);
+      expect(readShelves).toHaveBeenCalledTimes(1);
+      expect((screen.getByRole("button", { name: "Refresh" }) as HTMLButtonElement).disabled)
+        .toBe(false);
+
+      listRecentLaunches.mockResolvedValue([executableActivity("exited")]);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(800);
+      });
+
+      await vi.waitFor(() => expect(readShelves).toHaveBeenCalledTimes(2));
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -369,5 +476,120 @@ function androidAppView(): AndroidAppView {
       versionCode: "1",
       technicalDetail: null,
     },
+  };
+}
+
+function renderExecutableLibrary({
+  launchResult = Promise.resolve(executableActivity("running")),
+  running = false,
+  onOpenMedia = vi.fn(),
+  onOpenReview = vi.fn(),
+  recentAction = "launch_executable",
+  shelf = "recent",
+}: {
+  launchResult?: Promise<LaunchActivity>;
+  running?: boolean;
+  onOpenMedia?: (installationId: string) => void | Promise<void>;
+  onOpenReview?: (installationId: string) => void | Promise<void>;
+  recentAction?: LaunchActionKind;
+  shelf?: "never" | "recent";
+} = {}) {
+  const executable = installation("installation-app", "RJ00000003");
+  const activity = executableActivity(running ? "running" : "exited");
+  const shelves: LibraryShelves = {
+    installations: [executable],
+    recent: shelf === "recent" ? [{
+      installationId: executable.id,
+      action: recentAction,
+      kind: recentAction === "launch_executable" ? "executable_launch" : "media_session",
+      occurredAt: activity.attemptedAt,
+      active: running,
+    }] : [],
+    continueItems: [],
+    neverLaunched: shelf === "never" ? [executable.id] : [],
+    unfinished: [],
+    launchTotals: [],
+  };
+  const readShelves = vi.fn().mockResolvedValue(shelves);
+  const listRecentLaunches = vi.fn().mockResolvedValue(running ? [activity] : []);
+  const gateway = {
+    readShelves,
+    listRecentLaunches,
+    readLocalPersonalization: vi.fn().mockResolvedValue({
+      favorites: [], becauseYou: [], voiceMix: [], activityWorkCount: 0,
+      voiceActivityWorkCount: 0, becauseYouMinimum: 2, voiceMixMinimum: 2,
+    }),
+    readPreparedPackages: vi.fn().mockResolvedValue([preparedExecutable(executable.id)]),
+    readInstallationHealths: vi.fn().mockResolvedValue([]),
+    launchInstallation: vi.fn().mockReturnValue(launchResult),
+    mediaAssetUrl: vi.fn().mockReturnValue(""),
+  } as unknown as LibraryGateway;
+  const catalogGateway = {
+    readWorks: vi.fn().mockResolvedValue([]),
+  } as unknown as CatalogDetailGateway;
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <PresentationProvider>
+        <KeyBindingsProvider>
+          <MediaPlaybackProvider gateway={gateway}>
+            <ImageReaderProvider gateway={gateway}>
+              <LibraryPage
+                gateway={gateway}
+                catalogGateway={catalogGateway}
+                onOpenReview={onOpenReview}
+                onOpenMedia={onOpenMedia}
+                onOpenWork={vi.fn()}
+              />
+            </ImageReaderProvider>
+          </MediaPlaybackProvider>
+        </KeyBindingsProvider>
+      </PresentationProvider>
+    </QueryClientProvider>,
+  );
+  return { gateway, readShelves, listRecentLaunches };
+}
+
+function preparedExecutable(installationId: string): PreparedPackageInstallation {
+  return {
+    installationId,
+    destinationRoot: `/library/${installationId}`,
+    contentRoot: null,
+    preferredAction: {
+      action: "launch_executable",
+      relativePath: "Game.exe",
+      supportedPlatforms: ["windows"],
+      confidence: "high",
+      reasonCodes: [],
+      expectedSha256: null,
+    },
+    sourceSet: { kind: "single_archive", volumes: [] },
+    archiveRetention: "keep",
+    sourcesDeleted: false,
+    sourceCleanupError: null,
+    installedFileCount: 1,
+    installedBytes: 1,
+    preparedAt: "2026-08-26T19:37:28Z",
+  };
+}
+
+function executableActivity(status: LaunchActivity["status"]): LaunchActivity {
+  const active = status === "starting" || status === "running" || status === "stopping";
+  return {
+    id: "launch-app",
+    installationId: "installation-app",
+    action: "launch_executable",
+    targetPath: "Game.exe",
+    adapter: "linux_wine",
+    status,
+    processId: active ? 42 : null,
+    error: null,
+    attemptedAt: "2026-08-26T19:37:28Z",
+    startedAt: "2026-08-26T19:37:28Z",
+    endedAt: active ? null : "2026-08-26T19:37:50Z",
+    durationMs: active ? null : 22_000,
+    exitCode: active ? null : 0,
+    stopRequestedAt: null,
   };
 }
