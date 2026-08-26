@@ -59,6 +59,18 @@ export function NativeVideoSurface({
       if (disposed) return;
       if (!surfaceIdRef.current || state.surfaceId !== surfaceIdRef.current) return;
       if (state.sessionId !== requestRef.current.sessionId || state.ordinal !== requestRef.current.ordinal) return;
+      if (state.kind === "error") {
+        const surfaceId = surfaceIdRef.current;
+        surfaceIdRef.current = "";
+        void gateway.closeNativeVideo(state.sessionId, surfaceId).then(() => {
+          if (!disposed) onStateRef.current(state);
+        }).catch((error) => {
+          if (disposed) return;
+          onErrorRef.current(error);
+          onStateRef.current(state);
+        });
+        return;
+      }
       onStateRef.current(state);
     }).then((release) => {
       if (disposed) release();

@@ -826,7 +826,7 @@ export function VideoPlayer({
             void toggleFullscreen();
           }}
         >
-        {nativeGateway && nativeRequest ? (
+        {nativeGateway && nativeRequest && !errorMessage ? (
           <NativeVideoSurface
             key={`${source}:${retryVersion}`}
             gateway={nativeGateway}
@@ -847,7 +847,8 @@ export function VideoPlayer({
               setPlayError(error instanceof Error ? error.message : String(error));
             }}
           />
-        ) : currentItem ? (
+        ) : null}
+        {!nativeGateway && currentItem ? (
           <video
             key={`${source}:${retryVersion}`}
             ref={videoRef}
@@ -897,7 +898,7 @@ export function VideoPlayer({
           </div>
         ) : null}
 
-        {errorMessage && (!nativeGateway || playError) ? (
+        {errorMessage ? (
           <div className="video-player-error" role="alert">
             <AlertTriangle aria-hidden="true" />
             <strong>{errorMessage}</strong>

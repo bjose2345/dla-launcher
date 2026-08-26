@@ -57,9 +57,11 @@
     "linux": {
       "deb": {
         "desktopTemplate": "linux/dla-launcher.desktop.hbs",
+        "depends": [
+          "gstreamer1.0-libav"
+        ],
         "recommends": [
           "gstreamer1.0-gl",
-          "gstreamer1.0-libav",
           "gstreamer1.0-plugins-bad",
           "gstreamer1.0-plugins-base",
           "gstreamer1.0-plugins-good",
