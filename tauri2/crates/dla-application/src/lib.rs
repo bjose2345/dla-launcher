@@ -3,7 +3,6 @@ pub mod android_package;
 pub mod catalog;
 pub mod catalog_artwork;
 pub mod catalog_import;
-pub mod diagnostics;
 pub mod identity;
 pub mod installation;
 pub mod installation_from_scan;

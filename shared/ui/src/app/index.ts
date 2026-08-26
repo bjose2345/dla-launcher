@@ -6,4 +6,3 @@ export {
   type ReadOnlyDeepLinkGateway,
   type ReadOnlyDeepLinkTarget,
 } from "./deepLinks";
-export { isPreReleaseVersion } from "./version";

@@ -21,7 +21,6 @@ use dla_application::{
         CatalogGenerationKind, CatalogGenerationState, CatalogGenerationSummary,
         CatalogImportService, CatalogPackageProfile,
     },
-    diagnostics::{DiagnosticsService, ProbeRunner},
     identity::CatalogIdentityReader,
     installation::InstallationStore,
     installation_from_scan::{InstallationFromScanService, InstallationScanSource},
@@ -64,8 +63,8 @@ use dla_scanner::{
 };
 use dla_search_tantivy::TantivyCatalogSearch;
 use dla_sqlite::{
-    ReloadableCatalogStore, SqliteCatalogStore, SqliteLibraryStore, SqliteProbe,
-    StoredCatalogGeneration, current_timestamp, database_size,
+    ReloadableCatalogStore, SqliteCatalogStore, SqliteLibraryStore, StoredCatalogGeneration,
+    current_timestamp, database_size,
 };
 use tauri::Manager;
 
@@ -390,7 +389,6 @@ pub fn run() {
                 )),
                 app.handle().clone(),
             ));
-            let probe_runner: Arc<dyn ProbeRunner> = Arc::new(SqliteProbe::new());
             let android_package = Arc::new(AndroidPackageService::new(Arc::clone(
                 &app.state::<dla_android_package_tauri::AndroidPackagePlatformState>().0,
             )));
@@ -409,10 +407,6 @@ pub fn run() {
                 catalog: Arc::new(CatalogService::new(catalog_reader)),
                 cover_cache,
                 recommendations,
-                diagnostics: Arc::new(DiagnosticsService::new(
-                    cache_directory.join("diagnostics/sqlite-capability.sqlite"),
-                    probe_runner,
-                )),
                 search,
                 search_index_controller,
                 scanner,
@@ -462,7 +456,6 @@ pub fn run() {
             commands::request_android_package_install,
             commands::read_cover_cache_summary,
             commands::configure_cover_cache,
-            commands::run_sqlite_probe,
             commands::read_system_report,
             commands::read_search_index_status,
             commands::rebuild_search_index,

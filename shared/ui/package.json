@@ -10,7 +10,6 @@
     "./app": "./src/app/index.ts",
     "./catalog": "./src/features/catalog/index.ts",
     "./catalog/detail": "./src/features/catalog/WorkDetailPage.tsx",
-    "./diagnostics": "./src/features/diagnostics/index.ts",
     "./importer": "./src/features/importer/index.ts",
     "./library": "./src/features/library/index.ts",
     "./preferences": "./src/preferences/index.ts",

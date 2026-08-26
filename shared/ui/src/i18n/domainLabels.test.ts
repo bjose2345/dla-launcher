@@ -4,8 +4,6 @@ import {
   archivePolicyMessageKey,
   catalogProfileMessageKey,
   confidenceMessageKey,
-  diagnosticCheckMessageKey,
-  diagnosticDetailMessageKey,
   evidenceReasonMessageKey,
   generationKindMessageKey,
   launchActionMessageKey,
@@ -30,17 +28,11 @@ describe("domain label localization", () => {
     expect(generationKindMessageKey("imported")).toBe("domain.generation.imported");
     expect(evidenceReasonMessageKey("archive_sha256_match"))
       .toBe("domain.evidence.archiveHashMatch");
-    expect(diagnosticCheckMessageKey("database_open"))
-      .toBe("diagnostics.check.databaseOpen");
-    expect(diagnosticDetailMessageKey("database connection established"))
-      .toBe("diagnostics.detail.databaseConnected");
   });
 
   it("uses deliberate localized labels for unknown stable values", () => {
     expect(platformMessageKey("plan9")).toBe("domain.platform.unknown");
     expect(confidenceMessageKey("unexpected")).toBe("domain.confidence.unknown");
     expect(evidenceReasonMessageKey("future_reason")).toBe("domain.evidence.observed");
-    expect(diagnosticCheckMessageKey("future_check")).toBe("diagnostics.check.unknown");
-    expect(diagnosticDetailMessageKey("free-form operating-system detail")).toBeNull();
   });
 });

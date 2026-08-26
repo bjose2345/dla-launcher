@@ -2,7 +2,6 @@ mod android_app;
 mod catalog;
 mod catalog_generation;
 mod database;
-mod diagnostics;
 mod import;
 mod installation;
 mod launch;
@@ -16,7 +15,6 @@ mod shelves;
 
 pub use catalog::{ReloadableCatalogStore, SqliteCatalogStore};
 pub use catalog_generation::StoredCatalogGeneration;
-pub use diagnostics::SqliteProbe;
 pub use import::{
     CatalogDatabaseCounts, CatalogDatabaseFinalizeProgress, CatalogDatabaseFinalizeStage,
     SqliteCatalogImportWriter, database_size,

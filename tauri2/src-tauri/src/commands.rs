@@ -10,7 +10,6 @@ use dla_application::{
         CatalogArtworkRetention,
     },
     catalog_import::{CatalogGenerationSummary, CatalogImportPreview, CatalogImportProgress},
-    diagnostics::{DiagnosticsService, ProbeReport},
     installation_from_scan::{CreateInstallationFromScanRequest, InstallationFromScanService},
     installation_review::{InstallationReviewRequest, InstallationReviewService},
     launch::{LaunchInstallationRequest, LaunchService},
@@ -65,7 +64,6 @@ pub struct AppState {
     pub catalog: Arc<CatalogService>,
     pub cover_cache: Arc<dyn CatalogArtworkCache>,
     pub recommendations: Arc<CatalogRecommendationService>,
-    pub diagnostics: Arc<DiagnosticsService>,
     pub search: Arc<CatalogSearchService>,
     pub search_index_controller: Arc<SearchIndexController>,
     pub scanner: Arc<ScanController>,
@@ -1100,14 +1098,6 @@ pub async fn read_catalog_rom_contents(
     .await
     .map_err(|error| error.to_string())?
     .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub async fn run_sqlite_probe(state: tauri::State<'_, AppState>) -> Result<ProbeReport, String> {
-    let diagnostics = Arc::clone(&state.diagnostics);
-    tauri::async_runtime::spawn_blocking(move || diagnostics.run_sqlite_probe())
-        .await
-        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]

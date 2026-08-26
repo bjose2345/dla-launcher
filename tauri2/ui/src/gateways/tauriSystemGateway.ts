@@ -1,4 +1,3 @@
-import type { DiagnosticsGateway, ProbeReport } from "@dla-launcher/shared-ui/diagnostics";
 import type {
   SystemGateway,
   SystemReport,
@@ -8,10 +7,7 @@ import type {
 } from "@dla-launcher/shared-ui/preferences";
 import { invoke } from "@tauri-apps/api/core";
 
-export const tauriDiagnosticsGateway: DiagnosticsGateway & WindowGateway & SystemGateway = {
-  runSQLiteProbe(): Promise<ProbeReport> {
-    return invoke("run_sqlite_probe");
-  },
+export const tauriSystemGateway: WindowGateway & SystemGateway = {
   readSystemReport(): Promise<SystemReport> {
     return invoke("read_system_report");
   },

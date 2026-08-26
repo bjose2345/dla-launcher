@@ -49,11 +49,10 @@ const navigation: AppShellNavItem[] = [
   { to: "/settings", label: "Settings", icon: "settings", group: "secondary" },
   { to: "/support", label: "Support", icon: "support", group: "secondary" },
   { to: "/about", label: "About", icon: "about", group: "secondary" },
-  { to: "/diagnostics", label: "Diagnostics", icon: "diagnostics", group: "secondary", developerOnly: true },
 ];
 
 describe("AppShell", () => {
-  it("renders navigation in a sidebar with the developer route tagged", async () => {
+  it("renders navigation in the product sidebar", async () => {
     renderShell();
 
     const sidebar = await screen.findByRole("navigation", { name: "Primary navigation" });
@@ -65,11 +64,8 @@ describe("AppShell", () => {
     expect(secondaryText).toContain("Settings");
     expect(secondaryText).toContain("Support");
     expect(secondaryText).toContain("About");
-    expect(secondaryText).toContain("Diagnostics");
-    expect(secondaryText).toContain("Dev");
     expect(secondaryText.indexOf("Settings")).toBeLessThan(secondaryText.indexOf("Support"));
     expect(secondaryText.indexOf("Support")).toBeLessThan(secondaryText.indexOf("About"));
-    expect(secondaryText.indexOf("About")).toBeLessThan(secondaryText.indexOf("Diagnostics"));
   });
 
   it("collapses and expands from the toggle and remembers the choice", async () => {
@@ -189,9 +185,8 @@ function renderShell(items: AppShellNavItem[] = navigation) {
   const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: () => null });
   const libraryRoute = createRoute({ getParentRoute: () => rootRoute, path: "/library", component: () => null });
   const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: () => null });
-  const diagnosticsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/diagnostics", component: () => null });
   const router = createRouter({
-    routeTree: rootRoute.addChildren([indexRoute, libraryRoute, settingsRoute, diagnosticsRoute]),
+    routeTree: rootRoute.addChildren([indexRoute, libraryRoute, settingsRoute]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

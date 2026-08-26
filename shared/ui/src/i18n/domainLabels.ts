@@ -94,23 +94,6 @@ const generationKindKeys = {
   imported: "domain.generation.imported",
 } satisfies Record<CatalogGenerationKind, MessageKey>;
 
-const diagnosticCheckKeys: Record<string, MessageKey> = {
-  storage_directory: "diagnostics.check.storageDirectory",
-  database_open: "diagnostics.check.databaseOpen",
-  sqlite_version: "diagnostics.check.sqliteVersion",
-  migrations: "diagnostics.check.migrations",
-  foreign_keys: "diagnostics.check.foreignKeys",
-  wal: "diagnostics.check.wal",
-  unicode_round_trip: "diagnostics.check.unicodeRoundTrip",
-  reopen: "diagnostics.check.reopen",
-};
-
-const diagnosticDetailKeys: Record<string, MessageKey> = {
-  "database connection established": "diagnostics.detail.databaseConnected",
-  "schema version 1 is current": "diagnostics.detail.schemaCurrent",
-  "invalid foreign key rejected": "diagnostics.detail.foreignKeyRejected",
-};
-
 const evidenceReasonKeys: Record<string, MessageKey> = {
   code_in_directory_name: "domain.evidence.codeInName",
   code_in_filename: "domain.evidence.codeInName",
@@ -217,12 +200,4 @@ export function generationKindMessageKey(value: CatalogGenerationKind): MessageK
 
 export function evidenceReasonMessageKey(value: string): MessageKey {
   return evidenceReasonKeys[value] ?? "domain.evidence.observed";
-}
-
-export function diagnosticCheckMessageKey(value: string): MessageKey {
-  return diagnosticCheckKeys[value] ?? "diagnostics.check.unknown";
-}
-
-export function diagnosticDetailMessageKey(value: string): MessageKey | null {
-  return diagnosticDetailKeys[value] ?? null;
 }

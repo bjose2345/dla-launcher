@@ -2,7 +2,6 @@ import { AboutPage } from "@dla-launcher/shared-ui/about";
 import { AndroidPackagePage } from "@dla-launcher/shared-ui/android-package";
 import {
   AppShell,
-  isPreReleaseVersion,
   type AppShellNavItem,
   type ReadOnlyDeepLinkTarget,
 } from "@dla-launcher/shared-ui/app";
@@ -12,7 +11,6 @@ import {
   defaultCatalogRouteState,
   parseCatalogSearch,
 } from "@dla-launcher/shared-ui/catalog";
-import { DiagnosticsPage } from "@dla-launcher/shared-ui/diagnostics";
 import { CatalogImportPage } from "@dla-launcher/shared-ui/importer";
 import {
   ActiveLaunchPill,
@@ -45,7 +43,7 @@ import {
   tauriAndroidPackageGateway,
 } from "./gateways/tauriAndroidPackageGateway";
 import { tauriCoverCacheGateway } from "./gateways/tauriCoverCacheGateway";
-import { tauriDiagnosticsGateway } from "./gateways/tauriDiagnosticsGateway";
+import { tauriSystemGateway } from "./gateways/tauriSystemGateway";
 import { tauriCatalogImportGateway } from "./gateways/tauriCatalogImportGateway";
 import { tauriSearchGateway } from "./gateways/tauriSearchGateway";
 import { tauriScannerGateway } from "./gateways/tauriScannerGateway";
@@ -67,23 +65,6 @@ const catalogRoute = createRoute({
   component: CatalogRoute,
 });
 
-const diagnosticsRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/diagnostics",
-  component: DiagnosticsRoute,
-});
-
-function DiagnosticsRoute() {
-  const { t } = usePresentation();
-  return (
-    <DiagnosticsPage
-      gateway={tauriDiagnosticsGateway}
-      bridgeDescription={t("diagnostics.bridgeDescription")}
-      platformNote={t("diagnostics.platformNote")}
-    />
-  );
-}
-
 const aboutRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/about",
@@ -93,8 +74,8 @@ const aboutRoute = createRoute({
 function AboutRoute() {
   return (
     <AboutPage
-      systemGateway={tauriDiagnosticsGateway}
-      windowGateway={tauriDiagnosticsGateway}
+      systemGateway={tauriSystemGateway}
+      windowGateway={tauriSystemGateway}
       onOpenProject={() => tauriSupportGateway.openProject()}
       version={`v${__DLA_LAUNCHER_VERSION__}`}
     />
@@ -119,7 +100,7 @@ function SettingsRoute() {
       workPreferenceGateway={tauriLibraryGateway}
       coverCacheGateway={tauriCoverCacheGateway}
       scannerRootGateway={tauriScannerGateway}
-      windowGateway={tauriDiagnosticsGateway}
+      windowGateway={tauriSystemGateway}
       tab={tab}
       onOpenWork={(code) => navigate({ to: "/works/$code", params: { code } })}
       onTabChange={(next) => navigate({ search: { tab: next } })}
@@ -191,7 +172,6 @@ const routeTree = rootRoute.addChildren([
   libraryMediaRoute,
   importRoute,
   androidPackageRoute,
-  diagnosticsRoute,
   settingsRoute,
   supportRoute,
   aboutRoute,
@@ -219,13 +199,12 @@ declare module "@tanstack/react-router" {
 function RootRoute() {
   const navigate = useNavigate();
   const { t } = usePresentation();
-  const version = `v${__DLA_LAUNCHER_VERSION__}`;
   const showAndroidPackages = __DLA_TARGET_PLATFORM__ === "android";
   return (
     <>
       <AppShell
       candidate={t("app.candidate")}
-      navigation={launcherNavigation(t, isPreReleaseVersion(version), showAndroidPackages)}
+      navigation={launcherNavigation(t, showAndroidPackages)}
       launchIndicator={(
         <ActiveLaunchPill
           gateway={tauriLibraryGateway}
@@ -257,7 +236,6 @@ function RootRoute() {
 
 function launcherNavigation(
   t: ReturnType<typeof usePresentation>["t"],
-  showDiagnostics: boolean,
   showAndroidPackages: boolean,
 ): AppShellNavItem[] {
   const items: AppShellNavItem[] = [
@@ -274,15 +252,6 @@ function launcherNavigation(
       to: "/android-packages",
       label: t("nav.androidPackages"),
       icon: "androidPackage",
-    });
-  }
-  if (showDiagnostics) {
-    items.push({
-      to: "/diagnostics",
-      label: t("nav.diagnostics"),
-      icon: "diagnostics",
-      group: "secondary",
-      developerOnly: true,
     });
   }
   return items;

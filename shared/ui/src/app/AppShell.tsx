@@ -1,6 +1,5 @@
 import { Link, Outlet } from "@tanstack/react-router";
 import {
-  Activity,
   Download,
   FolderSearch,
   Info,
@@ -39,7 +38,6 @@ const navIcons = {
   settings: Settings,
   support: LifeBuoy,
   about: Info,
-  diagnostics: Activity,
 } as const;
 
 export type AppShellNavIcon = keyof typeof navIcons;
@@ -50,7 +48,6 @@ export interface AppShellNavItem {
   icon: AppShellNavIcon;
   exact?: boolean;
   group?: "primary" | "secondary";
-  developerOnly?: boolean;
 }
 
 interface AppShellProps {
@@ -199,7 +196,6 @@ function SidebarLink({ item, collapsed }: { item: AppShellNavItem; collapsed: bo
     >
       <span className="app-nav-icon"><Icon aria-hidden="true" /></span>
       <span className="app-nav-label">{item.label}</span>
-      {item.developerOnly ? <span className="app-nav-tag">{t("nav.developerOnly")}</span> : null}
     </Link>
   );
 }
