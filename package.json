@@ -1,16 +1,16 @@
 {
   "name": "dla-launcher",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "description": "Open-source local library and launcher for DLsite works",
   "private": true,
   "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/DLA-Project/dla-launcher.git"
+    "url": "git+https://github.com/bjose2345/dla-launcher.git"
   },
-  "homepage": "https://github.com/DLA-Project/dla-launcher",
+  "homepage": "https://github.com/bjose2345/dla-launcher",
   "bugs": {
-    "url": "https://github.com/DLA-Project/dla-launcher/issues"
+    "url": "https://github.com/bjose2345/dla-launcher/issues"
   },
   "engines": {
     "node": ">=24"

@@ -938,7 +938,7 @@ mod tests {
     fn issue_destination_is_the_workspace_bug_tracker() {
         assert_eq!(
             ISSUE_URL,
-            "https://github.com/DLA-Project/dla-launcher/issues"
+            "https://github.com/bjose2345/dla-launcher/issues"
         );
     }
 
@@ -947,7 +947,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary directory");
         assert_eq!(
             runtime(directory.path(), false).project_url(),
-            "https://github.com/DLA-Project/dla-launcher"
+            "https://github.com/bjose2345/dla-launcher"
         );
     }
 

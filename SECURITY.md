@@ -8,7 +8,7 @@ deep links, and native launch requests. Security reports are welcome.
 Do not open a public issue for an unpatched vulnerability. Use GitHub's private
 vulnerability reporting for this repository:
 
-https://github.com/DLA-Project/dla-launcher/security/advisories/new
+https://github.com/bjose2345/dla-launcher/security/advisories/new
 
 Include the affected version and platform, impact, reproduction steps, and a
 minimal synthetic sample when one is required. Never attach a real user

@@ -63,7 +63,7 @@ setting `GDK_BACKEND` or disabling compositing.
 Install the platform prerequisites in [Building](docs/BUILDING.md), then:
 
 ```bash
-git clone https://github.com/DLA-Project/dla-launcher.git
+git clone https://github.com/bjose2345/dla-launcher.git
 cd dla-launcher
 corepack enable
 pnpm install --frozen-lockfile
