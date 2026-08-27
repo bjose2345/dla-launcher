@@ -1,7 +1,8 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::Read,
-    process::Stdio,
+    io::{self, Read},
+    process::{Command, ExitStatus, Stdio},
+    thread,
 };
 
 use dla_application::package_inspection::{PackageManifestError, PackageManifestReader};
@@ -19,7 +20,8 @@ use crate::{
     source::resolve_source_files,
 };
 
-const MAX_LISTING_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_LISTING_BYTES: usize = 64 * 1024 * 1024;
+const MAX_TOOL_ERROR_BYTES: usize = 64 * 1024;
 
 #[derive(Default)]
 pub(crate) struct RarPackageManifestReader;
@@ -66,40 +68,30 @@ fn inspect_archive(primary: &std::path::Path) -> Result<PackageManifest, Package
     let mut unavailable = Vec::new();
     for tool in rar_tool_candidates() {
         let mut command = tool.listing_command(primary);
-        let mut child = match command
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        {
-            Ok(child) => child,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                unavailable.push(tool.program().to_owned());
-                continue;
-            }
-            Err(error) => return Err(PackageManifestError::Inspection(error.to_string())),
-        };
-        let mut stdout = Vec::new();
-        child
-            .stdout
-            .take()
-            .expect("piped stdout")
-            .take(MAX_LISTING_BYTES + 1)
-            .read_to_end(&mut stdout)
-            .map_err(|error| PackageManifestError::Inspection(error.to_string()))?;
-        let output = child
-            .wait_with_output()
-            .map_err(|error| PackageManifestError::Inspection(error.to_string()))?;
-        if stdout.len() as u64 > MAX_LISTING_BYTES {
+        let output =
+            match capture_command_output(&mut command, MAX_LISTING_BYTES, MAX_TOOL_ERROR_BYTES) {
+                Ok(output) => output,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    unavailable.push(tool.program().to_owned());
+                    continue;
+                }
+                Err(error) => return Err(PackageManifestError::Inspection(error.to_string())),
+            };
+        if output.stdout.truncated {
             return Err(PackageManifestError::Inspection(
                 "archive listing exceeds the safety limit".to_owned(),
             ));
         }
         if !output.status.success() {
-            return Err(PackageManifestError::Inspection(
-                String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-            ));
+            let mut detail = String::from_utf8_lossy(&output.stderr.bytes)
+                .trim()
+                .to_owned();
+            if output.stderr.truncated {
+                detail.push_str(" [diagnostic output truncated]");
+            }
+            return Err(PackageManifestError::Inspection(detail));
         }
-        let listing = String::from_utf8(stdout)
+        let listing = String::from_utf8(output.stdout.bytes)
             .map_err(|error| PackageManifestError::Inspection(error.to_string()))?;
         return match tool.kind() {
             RarToolKind::SevenZip => parse_listing(&listing),
@@ -112,24 +104,112 @@ fn inspect_archive(primary: &std::path::Path) -> Result<PackageManifest, Package
     )))
 }
 
+struct CapturedCommandOutput {
+    status: ExitStatus,
+    stdout: CapturedStream,
+    stderr: CapturedStream,
+}
+
+struct CapturedStream {
+    bytes: Vec<u8>,
+    truncated: bool,
+}
+
+fn capture_command_output(
+    command: &mut Command,
+    stdout_limit: usize,
+    stderr_limit: usize,
+) -> io::Result<CapturedCommandOutput> {
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let stdout = child.stdout.take().expect("piped stdout");
+    let stderr = child.stderr.take().expect("piped stderr");
+    let stdout_reader = thread::spawn(move || read_capped_stream(stdout, stdout_limit));
+    let stderr_reader = thread::spawn(move || read_capped_stream(stderr, stderr_limit));
+    let status = child.wait();
+    let stdout = join_stream_reader(stdout_reader, "stdout")?;
+    let stderr = join_stream_reader(stderr_reader, "stderr")?;
+    Ok(CapturedCommandOutput {
+        status: status?,
+        stdout,
+        stderr,
+    })
+}
+
+fn join_stream_reader(
+    reader: thread::JoinHandle<io::Result<CapturedStream>>,
+    label: &str,
+) -> io::Result<CapturedStream> {
+    reader
+        .join()
+        .map_err(|_| io::Error::other(format!("RAR {label} reader terminated unexpectedly")))?
+}
+
+fn read_capped_stream(mut reader: impl Read, limit: usize) -> io::Result<CapturedStream> {
+    let mut bytes = Vec::with_capacity(limit.min(64 * 1024));
+    let mut buffer = [0_u8; 16 * 1024];
+    let mut truncated = false;
+    loop {
+        let read = match reader.read(&mut buffer) {
+            Ok(read) => read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        if read == 0 {
+            break;
+        }
+        let retained = read.min(limit.saturating_sub(bytes.len()));
+        bytes.extend_from_slice(&buffer[..retained]);
+        truncated |= retained < read;
+    }
+    Ok(CapturedStream { bytes, truncated })
+}
+
 fn parse_listing(output: &str) -> Result<PackageManifest, PackageManifestError> {
     let normalized = output.replace("\r\n", "\n");
-    let records = normalized
-        .split("\n\n")
-        .map(parse_record)
-        .filter(|record| !record.is_empty())
-        .collect::<Vec<_>>();
+    let records = collect_records(
+        normalized.split("\n\n"),
+        parse_record,
+        |record| !record.is_empty(),
+        MAX_MANIFEST_ENTRIES,
+    )?;
     manifest_from_records(records)
 }
 
 fn parse_unrar_listing(output: &str) -> Result<PackageManifest, PackageManifestError> {
     let normalized = output.replace("\r\n", "\n");
-    let records = normalized
-        .split("\n\n")
-        .map(parse_unrar_record)
-        .filter(|record| record.contains_key("Path"))
-        .collect::<Vec<_>>();
+    let records = collect_records(
+        normalized.split("\n\n"),
+        parse_unrar_record,
+        |record| record.contains_key("Path"),
+        MAX_MANIFEST_ENTRIES,
+    )?;
     manifest_from_records(records)
+}
+
+fn collect_records<'a>(
+    blocks: impl IntoIterator<Item = &'a str>,
+    parse: impl Fn(&str) -> BTreeMap<String, String>,
+    include: impl Fn(&BTreeMap<String, String>) -> bool,
+    limit: usize,
+) -> Result<Vec<BTreeMap<String, String>>, PackageManifestError> {
+    let mut records = Vec::new();
+    for block in blocks {
+        let record = parse(block);
+        if !include(&record) {
+            continue;
+        }
+        if records.len() == limit {
+            return Err(PackageManifestError::Inspection(format!(
+                "archive contains more than {limit} entries"
+            )));
+        }
+        records.push(record);
+    }
+    Ok(records)
 }
 
 fn manifest_from_records(
@@ -293,6 +373,8 @@ fn parse_size(value: Option<&String>, label: &str) -> Result<u64, PackageManifes
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
     use super::*;
 
     #[test]
@@ -353,5 +435,43 @@ mod tests {
 
         assert_eq!(manifest.safety, PackageSafety::Unsafe);
         assert_eq!(manifest.issues.len(), 3);
+    }
+
+    #[test]
+    fn rejects_entry_records_before_collecting_beyond_the_limit() {
+        let error = collect_records(
+            ["Path = one", "Path = two", "Path = three"],
+            parse_record,
+            |record| !record.is_empty(),
+            2,
+        )
+        .expect_err("entry limit");
+
+        assert!(error.to_string().contains("more than 2 entries"));
+    }
+
+    #[test]
+    fn capped_streams_are_fully_drained_without_retaining_excess_output() {
+        let output =
+            read_capped_stream(Cursor::new(vec![b'x'; 128 * 1024]), 1024).expect("captured stream");
+
+        assert_eq!(output.bytes.len(), 1024);
+        assert!(output.truncated);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn listing_capture_drains_stdout_and_stderr_concurrently() {
+        let script = "i=0; while [ \"$i\" -lt 8192 ]; do printf '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\\n' >&2; i=$((i + 1)); done; printf 'listing-ready\\n'";
+        let mut command = Command::new("timeout");
+        command.args(["5s", "sh", "-c", script]);
+
+        let output =
+            capture_command_output(&mut command, 1024, 1024).expect("concurrent command output");
+
+        assert!(output.status.success());
+        assert_eq!(output.stdout.bytes, b"listing-ready\n");
+        assert!(output.stderr.truncated);
+        assert_eq!(output.stderr.bytes.len(), 1024);
     }
 }

@@ -1,4 +1,7 @@
-use std::{io::BufRead, path::Path};
+use std::{
+    io::{self, BufRead, Read},
+    path::Path,
+};
 
 use dla_application::catalog_import::{
     CatalogImportCancellationToken, CatalogImportError, CatalogPackageManifest,
@@ -11,6 +14,88 @@ use quick_xml::{
     Reader, XmlVersion,
     events::{BytesStart, Event},
 };
+
+const MAX_DAT_XML_EVENT_BYTES: usize = 1024 * 1024;
+const MAX_DAT_TEXT_FIELD_BYTES: usize = 1024 * 1024;
+
+struct BoundedXmlEventReader<R> {
+    inner: R,
+    limit: usize,
+    remaining: usize,
+    overflowed: bool,
+}
+
+impl<R> BoundedXmlEventReader<R> {
+    fn new(inner: R, limit: usize) -> Self {
+        Self {
+            inner,
+            limit,
+            remaining: limit,
+            overflowed: false,
+        }
+    }
+
+    fn reset_event_budget(&mut self) {
+        self.remaining = self.limit;
+        self.overflowed = false;
+    }
+
+    fn event_budget_exceeded(&self) -> bool {
+        self.overflowed
+    }
+}
+
+impl<R: BufRead> Read for BoundedXmlEventReader<R> {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        let available = self.fill_buf()?;
+        let length = available.len().min(output.len());
+        output[..length].copy_from_slice(&available[..length]);
+        self.consume(length);
+        Ok(length)
+    }
+}
+
+impl<R: BufRead> BufRead for BoundedXmlEventReader<R> {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        let remaining = self.remaining;
+        let available = self.inner.fill_buf()?;
+        if available.is_empty() {
+            return Ok(available);
+        }
+        if remaining == 0 {
+            if !self.overflowed && available.first() == Some(&b'<') {
+                return Ok(&available[..1]);
+            }
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "DAT XML event exceeds the safety limit",
+            ));
+        }
+        Ok(&available[..available.len().min(remaining)])
+    }
+
+    fn consume(&mut self, amount: usize) {
+        self.overflowed |= amount > self.remaining;
+        self.inner.consume(amount);
+        self.remaining = self.remaining.saturating_sub(amount);
+    }
+}
+
+fn read_dat_event<'a, R: BufRead>(
+    reader: &mut Reader<BoundedXmlEventReader<R>>,
+    buffer: &'a mut Vec<u8>,
+) -> Result<Event<'a>, CatalogImportError> {
+    reader.get_mut().reset_event_budget();
+    let event = reader
+        .read_event_into(buffer)
+        .map_err(CatalogImportError::invalid)?;
+    if reader.get_ref().event_budget_exceeded() {
+        return Err(CatalogImportError::invalid(
+            "DAT XML event exceeds the safety limit",
+        ));
+    }
+    Ok(event)
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct DatImportStats {
@@ -60,7 +145,8 @@ pub fn import_dat<R: BufRead>(
     cancellation: &CatalogImportCancellationToken,
     mut on_progress: impl FnMut(DatImportStats) -> Result<(), CatalogImportError>,
 ) -> Result<DatImportStats, CatalogImportError> {
-    let mut reader = Reader::from_reader(input);
+    let mut reader =
+        Reader::from_reader(BoundedXmlEventReader::new(input, MAX_DAT_XML_EVENT_BYTES));
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let mut work: Option<WorkBuilder> = None;
@@ -76,10 +162,7 @@ pub fn import_dat<R: BufRead>(
         if cancellation.is_cancelled() {
             return Err(CatalogImportError::Cancelled);
         }
-        match reader
-            .read_event_into(&mut buffer)
-            .map_err(CatalogImportError::invalid)?
-        {
+        match read_dat_event(&mut reader, &mut buffer)? {
             Event::Start(element) => match element.name().as_ref() {
                 b"work" => {
                     if work.is_some() {
@@ -149,12 +232,12 @@ pub fn import_dat<R: BufRead>(
                     let decoded = text.decode().map_err(CatalogImportError::invalid)?;
                     let unescaped = quick_xml::escape::unescape(&decoded)
                         .map_err(CatalogImportError::invalid)?;
-                    value.push_str(&unescaped);
+                    append_text_field(value, &unescaped)?;
                 }
             }
             Event::CData(text) => {
                 if let Some((_, value)) = &mut text_field {
-                    value.push_str(&text.decode().map_err(CatalogImportError::invalid)?);
+                    append_text_field(value, &text.decode().map_err(CatalogImportError::invalid)?)?;
                 }
             }
             Event::GeneralRef(reference) => {
@@ -163,21 +246,25 @@ pub fn import_dat<R: BufRead>(
                         .resolve_char_ref()
                         .map_err(CatalogImportError::invalid)?
                     {
-                        value.push(character);
+                        let mut encoded = [0_u8; 4];
+                        append_text_field(value, character.encode_utf8(&mut encoded))?;
                     } else {
                         let decoded = reference.decode().map_err(CatalogImportError::invalid)?;
-                        value.push_str(match decoded.as_ref() {
-                            "amp" => "&",
-                            "lt" => "<",
-                            "gt" => ">",
-                            "apos" => "'",
-                            "quot" => "\"",
-                            name => {
-                                return Err(CatalogImportError::invalid(format!(
-                                    "DAT contains unsupported entity &{name};"
-                                )));
-                            }
-                        });
+                        append_text_field(
+                            value,
+                            match decoded.as_ref() {
+                                "amp" => "&",
+                                "lt" => "<",
+                                "gt" => ">",
+                                "apos" => "'",
+                                "quot" => "\"",
+                                name => {
+                                    return Err(CatalogImportError::invalid(format!(
+                                        "DAT contains unsupported entity &{name};"
+                                    )));
+                                }
+                            },
+                        )?;
                     }
                 }
             }
@@ -223,6 +310,28 @@ pub fn import_dat<R: BufRead>(
     }
     on_progress(stats)?;
     Ok(stats)
+}
+
+fn append_text_field(value: &mut String, addition: &str) -> Result<(), CatalogImportError> {
+    append_text_field_with_limit(value, addition, MAX_DAT_TEXT_FIELD_BYTES)
+}
+
+fn append_text_field_with_limit(
+    value: &mut String,
+    addition: &str,
+    limit: usize,
+) -> Result<(), CatalogImportError> {
+    let length = value
+        .len()
+        .checked_add(addition.len())
+        .ok_or_else(|| CatalogImportError::invalid("DAT text field exceeds the safety limit"))?;
+    if length > limit {
+        return Err(CatalogImportError::invalid(
+            "DAT text field exceeds the 1 MiB safety limit",
+        ));
+    }
+    value.push_str(addition);
+    Ok(())
 }
 
 fn persist_work(
@@ -491,6 +600,8 @@ fn stable_value_code(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
     use super::*;
 
     #[test]
@@ -501,5 +612,82 @@ mod tests {
             update_date_from_release_key("RJ01326398-2026-07-30-dup2"),
             "2026-07-30"
         );
+    }
+
+    #[test]
+    fn rejects_an_xml_event_before_its_buffer_can_grow_without_bound() {
+        let xml = format!("<title>{}</title>", "x".repeat(128));
+        let input = Cursor::new(xml.into_bytes());
+        let mut reader = Reader::from_reader(BoundedXmlEventReader::new(input, 32));
+        let mut buffer = Vec::new();
+
+        assert!(matches!(
+            read_dat_event(&mut reader, &mut buffer).expect("title start"),
+            Event::Start(_)
+        ));
+        buffer.clear();
+        let error = read_dat_event(&mut reader, &mut buffer).expect_err("oversized text event");
+
+        assert!(error.to_string().contains("DAT XML event exceeds"));
+        assert!(buffer.len() <= 32);
+    }
+
+    #[test]
+    fn accepts_an_xml_text_event_exactly_at_the_limit() {
+        let xml = format!("<title>{}</title>", "x".repeat(32));
+        let input = Cursor::new(xml.into_bytes());
+        let mut reader = Reader::from_reader(BoundedXmlEventReader::new(input, 32));
+        let mut buffer = Vec::new();
+
+        assert!(matches!(
+            read_dat_event(&mut reader, &mut buffer).expect("title start"),
+            Event::Start(_)
+        ));
+        buffer.clear();
+        let Event::Text(text) =
+            read_dat_event(&mut reader, &mut buffer).expect("text at the safety limit")
+        else {
+            panic!("expected a text event");
+        };
+
+        assert_eq!(text.len(), 32);
+    }
+
+    #[test]
+    fn rejects_an_xml_event_one_byte_over_the_limit_at_eof() {
+        let input = Cursor::new(vec![b'x'; 33]);
+        let mut reader = Reader::from_reader(BoundedXmlEventReader::new(input, 32));
+        let mut buffer = Vec::new();
+
+        let error =
+            read_dat_event(&mut reader, &mut buffer).expect_err("oversized text event at EOF");
+
+        assert!(error.to_string().contains("DAT XML event exceeds"));
+        assert!(buffer.len() <= 32);
+    }
+
+    #[test]
+    fn rejects_repeated_lookahead_bytes_inside_an_oversized_comment() {
+        let xml = format!("<!--{}-->", "<".repeat(128));
+        let input = Cursor::new(xml.into_bytes());
+        let mut reader = Reader::from_reader(BoundedXmlEventReader::new(input, 32));
+        let mut buffer = Vec::new();
+
+        let error = read_dat_event(&mut reader, &mut buffer).expect_err("oversized comment event");
+
+        assert!(error.to_string().contains("DAT XML event exceeds"));
+        assert!(buffer.len() <= 33);
+    }
+
+    #[test]
+    fn rejects_a_text_field_fragmented_across_multiple_events() {
+        let mut value = String::new();
+        append_text_field_with_limit(&mut value, "1234", 6).expect("first fragment");
+
+        let error =
+            append_text_field_with_limit(&mut value, "567", 6).expect_err("cumulative field limit");
+
+        assert!(error.to_string().contains("DAT text field exceeds"));
+        assert_eq!(value, "1234");
     }
 }

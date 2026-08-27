@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{Read, Seek, SeekFrom},
+    io::{self, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
 
@@ -24,6 +24,7 @@ use crate::commands::AppState;
 
 const MAX_RANGE_BYTES: u64 = 1024 * 1024;
 const MAX_SUBTITLE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_MATERIALIZED_MEDIA_BYTES: u64 = 256 * 1024 * 1024;
 
 pub fn respond(app: &AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
     match response(app, &request) {
@@ -118,11 +119,41 @@ fn response(
     if request.method() == Method::HEAD {
         return builder.body(Vec::new()).map_err(ProtocolError::response);
     }
-    let mut bytes =
-        Vec::with_capacity(usize::try_from(length).map_err(|_| ProtocolError::FileTooLarge)?);
-    file.read_to_end(&mut bytes)
-        .map_err(|error| map_asset_io_error(error, &asset.path))?;
+    let bytes =
+        read_materialized_media(file, length, MAX_MATERIALIZED_MEDIA_BYTES).map_err(|error| {
+            match error {
+                MaterializedMediaError::TooLarge => ProtocolError::FileTooLarge,
+                MaterializedMediaError::Read(error) => map_asset_io_error(error, &asset.path),
+            }
+        })?;
     builder.body(bytes).map_err(ProtocolError::response)
+}
+
+#[derive(Debug)]
+enum MaterializedMediaError {
+    TooLarge,
+    Read(io::Error),
+}
+
+fn read_materialized_media(
+    reader: impl Read,
+    declared_length: u64,
+    limit: u64,
+) -> Result<Vec<u8>, MaterializedMediaError> {
+    if declared_length > limit {
+        return Err(MaterializedMediaError::TooLarge);
+    }
+    let capacity =
+        usize::try_from(declared_length).map_err(|_| MaterializedMediaError::TooLarge)?;
+    let mut bytes = Vec::with_capacity(capacity);
+    reader
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(MaterializedMediaError::Read)?;
+    if bytes.len() as u64 > limit {
+        return Err(MaterializedMediaError::TooLarge);
+    }
+    Ok(bytes)
 }
 
 struct ResolvedAsset {
@@ -830,7 +861,7 @@ fn protocol_error_message(error: ProtocolError) -> String {
         ProtocolError::AssetMissing => "the indexed video is missing on disk",
         ProtocolError::MethodNotAllowed => "the video request method is not supported",
         ProtocolError::RangeNotSatisfiable(_) => "the requested video range is invalid",
-        ProtocolError::FileTooLarge => "the video is too large to materialize",
+        ProtocolError::FileTooLarge => "the media item is too large to materialize",
         ProtocolError::SubtitleInvalid => "the subtitle could not be converted",
         ProtocolError::Internal => "the video could not be resolved",
     }
@@ -953,6 +984,22 @@ mod tests {
         );
         assert!(parse_range("bytes=100-", 100).is_err());
         assert!(parse_range("items=0-10", 100).is_err());
+    }
+
+    #[test]
+    fn materialized_media_is_bounded_by_declared_and_observed_size() {
+        assert_eq!(
+            read_materialized_media(&b"small"[..], 5, 8).expect("bounded media"),
+            b"small"
+        );
+        assert!(matches!(
+            read_materialized_media(&b"small"[..], 9, 8),
+            Err(MaterializedMediaError::TooLarge)
+        ));
+        assert!(matches!(
+            read_materialized_media(&b"grew-past-limit"[..], 4, 8),
+            Err(MaterializedMediaError::TooLarge)
+        ));
     }
 
     #[test]
