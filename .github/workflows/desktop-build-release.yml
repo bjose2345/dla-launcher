@@ -42,7 +42,9 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -69,7 +71,7 @@ jobs:
             p7zip-full
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
 
@@ -85,7 +87,7 @@ jobs:
           cargo --version
 
       - name: Cache Rust dependencies and tools
-        uses: Swatinem/rust-cache@v2.9.2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: tauri2 -> target
 
@@ -151,7 +153,7 @@ jobs:
         run: cargo tauri build --ci --bundles ${{ matrix.bundles }} --config tauri.windows-ci.conf.json
 
       - name: Upload installers
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.artifact-name }}
           path: ${{ matrix.artifact-paths }}
@@ -169,10 +171,12 @@ jobs:
 
     steps:
       - name: Check out tagged source
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
 
@@ -186,7 +190,7 @@ jobs:
           fi
 
       - name: Download desktop installers
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: dla-launcher-*
           path: downloaded-assets
@@ -238,7 +242,7 @@ jobs:
             "$GITHUB_SHA"
 
       - name: Preserve finalized assets for R2 publication
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: dla-launcher-r2-release
           path: |
@@ -307,7 +311,7 @@ jobs:
 
     steps:
       - name: Download finalized release assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: dla-launcher-r2-release
           path: r2-publication
