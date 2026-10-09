@@ -9,10 +9,10 @@ native runtime check.
 
 | Tool | Version |
 | --- | --- |
-| Rust | 1.97.1 (from `rust-toolchain.toml`) |
+| Rust | 1.99.0 (from `rust-toolchain.toml`) |
 | Node.js | 24 LTS |
-| pnpm | 11.21.0 (from `package.json`) |
-| Tauri CLI | 2.11.4 |
+| pnpm | 11.28.5 (from `package.json`) |
+| Tauri CLI | 2.12.1 |
 | Android compile/target SDK | 36 |
 | Android NDK | 29.0.14206865 |
 | Android Java | 17 |
@@ -22,12 +22,39 @@ Enable pnpm through Corepack and install the pinned frontend dependencies:
 ```bash
 corepack enable
 pnpm install --frozen-lockfile
-cargo install tauri-cli --version 2.11.4 --locked
+cargo install tauri-cli --version 2.12.1 --locked
 ```
+
+## Bundled sidecars
+
+The desktop packages bundle two pinned sidecars: `cloudflared`, which carries
+the launcher's downloads from the DLA archive through a private route, and the
+official 7-Zip console tool for RAR and 7z preparation. Both are installed as
+`dla-cloudflared` and `dla-7zip` beside the launcher with their license texts.
+Fetch them once before any desktop build; each download is verified against the
+SHA-256 pinned in the script:
+
+```bash
+sh tauri2/scripts/fetch-cloudflared.sh
+sh tauri2/scripts/fetch-7zip.sh
+```
+
+The scripts run on Linux and place the Linux and Windows binaries in
+`tauri2/src-tauri/binaries/`, which stays out of Git. A Windows build machine
+takes a copy of that folder; `tauri2/scripts/build-windows.ps1` checks the
+checksums again before building.
+
+Install from DLA also needs the launcher's access token for the downloads
+route, which the project owner issues. Put it in
+`state/tunnel/launcher-token.json` (ignored by Git) or point
+`DLA_LAUNCHER_ACCESS_TOKEN_FILE` at it before building. Without it the build
+succeeds and Install from DLA reports that DLA is unreachable; everything else
+works. The token only keeps unsolicited traffic off the route: access to the
+archive is decided by the subscriber's own account.
 
 ## Linux (Debian or Ubuntu)
 
-Install Tauri's native requirements and 7-Zip for RAR inspection/extraction:
+Install Tauri's native requirements:
 
 ```bash
 sudo apt update
@@ -48,8 +75,7 @@ sudo apt install \
   gstreamer1.0-plugins-base \
   gstreamer1.0-plugins-good \
   gstreamer1.0-plugins-ugly \
-  gstreamer1.0-tools \
-  p7zip-full
+  gstreamer1.0-tools
 ```
 
 Then run or package the application:
@@ -73,8 +99,8 @@ Backend overrides and `WEBKIT_DISABLE_COMPOSITING_MODE=1` are troubleshooting
 measures, not supported release defaults.
 
 The DEB package recommends the GStreamer plugin families used by the built-in
-audio and video players, plus 7-Zip for RAR extraction. RPM users must install
-the equivalent packages supplied by their distribution.
+audio and video players. RPM users must install the equivalent packages
+supplied by their distribution. RAR extraction uses the bundled 7-Zip.
 
 AppImage is deliberately excluded from the default Linux targets. With Tauri
 2.11.5, enabling `bundleMediaFramework` copies build-host GLib, Wayland, and
@@ -104,23 +130,26 @@ Install:
 3. Microsoft Edge WebView2 Runtime if it is not already present.
 4. Rustup with the `x86_64-pc-windows-msvc` host.
 5. Node.js 24 LTS and Corepack.
-6. 7-Zip.
 
-In PowerShell:
+Copy `tauri2\src-tauri\binaries` from a Linux checkout where the fetch scripts
+ran (see Bundled sidecars). Then, in PowerShell:
 
 ```powershell
-rustup toolchain install 1.97.1-x86_64-pc-windows-msvc `
+rustup toolchain install 1.99.0-x86_64-pc-windows-msvc `
   --profile minimal `
   --component rustfmt `
   --component clippy
-rustup override set 1.97.1-x86_64-pc-windows-msvc
+rustup override set 1.99.0-x86_64-pc-windows-msvc
 corepack enable
 pnpm install --frozen-lockfile
-cargo install tauri-cli --version 2.11.4 --locked
-$env:DLA_ARCHIVE_TOOL = "C:\Program Files\7-Zip\7z.exe"
+cargo install tauri-cli --version 2.12.1 --locked
 Set-Location tauri2
 cargo tauri build --ci
 ```
+
+`tauri2\scripts\build-windows.ps1` performs the same steps with pinned tools
+installed under `tauri2\.windows-tools`, verifies the sidecar checksums, and
+produces the NSIS installer.
 
 The packages are written below `tauri2/target/release/bundle`. The default
 machine-wide installation is `C:\Program Files\DLA Launcher`. If MSI creation
@@ -180,8 +209,8 @@ emulator or trusted-device install, launch, and same-key upgrade check.
 
 ## Archive tool override
 
-DLA Launcher discovers `7z`, `7zz`, or `7z.exe`. Set an explicit executable
-when it is installed elsewhere:
+DLA Launcher prefers the bundled `dla-7zip`, then `7z`, `7zz`, or `7z.exe` on
+`PATH`. Set an explicit executable to use another copy:
 
 ```bash
 export DLA_ARCHIVE_TOOL=/absolute/path/to/7zz

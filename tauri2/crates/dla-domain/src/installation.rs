@@ -354,6 +354,22 @@ impl InstallationDetection {
 
         Ok(())
     }
+
+    /// The start action a one-step add chooses: the most confident candidate,
+    /// and among equals the classifier's first, which puts programs before
+    /// media.
+    pub fn recommended_launch(&self) -> Option<ManualLaunchSelection> {
+        let mut best: Option<&LaunchCandidate> = None;
+        for candidate in &self.launch_candidates {
+            if best.is_none_or(|current| candidate.confidence > current.confidence) {
+                best = Some(candidate);
+            }
+        }
+        best.map(|candidate| ManualLaunchSelection {
+            action: candidate.action,
+            target: candidate.target.clone(),
+        })
+    }
 }
 
 impl Installation {
@@ -668,5 +684,48 @@ mod tests {
         assert_eq!(installation.effective_catalog_work_code(), Some("RJ000002"));
         installation.overrides.catalog_identity = Some(ManualCatalogIdentity::Unidentified);
         assert_eq!(installation.effective_catalog_work_code(), None);
+    }
+
+    #[test]
+    fn the_recommended_launch_is_the_first_most_confident_candidate() {
+        let mut detected = detection(&["Config.exe", "Game.exe", "bgm/01.ogg"]);
+        let candidate = |id: &str, action, target, confidence| LaunchCandidate {
+            id: LaunchCandidateId(id.to_owned()),
+            action,
+            target,
+            supported_platforms: vec![InstallationPlatform::Windows],
+            confidence,
+            reason_codes: vec!["fixture".to_owned()],
+        };
+        detected.launch_candidates = vec![
+            candidate(
+                "launch-config",
+                LaunchActionKind::LaunchExecutable,
+                LaunchTarget::RelativePath(path("Config.exe")),
+                InferenceConfidence::Medium,
+            ),
+            candidate(
+                "launch-game",
+                LaunchActionKind::LaunchExecutable,
+                LaunchTarget::RelativePath(path("Game.exe")),
+                InferenceConfidence::High,
+            ),
+            candidate(
+                "play-album",
+                LaunchActionKind::PlayAudio,
+                LaunchTarget::InstallationRoot,
+                InferenceConfidence::High,
+            ),
+        ];
+
+        assert_eq!(
+            detected.recommended_launch(),
+            Some(ManualLaunchSelection {
+                action: LaunchActionKind::LaunchExecutable,
+                target: LaunchTarget::RelativePath(path("Game.exe")),
+            })
+        );
+        detected.launch_candidates.clear();
+        assert_eq!(detected.recommended_launch(), None);
     }
 }

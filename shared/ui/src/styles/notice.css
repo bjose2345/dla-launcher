@@ -1,0 +1,120 @@
+.app-notices {
+  position: fixed;
+  z-index: 90;
+  right: 18px;
+  bottom: 18px;
+  display: grid;
+  width: min(380px, calc(100vw - 36px));
+  gap: 10px;
+  pointer-events: none;
+}
+
+.app-notice {
+  display: grid;
+  align-items: start;
+  gap: 4px 10px;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  padding: 14px 12px 14px 16px;
+  box-shadow: inset 0 0 0 1px var(--app-border), 0 18px 40px color-mix(in oklch, black 35%, transparent);
+  background: var(--app-panel-raised);
+  animation: app-notice-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: auto;
+}
+
+@keyframes app-notice-in {
+  from { transform: translateY(12px); opacity: 0; }
+}
+
+.app-notice.is-problem {
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-error) 45%, transparent), 0 18px 40px color-mix(in oklch, black 35%, transparent);
+}
+
+.app-notice-icon {
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  color: var(--color-success);
+}
+
+.app-notice.is-progress .app-notice-icon {
+  color: var(--color-primary);
+  animation: scanner-spin 0.9s linear infinite;
+}
+
+.app-notice.is-problem .app-notice-icon {
+  color: var(--color-error);
+}
+
+.app-notice-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.app-notice-copy strong {
+  font-size: 0.86rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.app-notice-copy span {
+  color: var(--app-muted);
+  font-size: 0.78rem;
+}
+
+.app-notice-close {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--app-muted);
+  cursor: pointer;
+}
+
+.app-notice-close svg {
+  width: 15px;
+  height: 15px;
+}
+
+.app-notice-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+  grid-column: 1 / -1;
+}
+
+.app-notice-actions button {
+  min-height: 32px;
+  padding: 0 14px;
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-chip-sm);
+  background: transparent;
+  color: var(--color-base-content);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.app-notice-actions button.is-primary {
+  box-shadow: none;
+  background: var(--color-primary);
+  color: var(--color-primary-content);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-notice,
+  .app-notice.is-progress .app-notice-icon {
+    animation: none;
+  }
+}
+
+.app-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+}

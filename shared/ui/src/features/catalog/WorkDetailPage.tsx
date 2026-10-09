@@ -1,15 +1,23 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Heart, LoaderCircle, Smartphone } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { Check, Copy, Heart, LoaderCircle, Smartphone } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
-import { ImageGalleryModal, WorkGallery } from "./WorkGallery";
+import { ImageGalleryModal } from "./ImageGalleryModal";
+import { GalleryLayoutToggle, useGalleryLayout, WorkGallery } from "./WorkGallery";
 import { RelatedWorks } from "./RelatedWorks";
 import type { CatalogDetailGateway, CatalogFacetGroup, CatalogWorkDetail } from "./types";
 import { WorkAgeBadge } from "./WorkAgeBadge";
 import { WorkFilesInfo } from "./WorkFilesInfo";
 import { WorkDescription } from "./WorkDescription";
 import { WorkDetailSection } from "./WorkDetailSection";
-import { displayName, dlsiteWorkUrl, heroImageUrls, sampleImageChains } from "./workDetail";
+import {
+  archiveTotals,
+  displayName,
+  dlsiteWorkUrl,
+  formatArchiveSize,
+  heroImageUrls,
+  sampleImageChains,
+} from "./workDetail";
 import { WorkHeroImage } from "./WorkHeroImage";
 import { WorkRatingPanel } from "./WorkRatingPanel";
 import { WorkRecommendations } from "./WorkRecommendations";
@@ -23,6 +31,8 @@ import { isMediaLaunchAction, mediaActionMessageKey } from "../library/mediaSess
 import { useMediaPlayback } from "../library/MediaPlaybackProvider";
 import type { LaunchActivity, LibraryGateway, WorkPreference } from "../library/types";
 import { launchActivityIsActive } from "../library/types";
+import type { DeliveryGateway } from "../delivery/types";
+import { WorkInstall } from "../delivery/WorkInstall";
 
 interface WorkDetailPageProps {
   code: string;
@@ -35,6 +45,8 @@ interface WorkDetailPageProps {
   onOpenInstallation: (installationId: string, intent: "install" | "review") => void;
   onOpenMedia: (installationId: string) => void;
   onInstallAndroidApp?: (workCode: string) => void;
+  /** Install from DLA, where the platform offers it. */
+  deliveryGateway?: DeliveryGateway;
   onOpenExternal: (url: string) => Promise<void>;
 }
 
@@ -49,6 +61,7 @@ export function WorkDetailPage({
   onOpenInstallation,
   onOpenMedia,
   onInstallAndroidApp,
+  deliveryGateway,
   onOpenExternal,
 }: WorkDetailPageProps) {
   const { t } = usePresentation();
@@ -84,6 +97,7 @@ export function WorkDetailPage({
       onOpenInstallation={onOpenInstallation}
       onOpenMedia={onOpenMedia}
       onInstallAndroidApp={onInstallAndroidApp}
+      deliveryGateway={deliveryGateway}
       onOpenExternal={onOpenExternal}
     />
   );
@@ -100,6 +114,7 @@ function WorkDetail({
   onOpenInstallation,
   onOpenMedia,
   onInstallAndroidApp,
+  deliveryGateway,
   onOpenExternal,
 }: {
   work: CatalogWorkDetail;
@@ -112,6 +127,7 @@ function WorkDetail({
   onOpenInstallation: (installationId: string, intent: "install" | "review") => void;
   onOpenMedia: (installationId: string) => void;
   onInstallAndroidApp?: (workCode: string) => void;
+  deliveryGateway?: DeliveryGateway;
   onOpenExternal: (url: string) => Promise<void>;
 }) {
   const { locale, theme, t } = usePresentation();
@@ -150,6 +166,8 @@ function WorkDetail({
     },
   });
   const heroRef = useHeroBackdropParallax();
+  const galleryRoot = useRef<HTMLDivElement>(null);
+  const gallery = useGalleryLayout(galleryRoot);
   const sampleImages = useMemo(() => sampleImageChains(work.sampleImageUrls), [work.sampleImageUrls]);
   const galleryImages = useMemo(
     () => [heroImageUrls(work), ...sampleImages].filter((chain) => chain.length > 0),
@@ -170,16 +188,19 @@ function WorkDetail({
     onOpenCatalog();
   }, [onOpenCatalog, setFilters]);
   const releaseYear = /^\d{4}/.exec(work.releaseDate)?.[0] ?? "";
+  const archive = useMemo(() => archiveTotals(work.roms), [work.roms]);
   return (
     <main className="work-detail-shell">
       <div className="work-detail-content">
         <section className="work-detail-hero" ref={heroRef}>
-          <span className="work-hero-corner work-hero-corner-tl" aria-hidden="true" />
           <span className="work-hero-corner work-hero-corner-br" aria-hidden="true" />
-          <button className="work-detail-back" type="button" onClick={onBack} aria-label={t("detail.back")}>
-            <span aria-hidden="true">←</span>
-          </button>
-          <WorkHeroImage title={work.title} urls={heroImageUrls(work)} onOpen={() => setGalleryIndex(0)} />
+          <div className="work-hero-stage">
+            <span className="work-hero-corner work-hero-corner-tl" aria-hidden="true" />
+            <button className="work-detail-back" type="button" onClick={onBack} aria-label={t("detail.back")}>
+              <span aria-hidden="true">←</span>
+            </button>
+            <WorkHeroImage title={work.title} urls={heroImageUrls(work)} onOpen={() => setGalleryIndex(0)} />
+          </div>
           <WorkHeroAmbient theme={theme} />
           <div className="work-detail-copy">
             <span className="work-panel-tab work-hero-enter work-hero-enter-1">
@@ -231,9 +252,9 @@ function WorkDetail({
                     </span>
                   ))
                   : t("detail.unknownCircle")}
-                {work.updatedDate && <small> · {t("detail.updated")} {work.updatedDate}</small>}
+                {work.latestUpdate && <small> · {t("detail.updated")} {work.latestUpdate.date}</small>}
               </p>
-              <p className="work-code">UID: {work.code}</p>
+              <WorkCodeCopy code={work.code} />
 
               <AgeMetadataRow age={work.ageRating} label={t("facet.age")} onSelect={() => openFacet("ages", work.ageRating)} />
               <MetadataRow
@@ -277,12 +298,13 @@ function WorkDetail({
             </span>
             <dl className="work-data-panel work-hero-enter work-hero-enter-4">
               <DataRow label={t("detail.released")} value={work.releaseDate || t("detail.notCataloged")} />
-              <DataRow label={t("detail.distribution")} value={work.releaseType || t("detail.notCataloged")} />
-              <DataRow label={t("detail.source")} value={work.sourceCode || t("detail.notCataloged")} />
-              <DataRow
-                label={t("detail.record")}
-                value={t(work.synthetic ? "detail.syntheticRecord" : "detail.catalogRecord")}
-              />
+              {work.latestUpdate && <DataRow label={t("detail.updated")} value={work.latestUpdate.date} />}
+              {archive.bytes > 0 && (
+                <DataRow label={t("detail.archiveSize")} value={formatArchiveSize(archive.bytes, locale)} />
+              )}
+              {archive.versions > 0 && (
+                <DataRow label={t("detail.versions")} value={archive.versions.toLocaleString(locale)} />
+              )}
             </dl>
 
             <div className="work-source-actions work-hero-enter work-hero-enter-5">
@@ -307,9 +329,11 @@ function WorkDetail({
               <WorkLocalActionButton
                 workCode={work.code}
                 gateway={libraryGateway}
+                deliveryGateway={deliveryGateway}
                 onOpenScanner={onOpenScanner}
                 onOpenInstallation={onOpenInstallation}
                 onOpenMedia={onOpenMedia}
+                onOpenExternal={onOpenExternal}
               />
             </div>
             {sourceError && (
@@ -326,8 +350,22 @@ function WorkDetail({
         <WorkDetailSection title={t("detail.filesInfo")} count={work.roms.length}>
           <WorkFilesInfo workCode={work.code} roms={work.roms} releaseDate={work.releaseDate} gateway={gateway} />
         </WorkDetailSection>
-        <WorkDetailSection title={t("detail.gallery")} count={sampleImages.length}>
-          <WorkGallery images={sampleImages} onOpen={(index) => setGalleryIndex(index + 1)} />
+        <WorkDetailSection
+          title={t("detail.gallery")}
+          count={sampleImages.length}
+          headingAccessory={sampleImages.length >= 3
+            ? <GalleryLayoutToggle layout={gallery.layout} onChange={gallery.change} />
+            : undefined}
+        >
+          <div ref={galleryRoot}>
+            <WorkGallery
+              images={sampleImages}
+              layout={gallery.layout}
+              animate={gallery.animate}
+              morphing={gallery.morphing}
+              onOpen={(index) => setGalleryIndex(index + 1)}
+            />
+          </div>
         </WorkDetailSection>
         <WorkDescription descriptions={work.descriptions} onOpenExternal={onOpenExternal} />
         <WorkRecommendations
@@ -336,7 +374,13 @@ function WorkDetail({
           onOpenWork={onOpenWork}
         />
       </div>
-      <ImageGalleryModal images={galleryImages} openIndex={galleryIndex} title={work.titleEnglish || work.title} onClose={() => setGalleryIndex(null)} />
+      <ImageGalleryModal
+        images={galleryImages}
+        openIndex={galleryIndex}
+        title={work.titleEnglish || work.title}
+        onClose={() => setGalleryIndex(null)}
+        onOpenOriginal={onOpenExternal}
+      />
     </main>
   );
 }
@@ -344,15 +388,19 @@ function WorkDetail({
 function WorkLocalActionButton({
   workCode,
   gateway,
+  deliveryGateway,
   onOpenScanner,
   onOpenInstallation,
   onOpenMedia,
+  onOpenExternal,
 }: {
   workCode: string;
   gateway: LibraryGateway;
+  deliveryGateway?: DeliveryGateway;
   onOpenScanner: () => void;
   onOpenInstallation: (installationId: string, intent: "install" | "review") => void;
   onOpenMedia: (installationId: string) => void;
+  onOpenExternal: (url: string) => Promise<void>;
 }) {
   const { t } = usePresentation();
   const playback = useMediaPlayback();
@@ -475,6 +523,15 @@ function WorkLocalActionButton({
       >
         {t(buttonKey)} <span aria-hidden="true">→</span>
       </button>
+      {deliveryGateway && action && (
+        <WorkInstall
+          workCode={workCode}
+          gateway={deliveryGateway}
+          hasLocalCopy={action.kind !== "scan"}
+          onOpenInstallation={(installationId) => onOpenInstallation(installationId, "review")}
+          onOpenExternal={onOpenExternal}
+        />
+      )}
       {launchFeedback && (
         <p
           className={`work-launch-feedback${operationError || latestActivity?.status === "failed" ? " is-error" : ""}`}
@@ -517,11 +574,13 @@ function launchActivityFeedback(
   }
 }
 
+const METADATA_VISIBLE = 6;
+
 function AgeMetadataRow({ age, label, onSelect }: { age: string; label: string; onSelect: () => void }) {
   const { t } = usePresentation();
   return (
     <div className="work-metadata-row tone-gold">
-      <span className="work-metadata-label"><i aria-hidden="true">◇</i>{label}</span>
+      <span className="work-metadata-label"><i aria-hidden="true" />{label}</span>
       <span className="work-metadata-values">
         {age.trim()
           ? (
@@ -554,26 +613,76 @@ function MetadataRow({
   muted?: boolean;
 }) {
   const { t } = usePresentation();
+  const [expanded, setExpanded] = useState(false);
   const shown = values.length ? values : [{ key: "", label: t("detail.notCataloged") }];
+  // A long row shows its first chips and "+N more"; a row never folds just to
+  // hide a single chip.
+  const collapsible = shown.length > METADATA_VISIBLE + 1;
+  const visible = collapsible && !expanded ? shown.slice(0, METADATA_VISIBLE) : shown;
   return (
     <div className={`work-metadata-row tone-${tone}`}>
-      <span className="work-metadata-label"><i aria-hidden="true">◇</i>{label}</span>
+      <span className="work-metadata-label"><i aria-hidden="true" />{label}</span>
       <span className="work-metadata-values">
-        {shown.map((value, index) => value.key
+        {visible.map((value, index) => value.key
           ? (
             <button
-              className="work-metadata-filter work-metadata-chip"
+              className={`work-metadata-filter work-metadata-chip${index >= METADATA_VISIBLE ? " revealed" : ""}`}
               type="button"
               title={t("detail.filterBy", { label: value.label })}
               onClick={() => onSelect(value.key)}
+              style={index >= METADATA_VISIBLE
+                ? { "--reveal-delay": `${(index - METADATA_VISIBLE) * 25}ms` } as CSSProperties
+                : undefined}
               key={`${value.key}:${index}`}
             >
               {value.label}
             </button>
           )
           : <span className={muted ? "muted" : ""} key={`empty:${index}`}>{value.label}</span>)}
+        {collapsible && (
+          <button
+            className="work-metadata-more"
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((current) => !current)}
+          >
+            {expanded
+              ? t("detail.showLess")
+              : t("detail.showMore", { count: shown.length - METADATA_VISIBLE })}
+          </button>
+        )}
       </span>
     </div>
+  );
+}
+
+/** The work code, copied with one click; the icon turns into a check for a
+ *  moment and screen readers hear that it was copied. */
+function WorkCodeCopy({ code }: { code: string }) {
+  const { t } = usePresentation();
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return undefined;
+    const timer = window.setTimeout(() => setCopied(false), 1500);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+  const copy = () => {
+    void navigator.clipboard?.writeText(code).then(() => setCopied(true)).catch(() => undefined);
+  };
+  return (
+    <>
+      <button
+        className={`work-code${copied ? " copied" : ""}`}
+        type="button"
+        title={t("detail.copyCode")}
+        aria-label={`${t("detail.copyCode")}: ${code}`}
+        onClick={copy}
+      >
+        UID: {code}
+        {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+      </button>
+      <span className="screen-reader-only" aria-live="polite">{copied ? t("detail.codeCopied") : ""}</span>
+    </>
   );
 }
 

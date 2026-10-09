@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
+import { errorMessage } from "../../app/errorMessage";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import { useCatalogFacetFilters } from "./CatalogFacetFiltersProvider";
 import { CatalogEmptyState, catalogSnapshotIsEmpty } from "./CatalogEmptyState";
@@ -26,7 +27,7 @@ interface CatalogMonthlyPageProps {
   gateway: MonthlyGateway;
   onOpenWork?: (code: string) => void | Promise<void>;
   onRouteChange: (
-    change: Partial<Pick<CatalogRouteState, "sort" | "timeline" | "month" | "page">>,
+    change: Partial<Pick<CatalogRouteState, "sort" | "timeline" | "month" | "page" | "day">>,
     replace?: boolean,
   ) => void;
 }
@@ -73,12 +74,17 @@ export function CatalogMonthlyPage({
     const resetPage = filtersChanged.current || nextMonth !== route.month;
     preferLatest.current = false;
     filtersChanged.current = false;
-    if (nextMonth !== route.month || (resetPage && route.page !== 1)) {
-      onRouteChange({ month: nextMonth, page: 1 }, true);
+    if (nextMonth !== route.month) {
+      onRouteChange({ month: nextMonth, page: 1, day: "" }, true);
+    } else if (resetPage && route.page !== 1) {
+      onRouteChange({ page: 1 }, true);
     }
   }, [contextValue, onRouteChange, route.month, route.page]);
 
   const enabled = Boolean(contextValue && isCatalogMonth(route.month));
+  const lockedDay = route.day.startsWith(route.month) ? route.day : "";
+  // The month page always describes the whole month (totals and the day
+  // rail); a locked day lists through its own page query.
   const page = useQuery({
     queryKey: [
       "catalog-month",
@@ -89,11 +95,11 @@ export function CatalogMonthlyPage({
       facetFilters,
       route.timeline,
       route.month,
-      route.page,
+      lockedDay ? 1 : route.page,
     ],
     queryFn: () => gateway.browse(catalogRequest(
       route,
-      (route.page - 1) * catalogGridPageSize,
+      lockedDay ? 0 : (route.page - 1) * catalogGridPageSize,
       route.timeline,
       facetFilters,
       route.month,
@@ -102,12 +108,36 @@ export function CatalogMonthlyPage({
     )),
     enabled,
   });
+  const dayPage = useQuery({
+    queryKey: [
+      "catalog-month-day-page",
+      route.search,
+      route.category,
+      route.tag,
+      route.sort,
+      facetFilters,
+      route.timeline,
+      lockedDay,
+      route.page,
+    ],
+    queryFn: () => gateway.browse(catalogRequest(
+      route,
+      (route.page - 1) * catalogGridPageSize,
+      route.timeline,
+      facetFilters,
+      route.month,
+      lockedDay,
+      catalogGridPageSize,
+    )),
+    enabled: enabled && Boolean(lockedDay),
+  });
+  const listing = lockedDay ? dayPage.data : page.data;
 
   useEffect(() => {
-    if (!page.data) return;
-    const totalPages = Math.max(1, Math.ceil(page.data.total / catalogGridPageSize));
+    if (!listing) return;
+    const totalPages = Math.max(1, Math.ceil(listing.total / catalogGridPageSize));
     if (route.page > totalPages) onRouteChange({ page: totalPages }, true);
-  }, [onRouteChange, page.data, route.page]);
+  }, [listing, onRouteChange, route.page]);
 
   const filters = useMemo(() => ({
     search: route.search,
@@ -117,16 +147,19 @@ export function CatalogMonthlyPage({
   }), [route.category, route.search, route.sort, route.tag]);
   const changeFacetFilters = useCallback((next: typeof facetFilters) => {
     setFacetFilters(next);
-    if (route.page !== 1) onRouteChange({ page: 1 }, true);
-  }, [onRouteChange, route.page, setFacetFilters]);
+    if (route.page !== 1 || route.day) onRouteChange({ page: 1, day: "" }, true);
+  }, [onRouteChange, route.day, route.page, setFacetFilters]);
 
   return (
     <main className="catalog-shell">
-      {(context.isError || page.isError) && (
+      {(context.isError || page.isError || dayPage.isError) && (
         <section className="catalog-error" role="alert">
           <strong>{t("catalog.bindingFailed")}</strong>
-          <span>{t("common.technicalDetail", { detail: errorMessage(context.error ?? page.error) })}</span>
-          <button type="button" onClick={() => void (context.isError ? context.refetch() : page.refetch())}>
+          <span>{t("common.technicalDetail", { detail: errorMessage(context.error ?? page.error ?? dayPage.error) })}</span>
+          <button
+            type="button"
+            onClick={() => void (context.isError ? context.refetch() : page.isError ? page.refetch() : dayPage.refetch())}
+          >
             {t("detail.tryAgain")}
           </button>
         </section>
@@ -140,7 +173,9 @@ export function CatalogMonthlyPage({
           filters={filters}
           context={contextValue}
           page={page.data ?? emptyPage(contextValue)}
-          loading={enabled && page.isPending}
+          dayPage={lockedDay ? dayPage.data ?? null : null}
+          lockedDay={lockedDay}
+          loading={enabled && (page.isPending || (Boolean(lockedDay) && dayPage.isPending))}
           gateway={gateway}
           facetFilters={facetFilters}
           englishLabels={locale !== "ja-JP"}
@@ -176,8 +211,4 @@ function CatalogMonthlyLoading() {
       {Array.from({ length: 7 }, (_, index) => <span key={index} />)}
     </section>
   );
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

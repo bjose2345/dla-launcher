@@ -64,3 +64,70 @@ function compareCuts(left: readonly number[], right: readonly number[] | null): 
   }
   return 0;
 }
+
+/** The masonry wall with every image uncropped ("grid", the default) or the
+ *  cropped bento mosaic, remembered across sessions as on the DLA website. */
+export type GalleryLayout = "grid" | "bento";
+
+export type BentoSpan = "feature" | "feature-r" | "wide" | "single" | "full";
+
+const GALLERY_LAYOUT_KEY = "dla-launcher:gallery-layout:v1";
+
+export function readGalleryLayout(): GalleryLayout {
+  try {
+    return window.localStorage.getItem(GALLERY_LAYOUT_KEY) === "bento" ? "bento" : "grid";
+  } catch {
+    return "grid";
+  }
+}
+
+export function writeGalleryLayout(layout: GalleryLayout): void {
+  try {
+    window.localStorage.setItem(GALLERY_LAYOUT_KEY, layout);
+  } catch {
+    return;
+  }
+}
+
+/**
+ * Bento mosaic spans. Tiles pack into blocks two rows tall that always fill
+ * completely, so the mosaic never ends on a ragged row: blocks of five (a 2x2
+ * feature and four singles, the feature alternating sides) carry the gallery,
+ * and the remainder closes with three (a feature and two wides), four (four
+ * wides) or two (two features). A remainder of one turns the last five into
+ * three and three; a lone image fills the width.
+ */
+export function bentoSpans(count: number): BentoSpan[] {
+  if (count <= 0) return [];
+  if (count === 1) return ["full"];
+  let fives = Math.floor(count / 5);
+  const tail: number[] = [];
+  const rest = count % 5;
+  if (rest === 1) {
+    fives -= 1;
+    tail.push(3, 3);
+  } else if (rest) {
+    tail.push(rest);
+  }
+  const spans: BentoSpan[] = [];
+  let right = false;
+  const feature = () => {
+    spans.push(right ? "feature-r" : "feature");
+    right = !right;
+  };
+  for (let block = 0; block < fives; block += 1) {
+    feature();
+    spans.push("single", "single", "single", "single");
+  }
+  for (const size of tail) {
+    if (size === 3) {
+      feature();
+      spans.push("wide", "wide");
+    } else if (size === 4) {
+      spans.push("wide", "wide", "wide", "wide");
+    } else {
+      spans.push("feature", "feature");
+    }
+  }
+  return spans;
+}

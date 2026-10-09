@@ -118,6 +118,9 @@ export const tauriLibraryGateway: LibraryGateway = {
   uninstallInstallation(installationId: string): Promise<void> {
     return invoke("uninstall_library_installation", { installationId });
   },
+  openInstallationFolder: __DLA_TARGET_PLATFORM__ === "android"
+    ? undefined
+    : (installationId: string): Promise<void> => invoke("open_installation_folder", { installationId }),
   cleanupMaintenance(): Promise<MaintenanceCleanupReport> {
     return invoke("cleanup_library_maintenance");
   },

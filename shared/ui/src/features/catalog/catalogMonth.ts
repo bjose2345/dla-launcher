@@ -1,5 +1,4 @@
-import { catalogGridPageSize } from "./catalogPagination";
-import type { CatalogDayBucket, CatalogMonthBucket, CatalogSort } from "./types";
+import type { CatalogDayBucket, CatalogMonthBucket } from "./types";
 
 export interface CatalogMonthNavigation {
   previous: string | null;
@@ -36,20 +35,36 @@ export function catalogMonthNavigation(
   };
 }
 
-export function catalogPageForDay(
-  day: string,
-  buckets: CatalogDayBucket[],
-  sort: CatalogSort,
-  pageSize = catalogGridPageSize,
-): number | null {
-  const index = buckets.findIndex((bucket) => bucket.day === day);
-  if (index < 0 || buckets[index]?.count === 0) return null;
-  if (sort !== "release_asc" && sort !== "release_desc") return null;
-  const preceding = sort === "release_asc"
-    ? buckets.slice(0, index)
-    : buckets.slice(index + 1);
-  const offset = preceding.reduce((total, bucket) => total + bucket.count, 0);
-  return Math.floor(offset / pageSize) + 1;
+export interface CatalogRailDay {
+  /** YYYY-MM-DD. */
+  day: string;
+  /** Day of the month, 1 to 31. */
+  date: number;
+  /** Works that day on the current timeline and filters; null draws a ghost. */
+  count: number | null;
+  /** How busy the day is next to the month's busiest day, 0 to 1. */
+  fill: number;
+}
+
+/** The month's days as the day rail shows them; `buckets` lists every calendar day. */
+export function catalogRailDays(buckets: CatalogDayBucket[]): CatalogRailDay[] {
+  const maximum = Math.max(1, ...buckets.map((bucket) => bucket.count));
+  return buckets.map(({ day, count }) => ({
+    day,
+    date: Number(day.slice(8, 10)),
+    count: count > 0 ? count : null,
+    fill: count / maximum,
+  }));
+}
+
+export function catalogDayLabel(day: string, locale: string): string {
+  const [year, month, date] = day.split("-").map(Number);
+  if (!year || !month || !date) return day;
+  return new Date(Date.UTC(year, month - 1, date)).toLocaleDateString(locale, {
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  });
 }
 
 export function catalogMonthLabel(month: string, locale: string): string {
@@ -73,4 +88,41 @@ export function parseCatalogMonth(month: string): { year: number; month: number 
 export function currentCatalogMonth(): string {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/** One month cell of the works page's month rail. */
+export interface CatalogRailMonth {
+  month: string;
+  /** Works in the month on the current timeline and filters; null outside
+   *  the timeline's range. */
+  count: number | null;
+  /** Pickable: inside the range and not empty, like the arrows. */
+  enabled: boolean;
+}
+
+/** The 12 months of `year` as the rail shows them. `minMonth` and `maxMonth`
+ *  bound the timeline (inclusive YYYY-MM). */
+export function catalogRailMonths(
+  year: number,
+  minMonth: string,
+  maxMonth: string,
+  months: CatalogMonthBucket[],
+): CatalogRailMonth[] {
+  const counts = new Map(months.map((bucket) => [bucket.month, bucket.count]));
+  return Array.from({ length: 12 }, (_, index) => {
+    const month = `${year}-${String(index + 1).padStart(2, "0")}`;
+    const inRange = month >= minMonth && month <= maxMonth;
+    const count = inRange ? counts.get(month) ?? 0 : null;
+    return { month, count, enabled: count !== null && count > 0 };
+  });
+}
+
+/** Whether the year picker offers `year`: any of its months is pickable. */
+export function catalogYearHasMonths(
+  year: number,
+  minMonth: string,
+  maxMonth: string,
+  months: CatalogMonthBucket[],
+): boolean {
+  return catalogRailMonths(year, minMonth, maxMonth, months).some((month) => month.enabled);
 }

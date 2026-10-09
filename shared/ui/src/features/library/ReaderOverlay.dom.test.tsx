@@ -50,8 +50,11 @@ describe("ReaderOverlay", () => {
     expect(document.body.style.overflow).toBe("hidden");
     expect(document.documentElement.style.overflow).toBe("hidden");
 
-    const buttons = [...dialog.querySelectorAll<HTMLButtonElement>("button:not([disabled])")];
-    expect(buttons.length).toBeGreaterThan(1);
+    const buttons = await waitFor(() => {
+      const found = [...dialog.querySelectorAll<HTMLButtonElement>("button:not([disabled])")];
+      expect(found.length).toBeGreaterThan(1);
+      return found;
+    });
     const first = buttons[0]!;
     const last = buttons[buttons.length - 1]!;
     last.focus();

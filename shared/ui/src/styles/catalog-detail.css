@@ -198,10 +198,8 @@
     padding: 17px 18px;
   }
 
-  .catalog-month-tools {
-    align-items: stretch;
-    flex-direction: row;
-    justify-content: space-between;
+  .catalog-month-head {
+    gap: 14px;
   }
 
   .catalog-day-density {
@@ -277,9 +275,10 @@
     font-size: 1.75rem;
   }
 
-  .catalog-month-tools {
+  .catalog-month-head {
     align-items: flex-start;
     flex-direction: column;
+    gap: 9px;
   }
 
   .catalog-day-density {
@@ -421,6 +420,14 @@
   .work-hero-art,
   .work-hero-image-missing {
     min-height: 420px;
+  }
+
+  .work-hero-stage {
+    position: relative;
+    top: auto;
+    height: auto;
+    min-height: 0;
+    max-height: none;
   }
 
   .work-hero-art img {

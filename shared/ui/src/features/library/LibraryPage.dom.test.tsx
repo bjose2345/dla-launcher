@@ -74,7 +74,7 @@ describe("LibraryPage data loading", () => {
                 <LibraryPage
                   gateway={gateway}
                   catalogGateway={catalogGateway}
-                  onOpenReview={vi.fn()}
+                  onManage={vi.fn()}
                   onOpenMedia={vi.fn()}
                   onOpenWork={vi.fn()}
                 />
@@ -137,7 +137,7 @@ describe("LibraryPage data loading", () => {
                   gateway={gateway}
                   androidAppGateway={androidGateway}
                   catalogGateway={catalogGateway}
-                  onOpenReview={vi.fn()}
+                  onManage={vi.fn()}
                   onOpenMedia={vi.fn()}
                   onOpenWork={vi.fn()}
                   onReinstallAndroidApp={vi.fn()}
@@ -159,32 +159,55 @@ describe("LibraryPage data loading", () => {
 
 describe("Library executable actions", () => {
   it("launches a prepared executable from Recent instead of opening its review", async () => {
-    const onOpenReview = vi.fn();
-    const { gateway } = renderExecutableLibrary({ onOpenReview });
+    const onManage = vi.fn();
+    const { gateway } = renderExecutableLibrary({ onManage });
 
     const recent = (await screen.findByRole("heading", { name: "Recent" })).closest("section");
     expect(recent).toBeTruthy();
-    const card = within(recent!).getByRole("button", { name: /RJ00000003/ });
+    const card = within(recent!).getByRole("button", { name: /^(?!More for )[\s\S]*RJ00000003/ });
     await screen.findByRole("button", { name: "Play" });
     fireEvent.click(card);
 
     await waitFor(() => expect(gateway.launchInstallation).toHaveBeenCalledWith("installation-app"));
-    expect(onOpenReview).not.toHaveBeenCalled();
+    expect(onManage).not.toHaveBeenCalled();
+  });
+
+  it("offers Edit details, Browse files and Remove from Library in the work's menu", async () => {
+    const onManage = vi.fn();
+    const { gateway } = renderExecutableLibrary({ onManage });
+
+    const menus = await screen.findAllByRole("button", { name: /^More for / });
+    fireEvent.click(menus[0]!);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      "Edit details…",
+      "Browse files…",
+      "Remove from Library…",
+    ]);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Edit details…" }));
+    expect(onManage).toHaveBeenCalledWith("installation-app", "general");
+
+    fireEvent.click(menus[0]!);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Browse files…" }));
+    expect(gateway.openInstallationFolder).toHaveBeenCalledWith("installation-app");
+
+    fireEvent.click(menus[0]!);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Remove from Library…" }));
+    expect(onManage).toHaveBeenCalledWith("installation-app", "files");
   });
 
   it("launches a prepared executable from Never launched instead of opening its review", async () => {
-    const onOpenReview = vi.fn();
-    const { gateway } = renderExecutableLibrary({ onOpenReview, shelf: "never" });
+    const onManage = vi.fn();
+    const { gateway } = renderExecutableLibrary({ onManage, shelf: "never" });
 
     const neverLaunched = (await screen.findByRole("heading", { name: "Never launched" }))
       .closest("section");
     expect(neverLaunched).toBeTruthy();
-    const card = within(neverLaunched!).getByRole("button", { name: /RJ00000003/ });
+    const card = within(neverLaunched!).getByRole("button", { name: /^(?!More for )[\s\S]*RJ00000003/ });
     await within(card).findByText("Play");
     fireEvent.click(card);
 
     await waitFor(() => expect(gateway.launchInstallation).toHaveBeenCalledWith("installation-app"));
-    expect(onOpenReview).not.toHaveBeenCalled();
+    expect(onManage).not.toHaveBeenCalled();
   });
 
   it("coalesces repeated executable activation while launch is pending", async () => {
@@ -196,7 +219,7 @@ describe("Library executable actions", () => {
 
     const recent = (await screen.findByRole("heading", { name: "Recent" })).closest("section");
     expect(recent).toBeTruthy();
-    const card = within(recent!).getByRole("button", { name: /RJ00000003/ });
+    const card = within(recent!).getByRole("button", { name: /^(?!More for )[\s\S]*RJ00000003/ });
     await screen.findByRole("button", { name: "Play" });
     fireEvent.click(card);
     await waitFor(() => expect(gateway.launchInstallation).toHaveBeenCalledTimes(1));
@@ -216,7 +239,7 @@ describe("Library executable actions", () => {
 
     const recent = (await screen.findByRole("heading", { name: "Recent" })).closest("section");
     expect(recent).toBeTruthy();
-    fireEvent.click(within(recent!).getByRole("button", { name: /RJ00000003/ }));
+    fireEvent.click(within(recent!).getByRole("button", { name: /^(?!More for )[\s\S]*RJ00000003/ }));
 
     await waitFor(() => expect(onOpenMedia).toHaveBeenCalledWith("installation-app"));
     expect(gateway.launchInstallation).not.toHaveBeenCalled();
@@ -367,7 +390,7 @@ function renderLibrary(personalization: Record<string, unknown>) {
               <LibraryPage
                 gateway={gateway}
                 catalogGateway={catalogGateway}
-                onOpenReview={vi.fn()}
+                onManage={vi.fn()}
                 onOpenMedia={vi.fn()}
                 onOpenWork={vi.fn()}
               />
@@ -483,14 +506,14 @@ function renderExecutableLibrary({
   launchResult = Promise.resolve(executableActivity("running")),
   running = false,
   onOpenMedia = vi.fn(),
-  onOpenReview = vi.fn(),
+  onManage = vi.fn(),
   recentAction = "launch_executable",
   shelf = "recent",
 }: {
   launchResult?: Promise<LaunchActivity>;
   running?: boolean;
   onOpenMedia?: (installationId: string) => void | Promise<void>;
-  onOpenReview?: (installationId: string) => void | Promise<void>;
+  onManage?: (installationId: string) => void | Promise<void>;
   recentAction?: LaunchActionKind;
   shelf?: "never" | "recent";
 } = {}) {
@@ -523,6 +546,7 @@ function renderExecutableLibrary({
     readInstallationHealths: vi.fn().mockResolvedValue([]),
     launchInstallation: vi.fn().mockReturnValue(launchResult),
     mediaAssetUrl: vi.fn().mockReturnValue(""),
+    openInstallationFolder: vi.fn().mockResolvedValue(undefined),
   } as unknown as LibraryGateway;
   const catalogGateway = {
     readWorks: vi.fn().mockResolvedValue([]),
@@ -538,7 +562,7 @@ function renderExecutableLibrary({
               <LibraryPage
                 gateway={gateway}
                 catalogGateway={catalogGateway}
-                onOpenReview={onOpenReview}
+                onManage={onManage}
                 onOpenMedia={onOpenMedia}
                 onOpenWork={vi.fn()}
               />

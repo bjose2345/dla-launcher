@@ -1,3 +1,4 @@
+import type { MessageKey } from "../../i18n/catalogs";
 import type { CatalogWork } from "../catalog";
 import { effectiveIdentity, installationTitle } from "./libraryPresentation";
 import type {
@@ -9,6 +10,20 @@ import type {
 } from "./types";
 
 export type LibraryContentKind = "audio" | "images" | "video" | "documents" | "apps" | "other";
+
+export function libraryContentKindLabel(
+  kind: LibraryContentKind,
+  t: (key: MessageKey) => string,
+): string {
+  switch (kind) {
+    case "audio": return t("library.home.filterAudio");
+    case "images": return t("library.home.filterImages");
+    case "video": return t("library.home.filterVideo");
+    case "documents": return t("library.home.filterDocuments");
+    case "apps": return t("library.home.filterApps");
+    default: return t("domain.media.unknown");
+  }
+}
 
 export const libraryLenses = ["all", "audio", "apps", "images", "video", "documents"] as const;
 
@@ -141,7 +156,7 @@ export function libraryDisplayTitle(
   work: CatalogWork | undefined,
   preferEnglish: boolean,
 ): string {
-  if (!work) return installationTitle(installation);
+  if (!work || installation.overrides.customTitle?.trim()) return installationTitle(installation);
   return preferEnglish && work.titleEnglish.trim() ? work.titleEnglish : work.title;
 }
 

@@ -6,6 +6,8 @@ members = [
   "crates/dla-android-package-tauri",
   "crates/dla-catalog-import",
   "crates/dla-catalog",
+  "crates/dla-connector",
+  "crates/dla-delivery",
   "crates/dla-cover-cache",
   "crates/dla-detection",
   "crates/dla-domain",
@@ -30,6 +32,8 @@ dla-application = { path = "crates/dla-application" }
 dla-android-package-tauri = { path = "crates/dla-android-package-tauri" }
 dla-catalog-import = { path = "crates/dla-catalog-import" }
 dla-catalog = { path = "crates/dla-catalog" }
+dla-connector = { path = "crates/dla-connector" }
+dla-delivery = { path = "crates/dla-delivery" }
 dla-cover-cache = { path = "crates/dla-cover-cache" }
 dla-detection = { path = "crates/dla-detection" }
 dla-domain = { path = "crates/dla-domain" }
@@ -38,14 +42,15 @@ dla-media = { path = "crates/dla-media" }
 dla-scanner = { path = "crates/dla-scanner" }
 dla-search-tantivy = { path = "crates/dla-search-tantivy" }
 dla-sqlite = { path = "crates/dla-sqlite" }
-encoding_rs = "=0.8.35"
+base64 = "=0.22.1"
+encoding_rs = "=0.8.42"
 lindera = { version = "=5.2.0", default-features = false, features = ["embed-ipadic"] }
 lindera-tantivy = { version = "=5.0.1", default-features = false, features = ["embed-ipadic"] }
-libc = "=0.2.189"
+libc = "=0.2.190"
 md-5 = "=0.11.0"
 percent-encoding = "=2.3.2"
 rayon = "=1.12.0"
-rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled-full"] }
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled-full", "cache"] }
 rusqlite_migration = "=2.6.0"
 fs2 = "=0.4.3"
 hex = "=0.4.3"
@@ -56,13 +61,14 @@ sha1 = "=0.11.0"
 sha2 = "=0.11.0"
 symphonia = { version = "=0.6.1", features = ["all"] }
 tar = "=0.4.46"
-tantivy = { version = "=0.26.1", default-features = true }
-thiserror = "=2.0.20"
+tantivy = { version = "=0.26.2", default-features = true }
+thiserror = "=2.0.21"
 time = { version = "=0.3.55", features = ["formatting"] }
-ureq = { version = "=3.4.0", default-features = false, features = ["rustls"] }
+ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
 url = "=2.5.8"
-uuid = { version = "=1.24.0", features = ["v4"] }
+uuid = { version = "=1.27.0", features = ["v4"] }
 walkdir = "=2.5.0"
+zeroize = "=1.9.0"
 zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 zstd = "=0.13.3"
 
@@ -72,3 +78,54 @@ lto = true
 opt-level = "s"
 panic = "abort"
 strip = true
+
+# The crates on the catalog, search, archive, hashing, and audio data paths
+# are optimized for speed; everything else keeps the size optimization.
+[profile.release.package]
+libsqlite3-sys = { opt-level = 3 }
+rusqlite = { opt-level = 3 }
+tantivy = { opt-level = 3 }
+tantivy-bitpacker = { opt-level = 3 }
+tantivy-columnar = { opt-level = 3 }
+tantivy-common = { opt-level = 3 }
+tantivy-fst = { opt-level = 3 }
+tantivy-query-grammar = { opt-level = 3 }
+tantivy-sstable = { opt-level = 3 }
+tantivy-stacker = { opt-level = 3 }
+tantivy-tokenizer-api = { opt-level = 3 }
+lindera = { opt-level = 3 }
+lindera-analysis = { opt-level = 3 }
+lindera-dictionary = { opt-level = 3 }
+lindera-ipadic = { opt-level = 3 }
+lindera-tantivy = { opt-level = 3 }
+zstd = { opt-level = 3 }
+zstd-safe = { opt-level = 3 }
+zstd-sys = { opt-level = 3 }
+flate2 = { opt-level = 3 }
+zlib-rs = { opt-level = 3 }
+zip = { opt-level = 3 }
+sha1 = { opt-level = 3 }
+sha2 = { opt-level = 3 }
+md-5 = { opt-level = 3 }
+symphonia = { opt-level = 3 }
+symphonia-bundle-flac = { opt-level = 3 }
+symphonia-bundle-mp3 = { opt-level = 3 }
+symphonia-codec-aac = { opt-level = 3 }
+symphonia-codec-adpcm = { opt-level = 3 }
+symphonia-codec-alac = { opt-level = 3 }
+symphonia-codec-pcm = { opt-level = 3 }
+symphonia-codec-vorbis = { opt-level = 3 }
+symphonia-common = { opt-level = 3 }
+symphonia-core = { opt-level = 3 }
+symphonia-format-caf = { opt-level = 3 }
+symphonia-format-isomp4 = { opt-level = 3 }
+symphonia-format-mkv = { opt-level = 3 }
+symphonia-format-ogg = { opt-level = 3 }
+symphonia-format-riff = { opt-level = 3 }
+symphonia-metadata = { opt-level = 3 }
+dla-sqlite = { opt-level = 3 }
+dla-search-tantivy = { opt-level = 3 }
+dla-archive = { opt-level = 3 }
+dla-scanner = { opt-level = 3 }
+dla-media = { opt-level = 3 }
+dla-catalog-import = { opt-level = 3 }

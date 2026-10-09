@@ -611,16 +611,18 @@ fn add_filters(
     fields: SearchFields,
     filters: &CatalogFacetFilters,
 ) {
-    for (field, selection) in [
-        (fields.age, &filters.ages),
-        (fields.language, &filters.languages),
-        (fields.category, &filters.categories),
-        (fields.tag_filter, &filters.genres),
-        (fields.file_type, &filters.file_types),
-        (fields.miscellany, &filters.miscellanies),
-        (fields.circle_filter, &filters.circles),
+    // Tags and extra features need every selected value; the other groups any
+    // of them, as in the SQLite catalog and on the DLA website.
+    for (field, selection, every) in [
+        (fields.age, &filters.ages, false),
+        (fields.language, &filters.languages, false),
+        (fields.category, &filters.categories, false),
+        (fields.tag_filter, &filters.genres, true),
+        (fields.file_type, &filters.file_types, false),
+        (fields.miscellany, &filters.miscellanies, true),
+        (fields.circle_filter, &filters.circles, false),
     ] {
-        add_filter_group(clauses, field, selection);
+        add_filter_group(clauses, field, selection, every);
     }
 }
 
@@ -628,20 +630,23 @@ fn add_filter_group(
     clauses: &mut Vec<(Occur, Box<dyn Query>)>,
     field: Field,
     selection: &CatalogFacetSelection,
+    every: bool,
 ) {
-    if !selection.include.is_empty() {
+    let term = |value: &String| -> Box<dyn Query> {
+        Box::new(TermQuery::new(
+            Term::from_field_text(field, &normalize_filter(value)),
+            IndexRecordOption::Basic,
+        ))
+    };
+    if every {
+        for value in &selection.include {
+            clauses.push((Occur::Must, term(value)));
+        }
+    } else if !selection.include.is_empty() {
         let included = selection
             .include
             .iter()
-            .map(|value| {
-                (
-                    Occur::Should,
-                    Box::new(TermQuery::new(
-                        Term::from_field_text(field, &normalize_filter(value)),
-                        IndexRecordOption::Basic,
-                    )) as Box<dyn Query>,
-                )
-            })
+            .map(|value| (Occur::Should, term(value)))
             .collect();
         clauses.push((Occur::Must, Box::new(BooleanQuery::new(included))));
     }
@@ -952,6 +957,43 @@ mod tests {
         );
         assert!(
             filtered_tag
+                .items
+                .iter()
+                .any(|result| result.work.code == "DLA-SYNTH-0008")
+        );
+
+        // Tags need every selected value: a tag the work lacks drops it.
+        let every_tag = search(
+            &service,
+            "多数タグ",
+            CatalogFacetFilters {
+                genres: CatalogFacetSelection {
+                    include: vec!["タグ12".to_owned(), "タグ99".to_owned()],
+                    exclude: Vec::new(),
+                },
+                ..CatalogFacetFilters::default()
+            },
+        );
+        assert!(
+            every_tag
+                .items
+                .iter()
+                .all(|result| result.work.code != "DLA-SYNTH-0008")
+        );
+        // Other groups take any selected value.
+        let any_category = search(
+            &service,
+            "多数タグ",
+            CatalogFacetFilters {
+                categories: CatalogFacetSelection {
+                    include: vec![detail.work.categories[0].code.clone(), "NONE".to_owned()],
+                    exclude: Vec::new(),
+                },
+                ..CatalogFacetFilters::default()
+            },
+        );
+        assert!(
+            any_category
                 .items
                 .iter()
                 .any(|result| result.work.code == "DLA-SYNTH-0008")

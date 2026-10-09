@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { CatalogWork } from "./types";
-import { dateMarker, groupWorksByTimeline } from "./catalogTimeline";
+import {
+  catalogActivityKind,
+  catalogUpdateLabel,
+  dateMarker,
+  groupWorksByTimeline,
+} from "./catalogTimeline";
 
 const work = (code: string, releaseDate: string): CatalogWork => ({
   code,
@@ -87,5 +92,31 @@ describe("catalog timeline", () => {
       month: "Jul",
       weekday: "Thu",
     });
+  });
+});
+
+describe("Added + Updated timeline", () => {
+  const activity = (addedDate: string, updatedDate: string): CatalogWork => ({
+    ...work("W", "2020-01-01"),
+    addedDate,
+    updatedDate,
+  });
+
+  it("places a work at its latest event and says which one it was", () => {
+    const updated = activity("2026-07-01", "2026-08-20T10:00:00.000Z");
+    const added = activity("2026-08-03", "");
+    const sameDay = activity("2026-08-05", "2026-08-05T23:00:00.000Z");
+
+    expect(groupWorksByTimeline([added, updated], "activity", "release_desc").map((group) => group.key))
+      .toEqual(["2026-08-20", "2026-08-03"]);
+    expect(catalogActivityKind(updated)).toBe("updated");
+    expect(catalogActivityKind(added)).toBe("added");
+    expect(catalogActivityKind(sameDay)).toBe("added");
+  });
+
+  it("labels an update with its version and a short date, adding the year only for older ones", () => {
+    const now = new Date("2026-10-08T12:00:00Z");
+    expect(catalogUpdateLabel({ date: "2026-09-27", version: "1.3.1" }, "en-US", now)).toBe("v1.3.1 · Sep 27");
+    expect(catalogUpdateLabel({ date: "2024-01-05", version: null }, "en-US", now)).toBe("Jan 5, 2024");
   });
 });

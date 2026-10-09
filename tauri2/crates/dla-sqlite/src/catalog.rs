@@ -1,13 +1,16 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, RwLock},
+    sync::{
+        Arc, Mutex, RwLock,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use dla_application::catalog::{
     CatalogContext, CatalogContextQuery, CatalogDayBucket, CatalogError, CatalogFacet,
-    CatalogFacetFilters, CatalogFacets, CatalogMonthBucket, CatalogPage, CatalogQuery,
-    CatalogReader, CatalogSnapshot, CatalogTimeline,
+    CatalogFacetFilters, CatalogFacetSelection, CatalogFacets, CatalogMonthBucket, CatalogPage,
+    CatalogQuery, CatalogReader, CatalogSnapshot, CatalogTimeline,
 };
 use dla_application::identity::{
     ArchiveHash, ArchiveHashAlgorithm, CatalogArchiveIdentity, CatalogIdentityError,
@@ -25,7 +28,7 @@ use dla_catalog::CatalogFixture;
 use dla_domain::{
     CatalogDescriptionVersion, CatalogDescriptions, CatalogRanking, CatalogRating,
     CatalogRelatedWork, CatalogRelationDirection, CatalogRom, CatalogRomContents, CatalogRomEntry,
-    CatalogWork, CatalogWorkDetail, Category, NamedReference,
+    CatalogWork, CatalogWorkDetail, CatalogWorkUpdate, Category, NamedReference,
 };
 use rusqlite::{
     Connection, OptionalExtension, Row, Transaction, params, params_from_iter,
@@ -35,13 +38,31 @@ use rusqlite_migration::{M, Migrations};
 
 use crate::database;
 
-const CATALOG_MIGRATION_LIST: &[M<'static>] = &[M::up(include_str!("../schema/catalog.sql"))];
+// Public builds ship the schema as of 2026-08-27 as version 1; every later
+// migration follows in order, so alpha.2 catalogs upgrade in place.
+const CATALOG_MIGRATION_LIST: &[M<'static>] = &[
+    M::up(include_str!("../schema/catalog.sql")),
+    M::up(include_str!(
+        "../migrations/catalog/0011_add_activity_timeline_index.sql"
+    )),
+];
 pub(crate) const CATALOG_MIGRATIONS: Migrations<'static> =
     Migrations::from_slice(CATALOG_MIGRATION_LIST);
 
+/// Enough readers for a month context, a Grid page, and several Line days
+/// to run at once; the command executor queues the rest.
+const READER_COUNT: usize = 4;
+const STATEMENT_CACHE_CAPACITY: usize = 64;
+const CONTEXT_CACHE_CAPACITY: usize = 16;
+
+/// A catalog generation is read-only once open, so every query borrows one of
+/// a few WAL reader connections instead of waiting on a single mutex, and a
+/// month context can be kept for the next identical request.
 pub struct SqliteCatalogStore {
     path: PathBuf,
-    connection: Mutex<Connection>,
+    readers: Vec<Mutex<Connection>>,
+    next_reader: AtomicUsize,
+    contexts: Mutex<HashMap<String, CatalogContext>>,
 }
 
 impl SqliteCatalogStore {
@@ -49,10 +70,7 @@ impl SqliteCatalogStore {
         let mut connection =
             database::open(path, &CATALOG_MIGRATIONS).map_err(CatalogError::persistence)?;
         replace_fixture_if_needed(&mut connection, fixture).map_err(CatalogError::persistence)?;
-        Ok(Self {
-            path: path.to_path_buf(),
-            connection: Mutex::new(connection),
-        })
+        Self::with_readers(path, connection)
     }
 
     pub fn open_existing(path: &Path) -> Result<Self, CatalogError> {
@@ -70,9 +88,23 @@ impl SqliteCatalogStore {
                 "catalog database does not contain an activated snapshot",
             ));
         }
+        Self::with_readers(path, connection)
+    }
+
+    fn with_readers(path: &Path, first: Connection) -> Result<Self, CatalogError> {
+        let mut readers = Vec::with_capacity(READER_COUNT);
+        first.set_prepared_statement_cache_capacity(STATEMENT_CACHE_CAPACITY);
+        readers.push(Mutex::new(first));
+        for _ in 1..READER_COUNT {
+            let reader = database::open_reader(path).map_err(CatalogError::persistence)?;
+            reader.set_prepared_statement_cache_capacity(STATEMENT_CACHE_CAPACITY);
+            readers.push(Mutex::new(reader));
+        }
         Ok(Self {
             path: path.to_path_buf(),
-            connection: Mutex::new(connection),
+            readers,
+            next_reader: AtomicUsize::new(0),
+            contexts: Mutex::new(HashMap::new()),
         })
     }
 
@@ -80,14 +112,25 @@ impl SqliteCatalogStore {
         &self.path
     }
 
+    #[cfg(test)]
+    pub(crate) fn connection(&self) -> &Mutex<Connection> {
+        &self.readers[0]
+    }
+
     fn with_connection<T>(
         &self,
         operation: impl FnOnce(&Connection) -> rusqlite::Result<T>,
     ) -> Result<T, CatalogError> {
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|error| CatalogError::persistence(error.to_string()))?;
+        let start = self.next_reader.fetch_add(1, Ordering::Relaxed) % self.readers.len();
+        let idle = (0..self.readers.len())
+            .map(|offset| &self.readers[(start + offset) % self.readers.len()])
+            .find_map(|reader| reader.try_lock().ok());
+        let connection = match idle {
+            Some(connection) => connection,
+            None => self.readers[start]
+                .lock()
+                .map_err(|error| CatalogError::persistence(error.to_string()))?,
+        };
         operation(&connection).map_err(CatalogError::persistence)
     }
 }
@@ -254,7 +297,23 @@ impl CatalogReader for SqliteCatalogStore {
     }
 
     fn context(&self, query: &CatalogContextQuery) -> Result<CatalogContext, CatalogError> {
-        self.with_connection(|connection| read_catalog_context(connection, query))
+        let key = format!("{query:?}");
+        if let Some(context) = self
+            .contexts
+            .lock()
+            .ok()
+            .and_then(|contexts| contexts.get(&key).cloned())
+        {
+            return Ok(context);
+        }
+        let context = self.with_connection(|connection| read_catalog_context(connection, query))?;
+        if let Ok(mut contexts) = self.contexts.lock() {
+            if contexts.len() >= CONTEXT_CACHE_CAPACITY {
+                contexts.clear();
+            }
+            contexts.insert(key, context.clone());
+        }
+        Ok(context)
     }
 
     fn read(&self, code: &str) -> Result<Option<CatalogWorkDetail>, CatalogError> {
@@ -713,7 +772,7 @@ fn browse_works(
         predicate.sql,
         sort_expression(&query.sort, query.timeline, query.month.is_some()),
     );
-    let mut statement = connection.prepare(&sql)?;
+    let mut statement = connection.prepare_cached(&sql)?;
     let rows = statement.query_map(params_from_iter(predicate.values.iter()), scan_work)?;
     rows.collect()
 }
@@ -738,7 +797,7 @@ fn read_catalog_context(
     predicate
         .sql
         .push_str(&format!(" AND work.is_synthetic = 0 AND {column} <> ''"));
-    let mut statement = connection.prepare(&format!(
+    let mut statement = connection.prepare_cached(&format!(
         "SELECT substr({column}, 1, 7), count(*)
          FROM catalog_work work
          WHERE {}
@@ -788,7 +847,7 @@ fn read_day_buckets(
     }
     let predicate = build_predicate(query, None);
     let column = query.timeline.date_column();
-    let mut statement = connection.prepare(&format!(
+    let mut statement = connection.prepare_cached(&format!(
         "SELECT substr({column}, 1, 10), count(*)
          FROM catalog_work work
          WHERE {}
@@ -834,7 +893,7 @@ fn read_works_by_code(
         work_select(),
         placeholders(work_codes.len())
     );
-    let mut statement = connection.prepare(&sql)?;
+    let mut statement = connection.prepare_cached(&sql)?;
     let rows = statement.query_map(params_from_iter(work_codes.iter()), scan_work)?;
     rows.collect()
 }
@@ -848,7 +907,7 @@ fn read_works_by_archive_hash(
         ArchiveHashAlgorithm::Sha1 => "sha1",
         ArchiveHashAlgorithm::Sha256 => "sha256",
     };
-    let mut statement = connection.prepare(&format!(
+    let mut statement = connection.prepare_cached(&format!(
         "SELECT DISTINCT work_code
          FROM catalog_rom
          WHERE {hash_column} = ?1 COLLATE NOCASE
@@ -867,7 +926,7 @@ fn read_archive_candidates_by_size(
 ) -> rusqlite::Result<Vec<CatalogArchiveIdentity>> {
     let limit = i64::try_from(limit)
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?;
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT work_code, position, name, size, md5, sha1, sha256
          FROM catalog_rom
          WHERE size = ?1
@@ -946,7 +1005,7 @@ fn read_named_shortcuts(
         id_column,
         kind,
     } = source;
-    let mut statement = connection.prepare(&format!(
+    let mut statement = connection.prepare_cached(&format!(
         "SELECT value.name, value.name_english, count(DISTINCT work_value.work_code)
          FROM {value_table} value
          JOIN {work_table} work_value USING ({id_column})
@@ -1156,7 +1215,7 @@ fn read_recommendation_candidate_codes(
 ) -> rusqlite::Result<Vec<String>> {
     let limit = i64::try_from(limit)
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?;
-    let mut statement = connection.prepare(sql)?;
+    let mut statement = connection.prepare_cached(sql)?;
     let rows = statement.query_map(params![work_code, limit], |row| row.get(0))?;
     rows.collect()
 }
@@ -1223,7 +1282,7 @@ fn read_candidate_categories(
          ORDER BY work_value.work_code, work_value.position",
         placeholders(work_codes.len())
     );
-    let mut statement = connection.prepare(&sql)?;
+    let mut statement = connection.prepare_cached(&sql)?;
     let rows = statement.query_map(params_from_iter(work_codes.iter()), |row| {
         Ok((
             row.get::<_, String>(0)?,
@@ -1249,7 +1308,7 @@ fn read_anchor_tag_frequencies(
     connection: &Connection,
     work_code: &str,
 ) -> rusqlite::Result<Vec<RecommendationFacetFrequency>> {
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT tag.name, count(candidate.work_code)
          FROM catalog_work_tag anchor
          JOIN catalog_tag tag USING (tag_id)
@@ -1281,7 +1340,7 @@ fn read_categories(
          WHERE work_value.work_code = ?1
          ORDER BY work_value.position"
     );
-    let mut statement = connection.prepare(&sql)?;
+    let mut statement = connection.prepare_cached(&sql)?;
     let rows = statement.query_map(params![work_code], |row| {
         Ok(Category {
             code: row.get(0)?,
@@ -1293,7 +1352,7 @@ fn read_categories(
 }
 
 fn read_roms(connection: &Connection, work_code: &str) -> rusqlite::Result<Vec<CatalogRom>> {
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT name, size, crc, md5, sha1, sha256, file_count, update_date, version
          FROM catalog_rom
          WHERE work_code = ?1
@@ -1341,7 +1400,7 @@ fn read_rom_contents(
     else {
         return Ok(None);
     };
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT entry_index, path, extension, is_directory, size, crc32, md5, sha1, sha256,
                 hash_status
          FROM catalog_rom_content_entry
@@ -1377,7 +1436,7 @@ fn read_related_works(
     connection: &Connection,
     work_code: &str,
 ) -> rusqlite::Result<Vec<CatalogRelatedWork>> {
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT related.work_code, related.title, related.title_english,
                 relation.relation_type_code, relation_type.label,
                 relation.direction, related.thumbnail_urls
@@ -1432,8 +1491,42 @@ fn read_related_works(
     Ok(related)
 }
 
-fn work_select() -> &'static str {
-    "SELECT
+/// Ordered JSON arrays of a work's circles, categories, and tags, shared by
+/// the browse projection and the search-document export so both agree.
+const WORK_CIRCLES_JSON: &str = "COALESCE((
+                SELECT json_group_array(json_object('name', ordered.name, 'nameEnglish', ordered.name_english))
+                FROM (
+                    SELECT circle.name, circle.name_english
+                    FROM catalog_work_circle work_circle
+                    JOIN catalog_circle circle USING (circle_id)
+                    WHERE work_circle.work_code = work.work_code
+                    ORDER BY work_circle.position
+                ) ordered
+            ), '[]')";
+const WORK_CATEGORIES_JSON: &str = "COALESCE((
+                SELECT json_group_array(json_object('code', ordered.category_code, 'name', ordered.name, 'nameEnglish', ordered.name_english))
+                FROM (
+                    SELECT category.category_code, category.name, category.name_english
+                    FROM catalog_work_category work_category
+                    JOIN catalog_category category USING (category_code)
+                    WHERE work_category.work_code = work.work_code
+                    ORDER BY work_category.position
+                ) ordered
+            ), '[]')";
+const WORK_TAGS_JSON: &str = "COALESCE((
+                SELECT json_group_array(json_object('name', ordered.name, 'nameEnglish', ordered.name_english))
+                FROM (
+                    SELECT tag.name, tag.name_english
+                    FROM catalog_work_tag work_tag
+                    JOIN catalog_tag tag USING (tag_id)
+                    WHERE work_tag.work_code = work.work_code
+                    ORDER BY work_tag.position
+                ) ordered
+            ), '[]')";
+
+fn work_select() -> String {
+    format!(
+        "SELECT
             work.work_code,
             work.source_code,
             work.title,
@@ -1446,38 +1539,27 @@ fn work_select() -> &'static str {
             work.main_image_urls,
             work.thumbnail_urls,
             work.is_synthetic,
-            COALESCE((
-                SELECT json_group_array(json_object('name', ordered.name, 'nameEnglish', ordered.name_english))
-                FROM (
-                    SELECT circle.name, circle.name_english
-                    FROM catalog_work_circle work_circle
-                    JOIN catalog_circle circle USING (circle_id)
-                    WHERE work_circle.work_code = work.work_code
-                    ORDER BY work_circle.position
-                ) ordered
-            ), '[]'),
-            COALESCE((
-                SELECT json_group_array(json_object('code', ordered.category_code, 'name', ordered.name, 'nameEnglish', ordered.name_english))
-                FROM (
-                    SELECT category.category_code, category.name, category.name_english
-                    FROM catalog_work_category work_category
-                    JOIN catalog_category category USING (category_code)
-                    WHERE work_category.work_code = work.work_code
-                    ORDER BY work_category.position
-                ) ordered
-            ), '[]'),
-            COALESCE((
-                SELECT json_group_array(json_object('name', ordered.name, 'nameEnglish', ordered.name_english))
-                FROM (
-                    SELECT tag.name, tag.name_english
-                    FROM catalog_work_tag work_tag
-                    JOIN catalog_tag tag USING (tag_id)
-                    WHERE work_tag.work_code = work.work_code
-                    ORDER BY work_tag.position
-                ) ordered
-            ), '[]')
+            {WORK_CIRCLES_JSON},
+            {WORK_CATEGORIES_JSON},
+            {WORK_TAGS_JSON},
+            (
+                SELECT max(rom.update_date)
+                FROM catalog_rom rom
+                WHERE rom.work_code = work.work_code AND rom.update_date <> ''
+            ),
+            (
+                SELECT rom.version
+                FROM catalog_rom rom
+                WHERE rom.work_code = work.work_code AND rom.update_date <> ''
+                ORDER BY rom.update_date DESC,
+                         rom.version GLOB '*[0-9].[0-9]*' DESC,
+                         rom.version DESC
+                LIMIT 1
+            )
          FROM catalog_work work
-         LEFT JOIN catalog_work_enrichment enrichment USING (work_code)"
+         LEFT JOIN catalog_work_enrichment enrichment
+           ON enrichment.work_code = work.work_code"
+    )
 }
 
 fn scan_work(row: &Row<'_>) -> rusqlite::Result<CatalogWork> {
@@ -1486,6 +1568,8 @@ fn scan_work(row: &Row<'_>) -> rusqlite::Result<CatalogWork> {
     let circles = decode_json::<Vec<NamedReference>>(row.get(12)?, 12)?;
     let categories = decode_json::<Vec<Category>>(row.get(13)?, 13)?;
     let tags = decode_json::<Vec<NamedReference>>(row.get(14)?, 14)?;
+    let latest_update_date: Option<String> = row.get(15)?;
+    let latest_version: Option<String> = row.get(16)?;
     Ok(CatalogWork {
         code: row.get(0)?,
         source_code: row.get(1)?,
@@ -1502,6 +1586,7 @@ fn scan_work(row: &Row<'_>) -> rusqlite::Result<CatalogWork> {
         categories,
         tags,
         synthetic: row.get(11)?,
+        latest_update: latest_update_date.map(|date| CatalogWorkUpdate::new(date, latest_version)),
     })
 }
 
@@ -1613,20 +1698,27 @@ fn association_facets(
     join_key: &str,
     filter_key: &str,
 ) -> rusqlite::Result<Vec<CatalogFacet>> {
-    let predicate = build_predicate(query, Some(group));
+    let predicate = counting_predicate(query, group);
+    // The association table stands in as `work`; catalog_work is joined only
+    // when a date scope reads its columns. Each work has one row per value,
+    // so count(*) is the distinct work count.
+    let works = if query.month.is_some() || query.day.is_some() {
+        format!(
+            "JOIN {join_table} work_value ON work_value.{join_key} = value.{join_key}
+             JOIN catalog_work work ON work.work_code = work_value.work_code"
+        )
+    } else {
+        format!("JOIN {join_table} work ON work.{join_key} = value.{join_key}")
+    };
     scan_facets(
         connection,
         &format!(
-            "SELECT value.{filter_key}, value.name, value.name_english,
-                    count(DISTINCT work_value.work_code)
+            "SELECT value.{filter_key}, value.name, value.name_english, count(*)
              FROM {value_table} value
-             JOIN {join_table} work_value
-               ON work_value.{join_key} = value.{join_key}
-             JOIN catalog_work work ON work.work_code = work_value.work_code
+             {works}
              WHERE {}
-             GROUP BY value.{join_key}, value.{filter_key}, value.name, value.name_english
-             ORDER BY count(DISTINCT work_value.work_code) DESC,
-                      value.name COLLATE NOCASE, value.{filter_key}",
+             GROUP BY value.{join_key}
+             ORDER BY count(*) DESC, value.name COLLATE NOCASE, value.{filter_key}",
             predicate.sql
         ),
         &predicate.values,
@@ -1638,7 +1730,7 @@ fn scan_facets(
     sql: &str,
     values: &[Value],
 ) -> rusqlite::Result<Vec<CatalogFacet>> {
-    let mut statement = connection.prepare(sql)?;
+    let mut statement = connection.prepare_cached(sql)?;
     let rows = statement.query_map(params_from_iter(values.iter()), |row| {
         Ok(CatalogFacet {
             key: row.get(0)?,
@@ -1669,7 +1761,7 @@ fn read_search_documents(
     after_work_code: &str,
     limit: usize,
 ) -> rusqlite::Result<Vec<CatalogSearchDocument>> {
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(&format!(
         "SELECT
             work.work_code,
             work.source_code,
@@ -1679,36 +1771,9 @@ fn read_search_documents(
             work.release_date,
             work.updated_date,
             work.age_rating,
-            COALESCE((
-                SELECT json_group_array(json_object('name', ordered.name, 'nameEnglish', ordered.name_english))
-                FROM (
-                    SELECT circle.name, circle.name_english
-                    FROM catalog_work_circle work_circle
-                    JOIN catalog_circle circle USING (circle_id)
-                    WHERE work_circle.work_code = work.work_code
-                    ORDER BY work_circle.position
-                ) ordered
-            ), '[]'),
-            COALESCE((
-                SELECT json_group_array(json_object('code', ordered.category_code, 'name', ordered.name, 'nameEnglish', ordered.name_english))
-                FROM (
-                    SELECT category.category_code, category.name, category.name_english
-                    FROM catalog_work_category work_category
-                    JOIN catalog_category category USING (category_code)
-                    WHERE work_category.work_code = work.work_code
-                    ORDER BY work_category.position
-                ) ordered
-            ), '[]'),
-            COALESCE((
-                SELECT json_group_array(json_object('name', ordered.name, 'nameEnglish', ordered.name_english))
-                FROM (
-                    SELECT tag.name, tag.name_english
-                    FROM catalog_work_tag work_tag
-                    JOIN catalog_tag tag USING (tag_id)
-                    WHERE work_tag.work_code = work.work_code
-                    ORDER BY work_tag.position
-                ) ordered
-            ), '[]'),
+            {WORK_CIRCLES_JSON},
+            {WORK_CATEGORIES_JSON},
+            {WORK_TAGS_JSON},
             COALESCE((
                 SELECT json_group_array(json_object('code', ordered.file_format_code, 'name', ordered.name, 'nameEnglish', ordered.name_english))
                 FROM (
@@ -1743,7 +1808,7 @@ fn read_search_documents(
          WHERE work.work_code > ?1 COLLATE NOCASE
          ORDER BY work.work_code COLLATE NOCASE
          LIMIT ?2",
-    )?;
+    ))?;
     let rows = statement.query_map(params![after_work_code, limit as i64], |row| {
         Ok(CatalogSearchDocument {
             work_code: row.get(0)?,
@@ -1779,6 +1844,38 @@ enum FacetGroup {
     FileTypes,
     Miscellanies,
     Circles,
+}
+
+impl FacetGroup {
+    fn requires_every_value(self) -> bool {
+        matches!(self, Self::Genres | Self::Miscellanies)
+    }
+
+    fn selection_mut(self, facets: &mut CatalogFacetFilters) -> &mut CatalogFacetSelection {
+        match self {
+            Self::Ages => &mut facets.ages,
+            Self::Languages => &mut facets.languages,
+            Self::Categories => &mut facets.categories,
+            Self::Genres => &mut facets.genres,
+            Self::FileTypes => &mut facets.file_types,
+            Self::Miscellanies => &mut facets.miscellanies,
+            Self::Circles => &mut facets.circles,
+        }
+    }
+}
+
+/// The works a group's values are counted over. An any-value group leaves its
+/// own selection out, so each count is what picking that value would give. In
+/// an every-value group each pick narrows the rest, so its picks stay and only
+/// its exclusions are left out, letting an excluded value show what picking it
+/// instead would give.
+fn counting_predicate(query: &CatalogQuery, group: FacetGroup) -> Predicate {
+    if !group.requires_every_value() {
+        return build_predicate(query, Some(group));
+    }
+    let mut counted = query.clone();
+    group.selection_mut(&mut counted.facets).exclude.clear();
+    build_predicate(&counted, None)
 }
 
 fn build_predicate(query: &CatalogQuery, omitted_group: Option<FacetGroup>) -> Predicate {
@@ -1854,7 +1951,7 @@ fn build_facet_predicate(
         );
     }
     if omitted_group != Some(FacetGroup::Genres) {
-        add_association_filter(
+        add_every_value_filter(
             &mut conditions,
             &mut values,
             "catalog_work_tag",
@@ -1876,7 +1973,7 @@ fn build_facet_predicate(
         );
     }
     if omitted_group != Some(FacetGroup::Miscellanies) {
-        add_association_filter(
+        add_every_value_filter(
             &mut conditions,
             &mut values,
             "catalog_work_miscellany",
@@ -1908,11 +2005,14 @@ fn add_direct_filter(
     conditions: &mut Vec<String>,
     values: &mut Vec<Value>,
     column: &'static str,
-    selection: &dla_application::catalog::CatalogFacetSelection,
+    selection: &CatalogFacetSelection,
 ) {
+    // Every condition tests only work.work_code, so a facet query can alias
+    // its association table as `work` and skip the catalog_work join.
     if !selection.include.is_empty() {
         let condition = format!(
-            "{column} COLLATE NOCASE IN ({})",
+            "work.work_code IN (SELECT work.work_code FROM catalog_work work
+                WHERE {column} COLLATE NOCASE IN ({}))",
             placeholders(selection.include.len())
         );
         conditions.push(condition);
@@ -1920,7 +2020,8 @@ fn add_direct_filter(
     }
     if !selection.exclude.is_empty() {
         let condition = format!(
-            "{column} COLLATE NOCASE NOT IN ({})",
+            "work.work_code NOT IN (SELECT work.work_code FROM catalog_work work
+                WHERE {column} COLLATE NOCASE IN ({}))",
             placeholders(selection.exclude.len())
         );
         conditions.push(condition);
@@ -1935,11 +2036,11 @@ fn add_association_filter(
     value_table: &'static str,
     join_key: &'static str,
     filter_key: &'static str,
-    selection: &dla_application::catalog::CatalogFacetSelection,
+    selection: &CatalogFacetSelection,
 ) {
     if !selection.include.is_empty() {
         let condition = association_condition(
-            "EXISTS",
+            "IN",
             join_table,
             value_table,
             join_key,
@@ -1951,7 +2052,7 @@ fn add_association_filter(
     }
     if !selection.exclude.is_empty() {
         let condition = association_condition(
-            "NOT EXISTS",
+            "NOT IN",
             join_table,
             value_table,
             join_key,
@@ -1963,6 +2064,43 @@ fn add_association_filter(
     }
 }
 
+/// Tags and extra features narrow the results, so a work needs every selected
+/// value; the other groups describe one property, so any selected value
+/// matches. Groups combine with AND. The DLA website uses the same rule.
+fn add_every_value_filter(
+    conditions: &mut Vec<String>,
+    values: &mut Vec<Value>,
+    join_table: &'static str,
+    value_table: &'static str,
+    join_key: &'static str,
+    filter_key: &'static str,
+    selection: &CatalogFacetSelection,
+) {
+    for value in &selection.include {
+        conditions.push(association_condition(
+            "IN",
+            join_table,
+            value_table,
+            join_key,
+            filter_key,
+            1,
+        ));
+        values.push(Value::Text(value.clone()));
+    }
+    add_association_filter(
+        conditions,
+        values,
+        join_table,
+        value_table,
+        join_key,
+        filter_key,
+        &CatalogFacetSelection {
+            include: Vec::new(),
+            exclude: selection.exclude.clone(),
+        },
+    );
+}
+
 fn association_condition(
     operator: &str,
     join_table: &str,
@@ -1971,14 +2109,15 @@ fn association_condition(
     filter_key: &str,
     value_count: usize,
 ) -> String {
+    // An uncorrelated membership set is built once per statement, where a
+    // correlated EXISTS would run again for every candidate row.
     format!(
-        "{operator} (
-            SELECT 1
+        "work.work_code {operator} (
+            SELECT selected_work_value.work_code
             FROM {join_table} selected_work_value
             JOIN {value_table} selected_value
               ON selected_value.{join_key} = selected_work_value.{join_key}
-            WHERE selected_work_value.work_code = work.work_code
-              AND selected_value.{filter_key} COLLATE NOCASE IN ({})
+            WHERE selected_value.{filter_key} COLLATE NOCASE IN ({})
         )",
         placeholders(value_count)
     )
@@ -2199,7 +2338,7 @@ mod tests {
         );
 
         {
-            let connection = store.connection.lock().expect("catalog connection");
+            let connection = store.connection().lock().expect("catalog connection");
             for (code, favorites, added_date) in [
                 ("DLA-SYNTH-0002", 900, "2026-08-02"),
                 ("DLA-SYNTH-0003", 900, "2026-08-01"),
@@ -2259,6 +2398,164 @@ mod tests {
             .expect("ROM contents");
         assert_eq!(contents.entries.len(), 1);
         assert_eq!(contents.entries[0].path, "game/readme.txt");
+    }
+
+    #[test]
+    fn tags_and_extra_features_need_every_value_other_groups_any() {
+        let directory = tempdir().expect("temporary directory");
+        let fixture = production_test_fixture();
+        let store = Arc::new(
+            SqliteCatalogStore::open(&directory.path().join("catalog.sqlite"), &fixture)
+                .expect("catalog store"),
+        );
+        let service = CatalogService::new(store);
+        // タグ12 is on three works, タグ01 only on DLA-SYNTH-0008.
+        let first = "タグ12".to_owned();
+        let second = "タグ01".to_owned();
+        let genres = |include: &[&String], exclude: &[&String]| CatalogFacetFilters {
+            genres: CatalogFacetSelection {
+                include: include.iter().map(|value| (*value).clone()).collect(),
+                exclude: exclude.iter().map(|value| (*value).clone()).collect(),
+            },
+            ..CatalogFacetFilters::default()
+        };
+        let genre_count = |page: &CatalogPage, name: &str| {
+            page.facets
+                .genres
+                .iter()
+                .find(|facet| facet.key == name)
+                .map(|facet| facet.count)
+        };
+
+        let one = browse_with_filters(&service, genres(&[&first], &[]));
+        let both = browse_with_filters(&service, genres(&[&first, &second], &[]));
+        assert!(both.items.iter().any(|work| work.code == "DLA-SYNTH-0008"));
+        assert!(both.total <= one.total);
+        assert!(both.items.iter().all(|work| {
+            [&first, &second]
+                .iter()
+                .all(|tag| work.tags.iter().any(|value| &&value.name == tag))
+        }));
+        // A tag's count is what picking it as well would give.
+        assert_eq!(genre_count(&one, &second), Some(both.total));
+        assert_eq!(genre_count(&both, &first), Some(both.total));
+        // An excluded tag shows what picking it instead would give.
+        let without = browse_with_filters(&service, genres(&[&first], &[&second]));
+        assert_eq!(without.total, one.total - both.total);
+        assert_eq!(genre_count(&without, &second), Some(both.total));
+
+        let unfiltered = browse(&service, "", "", "code_asc", "release", 1, 0);
+        let left = unfiltered.facets.categories[0].key.clone();
+        let right = unfiltered.facets.categories[1].key.clone();
+        let categories = |include: Vec<String>| CatalogFacetFilters {
+            categories: CatalogFacetSelection {
+                include,
+                exclude: Vec::new(),
+            },
+            ..CatalogFacetFilters::default()
+        };
+        let left_only = browse_with_filters(&service, categories(vec![left.clone()]));
+        let either = browse_with_filters(&service, categories(vec![left.clone(), right.clone()]));
+        assert!(either.total > left_only.total);
+        assert!(either.items.iter().all(|work| {
+            work.categories
+                .iter()
+                .any(|value| value.code == left || value.code == right)
+        }));
+    }
+
+    #[test]
+    fn activity_timeline_places_a_work_at_its_latest_event() {
+        let directory = tempdir().expect("temporary directory");
+        let mut fixture = production_test_fixture();
+        fixture
+            .works
+            .iter_mut()
+            .find(|detail| detail.work.code == "DLA-SYNTH-0008")
+            .expect("rich synthetic work")
+            .roms
+            .push(CatalogRom {
+                name: "synthetic-patch.zip".to_owned(),
+                size: "7".to_owned(),
+                crc: String::new(),
+                md5: String::new(),
+                sha1: String::new(),
+                sha256: String::new(),
+                file_count: Some(1),
+                update_date: String::new(),
+                version: String::new(),
+            });
+        let store = Arc::new(
+            SqliteCatalogStore::open(&directory.path().join("catalog.sqlite"), &fixture)
+                .expect("catalog store"),
+        );
+        {
+            let connection = store.connection().lock().expect("catalog connection");
+            // DLA-SYNTH-0011 otherwise sits in 2099 and would be the newest month.
+            for (code, added, updated) in [
+                ("DLA-SYNTH-0008", "2030-05-03", ""),
+                ("DLA-SYNTH-0002", "2021-01-10", "2030-05-20T10:00:00.000Z"),
+                ("DLA-SYNTH-0011", "2020-01-01", ""),
+            ] {
+                connection
+                    .execute(
+                        "UPDATE catalog_work SET added_date = ?2, updated_date = ?3
+                         WHERE work_code = ?1",
+                        params![code, added, updated],
+                    )
+                    .expect("timeline dates");
+            }
+            for (position, date, version) in
+                [(0, "2030-04-27", "Ver.1.20."), (1, "2030-04-27", "2")]
+            {
+                connection
+                    .execute(
+                        "UPDATE catalog_rom SET update_date = ?2, version = ?3
+                         WHERE work_code = 'DLA-SYNTH-0008' AND position = ?1",
+                        params![position, date, version],
+                    )
+                    .expect("ROM update");
+            }
+        }
+        let service = CatalogService::new(store);
+
+        let context = service
+            .context(CatalogContextRequest::default())
+            .expect("activity context");
+        assert_eq!(context.default_month, "2030-05");
+        assert_eq!(context.months.last().map(|bucket| bucket.count), Some(2));
+
+        let page = service
+            .browse(BrowseRequest {
+                sort: "release_desc".to_owned(),
+                month: "2030-05".to_owned(),
+                limit: 24,
+                ..BrowseRequest::default()
+            })
+            .expect("activity month");
+        assert_eq!(
+            page.items
+                .iter()
+                .map(|work| work.code.as_str())
+                .collect::<Vec<_>>(),
+            ["DLA-SYNTH-0002", "DLA-SYNTH-0008"]
+        );
+        assert_eq!(
+            page.day_buckets
+                .iter()
+                .filter(|bucket| bucket.count > 0)
+                .map(|bucket| bucket.day.as_str())
+                .collect::<Vec<_>>(),
+            ["2030-05-03", "2030-05-20"]
+        );
+        // A real version wins over an odd one from the same day.
+        assert_eq!(
+            page.items[1].latest_update,
+            Some(CatalogWorkUpdate {
+                date: "2030-04-27".to_owned(),
+                version: Some("1.20".to_owned()),
+            })
+        );
     }
 
     #[test]
@@ -2338,7 +2635,7 @@ mod tests {
                 .all(|work| work.release_date.starts_with(&populated_day.day))
         );
 
-        let connection = store.connection.lock().expect("catalog connection");
+        let connection = store.connection().lock().expect("catalog connection");
         let plan = query_plan(
             &connection,
             &format!(
@@ -2424,7 +2721,7 @@ mod tests {
                     == "af752b95d170411f60fd279016c06877879c6dd5d7f9f9152fe584ee8ea5f557"
         }));
 
-        let connection = store.connection.lock().expect("catalog connection");
+        let connection = store.connection().lock().expect("catalog connection");
         let size_plan = query_plan(
             &connection,
             "SELECT work_code, position, name, size, md5, sha1, sha256
@@ -2487,7 +2784,7 @@ mod tests {
             assert!(!item.reasons.is_empty());
         }
 
-        let connection = store.connection.lock().expect("catalog connection");
+        let connection = store.connection().lock().expect("catalog connection");
         let same_circle_plan = recommendation_query_plan(
             &connection,
             SAME_CIRCLE_RECOMMENDATION_SQL,

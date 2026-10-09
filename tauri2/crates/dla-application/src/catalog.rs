@@ -10,7 +10,7 @@ use thiserror::Error;
 const DEFAULT_LIMIT: usize = 60;
 const MAXIMUM_LIMIT: usize = 120;
 const DEFAULT_SORT: &str = "release_desc";
-const DEFAULT_TIMELINE: &str = "added";
+const DEFAULT_TIMELINE: &str = "activity";
 const MAXIMUM_FACET_VALUES: usize = 128;
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
@@ -76,6 +76,8 @@ pub struct CatalogContextQuery {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CatalogTimeline {
+    /// Added + Updated: a work's latest archive event, whichever came last.
+    Activity,
     Added,
     Release,
     Updated,
@@ -84,6 +86,9 @@ pub enum CatalogTimeline {
 impl CatalogTimeline {
     pub fn date_column(self) -> &'static str {
         match self {
+            // An empty updated date sorts before any date, so max() keeps the
+            // added date for works that were never updated.
+            Self::Activity => "max(work.added_date, work.updated_date)",
             Self::Added => "work.added_date",
             Self::Release => "work.release_date",
             Self::Updated => "work.updated_date",
@@ -426,10 +431,11 @@ fn normalize_context(request: CatalogContextRequest) -> CatalogContextQuery {
 
 fn normalize_timeline(timeline: &str) -> CatalogTimeline {
     match timeline {
-        DEFAULT_TIMELINE => CatalogTimeline::Added,
+        "added" => CatalogTimeline::Added,
         "release" => CatalogTimeline::Release,
         "updated" => CatalogTimeline::Updated,
-        _ => CatalogTimeline::Added,
+        DEFAULT_TIMELINE => CatalogTimeline::Activity,
+        _ => CatalogTimeline::Activity,
     }
 }
 
@@ -602,7 +608,7 @@ mod tests {
                     ..CatalogFacetFilters::default()
                 },
                 sort: "release_desc".to_owned(),
-                timeline: CatalogTimeline::Added,
+                timeline: CatalogTimeline::Activity,
                 month: CatalogMonth::parse("2026-02"),
                 day: CatalogDay::parse(
                     "2026-02-28",
@@ -659,7 +665,7 @@ mod tests {
         .expect("normalized favorites query");
 
         assert_eq!(query.sort, "favorites");
-        assert_eq!(query.timeline, CatalogTimeline::Added);
+        assert_eq!(query.timeline, CatalogTimeline::Activity);
     }
 
     #[test]

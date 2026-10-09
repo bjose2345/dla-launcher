@@ -334,7 +334,7 @@ mod tests {
     use std::sync::Mutex;
 
     use dla_application::scanner::{FilesystemScanObserver, ScanCancellation};
-    use dla_domain::scanner::{ScanHashPolicy, ScanOptions, ScanRootId, ScanSessionId};
+    use dla_domain::scanner::{ScanOptions, ScanRootId, ScanSessionId};
     use tempfile::tempdir;
 
     use super::*;
@@ -513,9 +513,8 @@ mod tests {
             root_id: ScanRootId("root-test".to_owned()),
             access_handle: access_handle.to_owned(),
             options: ScanOptions {
-                follow_symlinks: false,
-                hash_policy: ScanHashPolicy::CandidateArchives,
                 worker_limit: 2,
+                ..ScanOptions::default()
             },
         }
     }

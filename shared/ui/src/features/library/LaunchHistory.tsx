@@ -8,6 +8,7 @@ import {
 
 import { usePresentation } from "../../preferences/PresentationProvider";
 import { launchAdapterMessageKey } from "../../i18n/domainLabels";
+import { formatDateTime } from "../../i18n/formatters";
 import type { LaunchActivity, LaunchActivityStatus } from "./types";
 import { launchActivityIsActive } from "./types";
 
@@ -47,7 +48,7 @@ export function LaunchActivityList({
                 {showInstallation ? <code>{activity.installationId}</code> : null}
               </div>
               <span>
-                {formatLaunchTime(activity.attemptedAt, locale)}
+                {formatDateTime(activity.attemptedAt, locale)}
                 {activity.adapter ? ` · ${t(launchAdapterMessageKey(activity.adapter))}` : ""}
                 {activity.processId !== null ? ` · PID ${activity.processId}` : ""}
               </span>
@@ -123,13 +124,4 @@ function LaunchStatusIcon({ status }: { status: LaunchActivityStatus }) {
   if (status === "failed") return <OctagonX />;
   if (status === "stopped") return <Square />;
   return <CircleSlash2 />;
-}
-
-function formatLaunchTime(value: string, locale: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.valueOf())) return value;
-  return new Intl.DateTimeFormat(locale, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
 }

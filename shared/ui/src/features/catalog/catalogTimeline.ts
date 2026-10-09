@@ -1,4 +1,4 @@
-import type { CatalogSort, CatalogTimeline, CatalogWork } from "./types";
+import type { CatalogSort, CatalogTimeline, CatalogWork, CatalogWorkUpdate } from "./types";
 
 export type CatalogViewMode = "grid" | "line";
 
@@ -29,7 +29,7 @@ export function groupWorksByTimeline(
 ): CatalogDateGroup[] {
   const grouped = new Map<string, CatalogWork[]>();
   for (const work of works) {
-    const key = catalogDay(work[timelineField(timeline)]) ?? UNKNOWN_DATE_KEY;
+    const key = catalogDay(catalogTimelineDate(work, timeline)) ?? UNKNOWN_DATE_KEY;
     const group = grouped.get(key);
     if (group) group.push(work);
     else grouped.set(key, [work]);
@@ -70,10 +70,39 @@ export function dateMarker(
   };
 }
 
-function timelineField(timeline: CatalogTimeline): "addedDate" | "releaseDate" | "updatedDate" {
-  if (timeline === "added") return "addedDate";
-  if (timeline === "updated") return "updatedDate";
-  return "releaseDate";
+/** The date a work sits at on a timeline. Added + Updated takes the later of
+ *  the two; an empty updated date sorts first, like the catalog's max(). */
+export function catalogTimelineDate(work: CatalogWork, timeline: CatalogTimeline): string {
+  if (timeline === "activity") {
+    return work.updatedDate > work.addedDate ? work.updatedDate : work.addedDate;
+  }
+  if (timeline === "added") return work.addedDate;
+  if (timeline === "updated") return work.updatedDate;
+  return work.releaseDate;
+}
+
+/** Which event put a work on the Added + Updated timeline. Added wins when the
+ *  work was added the same day as its latest event, as on the DLA website. */
+export function catalogActivityKind(work: CatalogWork): "added" | "updated" {
+  const latest = catalogDay(catalogTimelineDate(work, "activity")) ?? "";
+  const added = catalogDay(work.addedDate) ?? "";
+  return latest > added ? "updated" : "added";
+}
+
+/** "v1.3.1 · Sep 27", with the year once the update is not from this one. */
+export function catalogUpdateLabel(update: CatalogWorkUpdate, locale: string, now = new Date()): string {
+  const day = catalogDay(update.date);
+  let date = update.date;
+  if (day) {
+    const value = new Date(`${day}T00:00:00Z`);
+    date = value.toLocaleDateString(locale, {
+      year: value.getUTCFullYear() === now.getUTCFullYear() ? undefined : "numeric",
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    });
+  }
+  return [update.version && `v${update.version}`, date].filter(Boolean).join(" · ");
 }
 
 function catalogDay(value: string): string | null {

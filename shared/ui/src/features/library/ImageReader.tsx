@@ -35,6 +35,7 @@ import {
 
 import { usePresentation } from "../../preferences/PresentationProvider";
 import { useBoundKeys } from "../../preferences/KeyBindingsProvider";
+import { isInteractiveTarget } from "../../preferences/keyBindings";
 import {
   adjacentReaderItems,
   clampImageReaderZoom,
@@ -753,10 +754,6 @@ function continuousAssetStyle(fit: ImageReaderFit, zoom: number): CSSProperties 
   if (fit === "width") return { "--reader-continuous-width": `${zoom * 100}%` } as CSSProperties;
   if (fit === "height") return { "--reader-continuous-height": `${Math.round(88 * zoom)}dvh` } as CSSProperties;
   return { "--reader-zoom": zoom } as CSSProperties;
-}
-
-function isInteractiveTarget(target: EventTarget | null): boolean {
-  return target instanceof Element && Boolean(target.closest("button, input, select, textarea, a"));
 }
 
 function readerScrollBehavior(): ScrollBehavior {

@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 
 import {
   applyPresentationPreferences,
+  loadLocaleCatalog,
   readPresentationPreferences,
   translate,
   writePresentationPreferences,
@@ -36,7 +37,10 @@ export function PresentationProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<PresentationContextValue>(() => ({
     ...preferences,
-    setLocale: (locale) => setPreferences((current) => ({ ...current, locale })),
+    setLocale: (locale) => {
+      const apply = () => setPreferences((current) => ({ ...current, locale }));
+      void loadLocaleCatalog(locale).then(apply, apply);
+    },
     setTheme: (theme) => setPreferences((current) => ({ ...current, theme })),
     setShowPlayTime: (showPlayTime) => setPreferences((current) => ({ ...current, showPlayTime })),
     setIncludeUnreviewed: (includeUnreviewed) => (

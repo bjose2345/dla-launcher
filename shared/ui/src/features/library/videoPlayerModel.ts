@@ -1,3 +1,4 @@
+import { browserStorage, type PreferenceStorage } from "../../preferences/browserStorage";
 import type { MediaRepeatMode, MediaSessionItem } from "./types";
 
 export type VideoFit = "contain" | "cover" | "original";
@@ -9,8 +10,6 @@ export interface VideoPlayerPreferences {
   muted: boolean;
   subtitleLabel: string | null;
 }
-
-type PreferenceStorage = Pick<Storage, "getItem" | "setItem">;
 
 const STORAGE_PREFIX = "dla-launcher:video-player:v2";
 const LEGACY_STORAGE_PREFIX = "dla-launcher:video-player:v1";
@@ -24,7 +23,7 @@ export const defaultVideoPlayerPreferences: VideoPlayerPreferences = {
 
 export function readVideoPlayerPreferences(
   installationId: string,
-  storage = browserStorage(),
+  storage: PreferenceStorage | undefined = browserStorage(),
 ): VideoPlayerPreferences {
   if (!storage) return defaultVideoPlayerPreferences;
   try {
@@ -57,7 +56,7 @@ export function readVideoPlayerPreferences(
 export function writeVideoPlayerPreferences(
   installationId: string,
   preferences: VideoPlayerPreferences,
-  storage = browserStorage(),
+  storage: PreferenceStorage | undefined = browserStorage(),
 ): void {
   if (!storage) return;
   try {
@@ -95,15 +94,6 @@ export function videoPlaybackFailure(code: number | null | undefined): VideoPlay
 
 function storageKey(prefix: string, installationId: string): string {
   return `${prefix}:${installationId}`;
-}
-
-function browserStorage(): PreferenceStorage | undefined {
-  if (typeof window === "undefined") return undefined;
-  try {
-    return window.localStorage;
-  } catch {
-    return undefined;
-  }
 }
 
 function isVideoFit(value: unknown): value is VideoFit {

@@ -564,6 +564,7 @@ mod tests {
                 categories: Vec::new(),
                 tags: tags.iter().map(|value| named(value)).collect(),
                 synthetic: false,
+                latest_update: None,
             },
             sample_image_urls: Vec::new(),
             file_formats: Vec::new(),

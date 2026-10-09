@@ -1,5 +1,5 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import { AnchoredPopover } from "../../app/AnchoredPopover";
 import {
@@ -10,6 +10,8 @@ import {
   catalogPageSlice,
 } from "./catalogPagination";
 import {
+  catalogActivityKind,
+  catalogUpdateLabel,
   dateMarker,
   groupWorksByTimeline,
   type CatalogDateGroup,
@@ -24,6 +26,7 @@ import type {
   CatalogWork,
 } from "./types";
 import { useGrabScroll } from "./useGrabScroll";
+import { storeCatalogViewMode, storedCatalogViewMode } from "./catalogViewMode";
 import { WorkCardImage } from "./WorkCardImage";
 import {
   CatalogActiveFilters,
@@ -33,7 +36,6 @@ import {
 import { catalogFacetFilterKey } from "./catalogFilters";
 import { usePresentation } from "../../preferences/PresentationProvider";
 
-const VIEW_STORAGE_KEY = "dla-launcher:catalog-view";
 
 interface CatalogResultsProps {
   works: CatalogWork[];
@@ -69,7 +71,7 @@ export function CatalogResults({
   onFacetFiltersChange,
 }: CatalogResultsProps) {
   const { locale, t } = usePresentation();
-  const [view, setView] = useState<CatalogViewMode>(storedViewMode);
+  const [view, setView] = useState<CatalogViewMode>(storedCatalogViewMode);
   const [gridPage, setGridPage] = useState(1);
   const [expandedDays, setExpandedDays] = useState<Set<string>>(() => new Set());
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -103,7 +105,7 @@ export function CatalogResults({
   const virtualGroups = virtualizer.getVirtualItems();
 
   useEffect(() => {
-    window.localStorage.setItem(VIEW_STORAGE_KEY, view);
+    storeCatalogViewMode(view);
     viewport.current?.scrollTo({ top: 0 });
     virtualizer.measure();
   }, [view, virtualizer]);
@@ -337,8 +339,9 @@ function SortSelector({
 
 const timelineOptions: Array<{
   value: CatalogTimeline;
-  menuLabel: "catalog.dateAdded" | "catalog.dateReleased" | "catalog.dateUpdated";
+  menuLabel: "catalog.dateActivity" | "catalog.dateAdded" | "catalog.dateReleased" | "catalog.dateUpdated";
 }> = [
+  { value: "activity", menuLabel: "catalog.dateActivity" },
   { value: "added", menuLabel: "catalog.dateAdded" },
   { value: "release", menuLabel: "catalog.dateReleased" },
   { value: "updated", menuLabel: "catalog.dateUpdated" },
@@ -354,11 +357,13 @@ function TimelineSelector({
   const { t } = usePresentation();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const selectedLabel = value === "added"
-    ? t("catalog.added")
-    : value === "updated"
-      ? t("catalog.updated")
-      : t("catalog.released");
+  const selectedLabel = value === "activity"
+    ? t("catalog.activity")
+    : value === "added"
+      ? t("catalog.added")
+      : value === "updated"
+        ? t("catalog.updated")
+        : t("catalog.released");
 
   return (
     <div className="catalog-timeline-selector">
@@ -557,7 +562,7 @@ function CatalogLineGroup({
   );
 }
 
-export function DateMarker({ day, count }: { day: string | null; count: number }) {
+export const DateMarker = memo(function DateMarker({ day, count }: { day: string | null; count: number }) {
   const { locale, t } = usePresentation();
   const marker = dateMarker(day, locale, {
     undated: t("catalog.undated"),
@@ -572,23 +577,34 @@ export function DateMarker({ day, count }: { day: string | null; count: number }
       <small>{count} {t(count === 1 ? "catalog.work" : "catalog.works")}</small>
     </header>
   );
-}
+});
 
-export function CatalogWorkCard({
+// Virtualized days re-render on every scroll tick; a card only changes with
+// its own props.
+export const CatalogWorkCard = memo(function CatalogWorkCard({
   work,
   englishLabels,
   lead = false,
+  showActivity = false,
   animationIndex,
   onOpenWork,
 }: {
   work: CatalogWork;
   englishLabels: boolean;
   lead?: boolean;
+  /** On the Added + Updated timeline: flag which event put the card here. */
+  showActivity?: boolean;
   animationIndex: number;
   onOpenWork?: (code: string) => void | Promise<void>;
 }) {
-  const { t } = usePresentation();
+  const { locale, t } = usePresentation();
   const circle = work.circles[0];
+  const activity = showActivity ? catalogActivityKind(work) : null;
+  // An update also says which one: the publisher's version and date, which
+  // can be much older than the day the archive picked it up.
+  const updateLabel = activity === "updated" && work.latestUpdate
+    ? catalogUpdateLabel(work.latestUpdate, locale)
+    : null;
   const content = (
     <article className={`catalog-work-card cover-hover-frame ${work.synthetic ? "synthetic" : ""}`}>
       <WorkCardImage
@@ -598,6 +614,15 @@ export function CatalogWorkCard({
         thumbnailUrls={work.thumbnailUrls}
       />
       <span className="catalog-work-card-shade" aria-hidden="true" />
+      {activity && (
+        <span className={`catalog-activity-flag ${activity}`}>
+          <span>
+            {activity === "added" ? <ActivityAddedIcon /> : <ActivityUpdatedIcon />}
+            {t(activity === "added" ? "catalog.activityAdded" : "catalog.activityUpdated")}
+          </span>
+          {updateLabel && <small>{updateLabel}</small>}
+        </span>
+      )}
       <span className="catalog-work-card-copy">
         <strong>{work.title}</strong>
         <small>
@@ -627,7 +652,7 @@ export function CatalogWorkCard({
       {content}
     </button>
   );
-}
+});
 
 export function CatalogPager({
   currentPage,
@@ -784,11 +809,6 @@ function useLoadMore(
   }, [count, fetchingMore, hasMore, lastIndex, onLoadMore]);
 }
 
-function storedViewMode(): CatalogViewMode {
-  const value = window.localStorage.getItem(VIEW_STORAGE_KEY);
-  return value === "line" ? "line" : "grid";
-}
-
 function isChronologicalSort(sort: CatalogSort): boolean {
   return sort === "release_asc" || sort === "release_desc";
 }
@@ -826,6 +846,9 @@ function SortOptionIcon({ sort }: { sort: CatalogSort }) {
 }
 
 function TimelineOptionIcon({ timeline }: { timeline: CatalogTimeline }) {
+  if (timeline === "activity") {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8M3 3v5h5M12 7v5l3 2" /></svg>;
+  }
   if (timeline === "added") {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v13H4zM3 4h18v3H3zM9 12h6" /></svg>;
   }
@@ -833,6 +856,14 @@ function TimelineOptionIcon({ timeline }: { timeline: CatalogTimeline }) {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M18.5 10A7 7 0 0 0 6.2 6.2L4 8M5.5 14A7 7 0 0 0 17.8 17.8L20 16" /></svg>;
   }
   return <CalendarIcon />;
+}
+
+function ActivityAddedIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 8v8M8 12h8" /></svg>;
+}
+
+function ActivityUpdatedIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M18.5 10A7 7 0 0 0 6.2 6.2L4 8M5.5 14A7 7 0 0 0 17.8 17.8L20 16" /></svg>;
 }
 
 function ChevronIcon() {

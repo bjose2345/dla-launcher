@@ -10,15 +10,19 @@ import type { ReactNode } from "react";
 import type { CatalogWork } from "../catalog";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import { launchActionMessageKey } from "../../i18n/domainLabels";
+import { formatDateTime } from "../../i18n/formatters";
 import type { MessageKey } from "../../preferences/preferences";
 import { LibraryArtwork } from "./LibraryArtwork";
+import type { ManageTab } from "./LibraryManageDrawer";
+import { LibraryWorkMenu } from "./LibraryWorkMenu";
 import { ContentCarousel } from "../../carousel/ContentCarousel";
 import {
   libraryContentKind,
   libraryDisplayCreator,
   libraryDisplayTitle,
 } from "./libraryHome";
-import { effectiveIdentity } from "./libraryPresentation";
+import { displayPath } from "../../displayPath";
+import { effectiveIdentity, installationFolder } from "./libraryPresentation";
 import {
   installationPrimaryAction,
   mediaActionMessageKey,
@@ -39,6 +43,9 @@ interface LibraryShelvesProps {
   inLens: (installationId: string) => boolean;
   blockedExecutableInstallations: ReadonlySet<string>;
   onActivate: (installationId: string, action: LaunchActionKind | null) => void;
+  onManage: (installationId: string, tab: ManageTab) => void;
+  onOpenWork: (code: string) => void | Promise<void>;
+  onBrowse?: (installationId: string) => void;
 }
 
 interface ShelfDefinition {
@@ -56,8 +63,26 @@ export function LibraryShelves({
   inLens,
   blockedExecutableInstallations,
   onActivate,
+  onManage,
+  onOpenWork,
+  onBrowse,
 }: LibraryShelvesProps) {
   const { locale, t } = usePresentation();
+  const withMenu = (installation: Installation, key: string, card: ReactNode) => {
+    const work = workForInstallation(installation, workByCode);
+    return (
+      <div className="library-shelf-item" key={key}>
+        {card}
+        <LibraryWorkMenu
+          className="library-shelf-item-menu"
+          title={libraryDisplayTitle(installation, work, locale !== "ja-JP")}
+          onOpenWork={work ? () => void onOpenWork(work.code) : undefined}
+          onManage={(tab) => onManage(installation.id, tab)}
+          onBrowse={onBrowse ? () => onBrowse(installation.id) : undefined}
+        />
+      </div>
+    );
+  };
   const installations = new Map(shelves.installations.map((installation) => [installation.id, installation]));
   const recent = shelves.recent.flatMap((activity) => {
     const installation = installations.get(activity.installationId);
@@ -76,17 +101,16 @@ export function LibraryShelves({
       title: "library.shelf.recent",
       help: "library.shelf.recentHelp",
       icon: History,
-      content: recent.map(({ activity, installation }) => (
+      content: recent.map(({ activity, installation }) => withMenu(installation, installation.id, (
         <RecentShelfCard
           activity={activity}
           installation={installation}
           work={workForInstallation(installation, workByCode)}
           locale={locale}
           disabled={blockedExecutableInstallations.has(installation.id)}
-          key={installation.id}
           onOpen={() => onActivate(installation.id, activity.action)}
         />
-      )),
+      ))),
     },
     {
       key: "never-launched",
@@ -98,16 +122,15 @@ export function LibraryShelves({
           installation,
           preparedByInstallation.get(installation.id),
         );
-        return (
+        return withMenu(installation, installation.id, (
           <NeverLaunchedShelfCard
             installation={installation}
             action={action}
             work={workForInstallation(installation, workByCode)}
             disabled={blockedExecutableInstallations.has(installation.id)}
-            key={installation.id}
             onOpen={() => onActivate(installation.id, action)}
           />
-        );
+        ));
       }),
     },
     {
@@ -115,15 +138,14 @@ export function LibraryShelves({
       title: "library.shelf.unfinished",
       help: "library.shelf.unfinishedHelp",
       icon: CircleDashed,
-      content: unfinished.map(({ resume, installation }) => (
+      content: unfinished.map(({ resume, installation }) => withMenu(installation, `${installation.id}:${resume.action}`, (
         <ResumeShelfCard
           installation={installation}
           resume={resume}
           work={workForInstallation(installation, workByCode)}
-          key={`${installation.id}:${resume.action}`}
           onOpen={() => onActivate(installation.id, resume.action)}
         />
-      )),
+      ))),
     },
   ];
 
@@ -193,7 +215,7 @@ function RecentShelfCard({
       <strong>{title}</strong>
       <code>{creator}</code>
       <span className="library-shelf-card-footer">
-        <time dateTime={activity.occurredAt}>{formatShelfDate(activity.occurredAt, locale)}</time>
+        <time dateTime={activity.occurredAt}>{formatDateTime(activity.occurredAt, locale)}</time>
         <ArrowRight aria-hidden="true" />
       </span>
     </button>
@@ -263,13 +285,13 @@ function NeverLaunchedShelfCard({
         <span className="library-shelf-card-kicker">{t("library.shelf.ready")}</span>
       </span>
       <strong>{title}</strong>
-      <code title={installation.rootPath}>{creator}</code>
+      <code title={displayPath(installationFolder(installation))}>{creator}</code>
       <span className="library-shelf-card-footer">
         <span>{t(action === "launch_executable"
           ? "detail.play"
           : action
             ? mediaActionMessageKey(action)
-            : "library.shelf.review")}</span>
+            : "library.setUp")}</span>
         <ArrowRight aria-hidden="true" />
       </span>
     </button>
@@ -297,12 +319,6 @@ function resolveResumes(
 export function shelfResumePercent(resume: MediaResume): number | null {
   if (resume.durationMs === null || resume.durationMs <= 0) return null;
   return Math.round(Math.max(0, Math.min(100, (resume.positionMs / resume.durationMs) * 100)));
-}
-
-export function formatShelfDate(value: string, locale: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(date);
 }
 
 function formatResumePosition(

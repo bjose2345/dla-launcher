@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import type { CatalogWork } from "./types";
-import { ageRatingLabel, dlsiteWorkUrl, heroImageUrls, sampleImageChains } from "./workDetail";
+import type { CatalogRom, CatalogWork } from "./types";
+import {
+  ageRatingLabel,
+  archiveTotals,
+  dlsiteWorkUrl,
+  formatArchiveSize,
+  heroImageUrls,
+  sampleImageChains,
+} from "./workDetail";
 
 const work: CatalogWork = {
   code: "RJ01234567",
@@ -77,5 +84,34 @@ describe("work detail presentation", () => {
     expect(dlsiteWorkUrl({ ...work, code: "BJ123", sourceCode: "other" })).toBeNull();
     expect(dlsiteWorkUrl({ ...work, synthetic: true })).toBeNull();
     expect(dlsiteWorkUrl({ ...work, sourceCode: "DL", code: "BJ123" })).toBe("https://www.dlsite.com/books/work/=/product_id/BJ123.html");
+  });
+});
+
+describe("work data panel", () => {
+  const rom = (size: string, updateDate: string, version: string): CatalogRom => ({
+    name: "archive",
+    size,
+    crc: "",
+    md5: "",
+    sha1: "",
+    sha256: "",
+    fileCount: null,
+    updateDate,
+    version,
+  });
+
+  it("adds every archive and counts the releases they form", () => {
+    expect(archiveTotals([
+      rom("300000000", "2026-09-16", "1.1"),
+      rom("118000000", "2026-09-16", "1.1"),
+      rom("410000000", "2026-09-04", ""),
+    ])).toEqual({ bytes: 828000000, versions: 2 });
+    expect(archiveTotals([])).toEqual({ bytes: 0, versions: 0 });
+  });
+
+  it("shows sizes in short decimal units", () => {
+    expect(formatArchiveSize(418_000_000, "en-US")).toBe("418 MB");
+    expect(formatArchiveSize(1_974_776_145, "en-US")).toBe("2 GB");
+    expect(formatArchiveSize(512, "en-US")).toBe("512 B");
   });
 });

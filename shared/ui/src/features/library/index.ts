@@ -4,7 +4,8 @@ export { ImageReaderProvider, useImageReader } from "./ImageReaderProvider";
 export { ReaderOverlay } from "./ReaderOverlay";
 export { MediaPlaybackProvider, useMediaPlayback } from "./MediaPlaybackProvider";
 export { LibraryPage } from "./LibraryPage";
-export { LibraryReviewPage } from "./LibraryReviewPage";
+export { LibraryManageDrawer } from "./LibraryManageDrawer";
+export { manageTabs, type ManageTab } from "./types";
 export { MediaSessionPage } from "./MediaSessionPage";
 export { LaunchActivityList, formatDuration, launchStatusLabel } from "./LaunchHistory";
 export type {

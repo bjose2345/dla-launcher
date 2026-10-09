@@ -34,7 +34,13 @@ pub fn respond(app: &AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u8>> 
 }
 
 pub fn respond_video_document(app: &AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
-    match video_document_response(app, &request) {
+    // A text track is fetched in same-origin mode, so on platforms where the
+    // schemes map to distinct http origins the document serves its own tracks.
+    let result = match video_subtitle_locator(request.uri().path()) {
+        Some(locator) => subtitle_response_for(app, &request, locator),
+        None => video_document_response(app, &request),
+    };
+    match result {
         Ok(response) => response,
         Err(error) => error_response(error),
     }
@@ -217,7 +223,7 @@ fn video_document_response(
     let builder = Response::builder()
         .header(CONTENT_TYPE, "text/html; charset=utf-8")
         .header(CACHE_CONTROL, "private, no-store")
-        .header("Content-Security-Policy", "default-src 'none'; media-src file: dla-media: http://dla-media.localhost dla-subtitle: http://dla-subtitle.localhost; img-src https: http: data:; style-src 'unsafe-inline'; script-src 'unsafe-inline';")
+        .header("Content-Security-Policy", "default-src 'none'; media-src file: dla-media: http://dla-media.localhost dla-subtitle: http://dla-subtitle.localhost dla-video: http://dla-video.localhost; img-src https: http: data:; style-src 'unsafe-inline'; script-src 'unsafe-inline';")
         .header("X-Content-Type-Options", "nosniff")
         .header("Referrer-Policy", "no-referrer")
         .header(CONTENT_LENGTH, body.len());
@@ -231,10 +237,18 @@ fn subtitle_response(
     app: &AppHandle,
     request: &Request<Vec<u8>>,
 ) -> Result<Response<Vec<u8>>, ProtocolError> {
+    let locator = parse_subtitle_locator(request.uri().path())?;
+    subtitle_response_for(app, request, locator)
+}
+
+fn subtitle_response_for(
+    app: &AppHandle,
+    request: &Request<Vec<u8>>,
+    (session_id, ordinal, track_index): (MediaSessionId, u32, u32),
+) -> Result<Response<Vec<u8>>, ProtocolError> {
     if !matches!(*request.method(), Method::GET | Method::HEAD) {
         return Err(ProtocolError::MethodNotAllowed);
     }
-    let (session_id, ordinal, track_index) = parse_subtitle_locator(request.uri().path())?;
     let asset = resolve_video_asset(app, &session_id, ordinal)?;
     let track = find_sidecar_subtitles(&asset.path)
         .into_iter()
@@ -305,10 +319,12 @@ fn video_source_url(
     Ok(format!("dla-media://localhost/{}/{ordinal}", session_id.0))
 }
 
+// WebView2 gives every scheme its own http origin and loads a text track in
+// same-origin mode, so the track must come from the video document's origin.
 #[cfg(target_os = "windows")]
 fn subtitle_source_url(session_id: &MediaSessionId, ordinal: u32, track_index: u32) -> String {
     format!(
-        "http://dla-subtitle.localhost/{}/{ordinal}/{track_index}",
+        "http://dla-video.localhost/{}/{ordinal}/subtitle/{track_index}",
         session_id.0
     )
 }
@@ -644,6 +660,22 @@ fn parse_locator(path: &str) -> Result<(MediaSessionId, u32), ProtocolError> {
     }
 }
 
+/// `/<session>/<ordinal>/subtitle/<track>` on the video document's own origin.
+fn video_subtitle_locator(path: &str) -> Option<(MediaSessionId, u32, u32)> {
+    let decoded = percent_decode_str(path).decode_utf8().ok()?;
+    let segments = decoded.trim_matches('/').split('/').collect::<Vec<_>>();
+    match segments.as_slice() {
+        [session_id, ordinal, "subtitle", track_index] if session_id.starts_with("media-") => {
+            Some((
+                MediaSessionId((*session_id).to_owned()),
+                ordinal.parse().ok()?,
+                track_index.parse().ok()?,
+            ))
+        }
+        _ => None,
+    }
+}
+
 fn parse_subtitle_locator(path: &str) -> Result<(MediaSessionId, u32, u32), ProtocolError> {
     let decoded = percent_decode_str(path)
         .decode_utf8()
@@ -885,6 +917,21 @@ fn error_response(error: ProtocolError) -> Response<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn video_document_serves_its_own_subtitle_tracks() {
+        assert_eq!(
+            video_subtitle_locator("/media-123/4/subtitle/1"),
+            Some((MediaSessionId("media-123".to_owned()), 4, 1))
+        );
+        assert_eq!(video_subtitle_locator("/media-123/4"), None);
+        assert_eq!(video_subtitle_locator("/media-123/4/subtitle"), None);
+        assert_eq!(video_subtitle_locator("/private/4/subtitle/1"), None);
+        assert_eq!(
+            video_subtitle_locator("/media-123/4/subtitle/1/extra"),
+            None
+        );
+    }
 
     #[test]
     fn locator_accepts_only_opaque_session_and_ordinal() {

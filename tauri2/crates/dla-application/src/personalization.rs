@@ -750,6 +750,7 @@ mod tests {
             }],
             tags: Vec::new(),
             synthetic: false,
+            latest_update: None,
         }
     }
 

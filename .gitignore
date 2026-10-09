@@ -26,3 +26,9 @@ Thumbs.db
 # Native signing credentials and generated release artifacts stay local.
 tauri2/src-tauri/gen/android/keystore.properties
 tauri2/release-artifacts/
+
+# The launcher access token for local builds (see docs/BUILDING.md).
+/state/
+# The bundled cloudflared and 7-Zip binaries; fetch them with the scripts in
+# tauri2/scripts.
+tauri2/src-tauri/binaries/

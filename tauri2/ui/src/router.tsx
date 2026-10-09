@@ -1,5 +1,3 @@
-import { AboutPage } from "@dla-launcher/shared-ui/about";
-import { AndroidPackagePage } from "@dla-launcher/shared-ui/android-package";
 import {
   AppShell,
   type AppShellNavItem,
@@ -11,28 +9,24 @@ import {
   defaultCatalogRouteState,
   parseCatalogSearch,
 } from "@dla-launcher/shared-ui/catalog";
-import { CatalogImportPage } from "@dla-launcher/shared-ui/importer";
+import { DeliveryActivity } from "@dla-launcher/shared-ui/delivery/shell";
 import {
   ActiveLaunchPill,
-  LibraryPage,
   MediaDock,
   ReaderOverlay,
-  LibraryReviewPage,
-  MediaSessionPage,
-} from "@dla-launcher/shared-ui/library";
-import {
-  SettingsPage,
-  parseSettingsSearch,
-  usePresentation,
-} from "@dla-launcher/shared-ui/preferences";
-import { ScannerPage } from "@dla-launcher/shared-ui/scanner";
-import { SupportPage, SupportRecoveryNotice } from "@dla-launcher/shared-ui/support";
-import { lazy, Suspense, useCallback } from "react";
+  manageTabs,
+  type ManageTab,
+} from "@dla-launcher/shared-ui/library/shell";
+import { parseSettingsSearch, usePresentation } from "@dla-launcher/shared-ui/preferences/shell";
+import { ScanInstallActivity } from "@dla-launcher/shared-ui/scanner/shell";
+import { SupportRecoveryNotice } from "@dla-launcher/shared-ui/support/shell";
+import { lazy, Suspense, useCallback, type ReactNode } from "react";
 import {
   createRootRoute,
   createRoute,
   createRouter,
   redirect,
+  useMatch,
   useNavigate,
 } from "@tanstack/react-router";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -43,15 +37,46 @@ import {
   tauriAndroidPackageGateway,
 } from "./gateways/tauriAndroidPackageGateway";
 import { tauriCoverCacheGateway } from "./gateways/tauriCoverCacheGateway";
-import { tauriSystemGateway } from "./gateways/tauriSystemGateway";
+import { tauriDeliveryGateway } from "./gateways/tauriDeliveryGateway";
 import { tauriCatalogImportGateway } from "./gateways/tauriCatalogImportGateway";
 import { tauriSearchGateway } from "./gateways/tauriSearchGateway";
 import { tauriScannerGateway } from "./gateways/tauriScannerGateway";
 import { tauriLibraryGateway } from "./gateways/tauriLibraryGateway";
 import { tauriSupportGateway } from "./gateways/tauriSupportGateway";
+import { tauriSystemGateway } from "./gateways/tauriSystemGateway";
+import { includedSoftware } from "./includedSoftware";
 
+// The catalog is the default route and stays in the startup chunk; every other
+// page loads when it is first opened.
 const WorkDetailPage = lazy(() =>
   import("@dla-launcher/shared-ui/catalog/detail").then((module) => ({ default: module.WorkDetailPage })),
+);
+const AboutPage = lazy(() =>
+  import("@dla-launcher/shared-ui/about").then((module) => ({ default: module.AboutPage })),
+);
+const AndroidPackagePage = lazy(() =>
+  import("@dla-launcher/shared-ui/android-package").then((module) => ({ default: module.AndroidPackagePage })),
+);
+const CatalogImportPage = lazy(() =>
+  import("@dla-launcher/shared-ui/importer").then((module) => ({ default: module.CatalogImportPage })),
+);
+const DownloadsPage = lazy(() =>
+  import("@dla-launcher/shared-ui/delivery").then((module) => ({ default: module.DownloadsPage })),
+);
+const LibraryPage = lazy(() =>
+  import("@dla-launcher/shared-ui/library/page").then((module) => ({ default: module.LibraryPage })),
+);
+const MediaSessionPage = lazy(() =>
+  import("@dla-launcher/shared-ui/library/media").then((module) => ({ default: module.MediaSessionPage })),
+);
+const ScannerPage = lazy(() =>
+  import("@dla-launcher/shared-ui/scanner").then((module) => ({ default: module.ScannerPage })),
+);
+const SettingsPage = lazy(() =>
+  import("@dla-launcher/shared-ui/preferences").then((module) => ({ default: module.SettingsPage })),
+);
+const SupportPage = lazy(() =>
+  import("@dla-launcher/shared-ui/support").then((module) => ({ default: module.SupportPage })),
 );
 
 const rootRoute = createRootRoute({
@@ -73,12 +98,15 @@ const aboutRoute = createRoute({
 
 function AboutRoute() {
   return (
-    <AboutPage
-      systemGateway={tauriSystemGateway}
-      windowGateway={tauriSystemGateway}
-      onOpenProject={() => tauriSupportGateway.openProject()}
-      version={`v${__DLA_LAUNCHER_VERSION__}`}
-    />
+    <LazyRoute>
+      <AboutPage
+        systemGateway={tauriSystemGateway}
+        windowGateway={tauriSystemGateway}
+        onOpenProject={() => tauriSupportGateway.openProject()}
+        version={`v${__DLA_LAUNCHER_VERSION__}`}
+        includedSoftware={__DLA_TARGET_PLATFORM__ === "android" ? [] : includedSoftware}
+      />
+    </LazyRoute>
   );
 }
 
@@ -96,22 +124,28 @@ function SettingsRoute() {
   const { tab } = settingsRoute.useSearch();
   const navigate = settingsRoute.useNavigate();
   return (
-    <SettingsPage
-      workPreferenceGateway={tauriLibraryGateway}
-      coverCacheGateway={tauriCoverCacheGateway}
-      scannerRootGateway={tauriScannerGateway}
-      windowGateway={tauriSystemGateway}
-      tab={tab}
-      onOpenWork={(code) => navigate({ to: "/works/$code", params: { code } })}
-      onTabChange={(next) => navigate({ search: { tab: next } })}
-    />
+    <LazyRoute>
+      <SettingsPage
+        workPreferenceGateway={tauriLibraryGateway}
+        coverCacheGateway={tauriCoverCacheGateway}
+        scannerRootGateway={tauriScannerGateway}
+        windowGateway={tauriSystemGateway}
+        tab={tab}
+        onOpenWork={(code) => navigate({ to: "/works/$code", params: { code } })}
+        onTabChange={(next) => navigate({ search: { tab: next } })}
+      />
+    </LazyRoute>
   );
 }
 
 const supportRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/support",
-  component: () => <SupportPage gateway={tauriSupportGateway} />,
+  component: () => (
+    <LazyRoute>
+      <SupportPage gateway={tauriSupportGateway} />
+    </LazyRoute>
+  ),
 });
 
 const scannerRoute = createRoute({
@@ -123,16 +157,19 @@ const scannerRoute = createRoute({
 const libraryRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/library",
+  validateSearch: (search: Record<string, unknown>): { show?: string } => ({
+    show: typeof search.show === "string" && search.show.length <= 512 ? search.show : undefined,
+  }),
   component: LibraryRoute,
 });
 
-const libraryReviewRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/library/$installationId",
-  validateSearch: (search: Record<string, unknown>) => ({
+const libraryManageRoute = createRoute({
+  getParentRoute: () => libraryRoute,
+  path: "$installationId",
+  validateSearch: (search: Record<string, unknown>): { intent?: "install"; tab?: ManageTab } => ({
     intent: search.intent === "install" ? "install" as const : undefined,
+    tab: manageTabs.find((tab) => tab === search.tab),
   }),
-  component: LibraryReviewRoute,
 });
 
 const libraryMediaRoute = createRoute({
@@ -158,6 +195,30 @@ const androidPackageRoute = createRoute({
   component: AndroidPackageRoute,
 });
 
+// Install from DLA is offered on the desktop builds only.
+const deliveryGateway = __DLA_TARGET_PLATFORM__ === "android" ? undefined : tauriDeliveryGateway;
+
+const downloadsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/downloads",
+  component: DownloadsRoute,
+});
+
+function DownloadsRoute() {
+  const navigate = useNavigate();
+  return (
+    <LazyRoute>
+      <DownloadsPage
+        gateway={tauriDeliveryGateway}
+        catalogGateway={tauriCatalogGateway}
+        onOpenWork={(code) => navigate({ to: "/works/$code", params: { code } })}
+        onOpenInstallation={(installationId) => navigate({ to: "/library", search: { show: installationId } })}
+        onOpenExternal={openUrl}
+      />
+    </LazyRoute>
+  );
+}
+
 const workRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/works/$code",
@@ -167,11 +228,11 @@ const workRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   catalogRoute,
   scannerRoute,
-  libraryRoute,
-  libraryReviewRoute,
+  libraryRoute.addChildren([libraryManageRoute]),
   libraryMediaRoute,
   importRoute,
   androidPackageRoute,
+  ...(deliveryGateway ? [downloadsRoute] : []),
   settingsRoute,
   supportRoute,
   aboutRoute,
@@ -220,6 +281,25 @@ function RootRoute() {
         />
       )}
       readerOverlay={<ReaderOverlay gateway={tauriLibraryGateway} />}
+      sidebarActivity={(
+        <>
+          {deliveryGateway ? (
+            <DeliveryActivity
+              gateway={deliveryGateway}
+              catalogGateway={tauriCatalogGateway}
+              onOpenDownloads={() => navigate({ to: "/downloads" })}
+              onOpenInstallation={(installationId) => navigate({ to: "/library", search: { show: installationId } })}
+            />
+          ) : null}
+          <ScanInstallActivity
+            gateway={tauriScannerGateway}
+            progressGateway={tauriLibraryGateway}
+            catalogGateway={tauriCatalogGateway}
+            onOpenScanner={() => navigate({ to: "/scanner" })}
+            onShowInLibrary={(installationId) => navigate({ to: "/library", search: { show: installationId } })}
+          />
+        </>
+      )}
       onOpenSettings={() => navigate({ to: "/settings", search: { tab: "general" } })}
       search={{
         gateway: tauriSearchGateway,
@@ -243,6 +323,9 @@ function launcherNavigation(
     { to: "/library", label: t("nav.library"), icon: "library" },
     { to: "/scanner", label: t("nav.scanner"), icon: "scanner" },
     { to: "/import", label: t("nav.import"), icon: "import" },
+    ...(deliveryGateway
+      ? [{ to: "/downloads", label: t("nav.downloads"), icon: "downloads" } satisfies AppShellNavItem]
+      : []),
     { to: "/settings", label: t("nav.settings"), icon: "settings", group: "secondary" },
     { to: "/support", label: t("nav.support"), icon: "support", group: "secondary" },
     { to: "/about", label: t("nav.about"), icon: "about", group: "secondary" },
@@ -260,45 +343,61 @@ function launcherNavigation(
 function ScannerRoute() {
   const navigate = scannerRoute.useNavigate();
   return (
-    <ScannerPage
-      gateway={tauriScannerGateway}
-      onReviewInstallation={(installationId) =>
-        navigate({
-          to: "/library/$installationId",
-          params: { installationId },
-          search: { intent: undefined },
-        })
-      }
-    />
+    <LazyRoute>
+      <ScannerPage
+        gateway={tauriScannerGateway}
+        libraryGateway={tauriLibraryGateway}
+        catalogGateway={tauriCatalogGateway}
+        searchGateway={tauriSearchGateway}
+        onShowInLibrary={(installationId) => navigate({ to: "/library", search: { show: installationId } })}
+        onOpenLibrary={() => navigate({ to: "/library", search: {} })}
+        onOpenWork={(code) => navigate({ to: "/works/$code", params: { code } })}
+      />
+    </LazyRoute>
   );
 }
 
+// The Manage panel opens over the Library, which keeps its lens and view.
 function LibraryRoute() {
-  const navigate = libraryRoute.useNavigate();
+  const navigate = useNavigate();
+  const { show } = libraryRoute.useSearch();
+  const manage = useMatch({ from: "/library/$installationId", shouldThrow: false });
   return (
-    <LibraryPage
-      gateway={tauriLibraryGateway}
-      androidAppGateway={__DLA_TARGET_PLATFORM__ === "android" ? tauriAndroidAppGateway : undefined}
-      catalogGateway={tauriCatalogGateway}
-      onOpenReview={(installationId) =>
-        navigate({
-          to: "/library/$installationId",
-          params: { installationId },
-          search: { intent: undefined },
-        })
-      }
-      onOpenMedia={(installationId) =>
-        navigate({
-          to: "/library/$installationId/media",
-          params: { installationId },
-        })
-      }
-      onOpenWork={(code) => navigate({ to: "/works/$code", params: { code } })}
-      onReinstallAndroidApp={(work) => navigate({
-        to: "/android-packages",
-        search: { work },
-      })}
-    />
+    <LazyRoute>
+      <LibraryPage
+        gateway={tauriLibraryGateway}
+        androidAppGateway={__DLA_TARGET_PLATFORM__ === "android" ? tauriAndroidAppGateway : undefined}
+        catalogGateway={tauriCatalogGateway}
+        searchGateway={tauriSearchGateway}
+        installs={__DLA_TARGET_PLATFORM__ === "android" ? undefined : tauriScannerGateway}
+        manage={manage
+          ? {
+            installationId: manage.params.installationId,
+            tab: manage.search.tab ?? (manage.search.intent === "install" ? "files" : undefined),
+          }
+          : undefined}
+        spotlight={show}
+        onCloseManage={() => navigate({ to: "/library", search: { show } })}
+        onManage={(installationId, tab) =>
+          navigate({
+            to: "/library/$installationId",
+            params: { installationId },
+            search: { show, tab },
+          })
+        }
+        onOpenMedia={(installationId) =>
+          navigate({
+            to: "/library/$installationId/media",
+            params: { installationId },
+          })
+        }
+        onOpenWork={(code) => navigate({ to: "/works/$code", params: { code } })}
+        onReinstallAndroidApp={(work) => navigate({
+          to: "/android-packages",
+          search: { work },
+        })}
+      />
+    </LazyRoute>
   );
 }
 
@@ -306,37 +405,26 @@ function AndroidPackageRoute() {
   const { work } = androidPackageRoute.useSearch();
   const navigate = androidPackageRoute.useNavigate();
   return (
-    <AndroidPackagePage
-      gateway={tauriAndroidPackageGateway}
-      associationGateway={tauriAndroidAppGateway}
-      workCode={work}
-      onOpenLibrary={() => navigate({ to: "/library" })}
-    />
+    <LazyRoute>
+      <AndroidPackagePage
+        gateway={tauriAndroidPackageGateway}
+        associationGateway={tauriAndroidAppGateway}
+        workCode={work}
+        onOpenLibrary={() => navigate({ to: "/library" })}
+      />
+    </LazyRoute>
   );
 }
 
 function ImportRoute() {
   const navigate = importRoute.useNavigate();
   return (
-    <CatalogImportPage
-      gateway={tauriCatalogImportGateway}
-      onOpenCatalog={() => navigate({ to: "/", search: catalogRouteSearch(defaultCatalogRouteState) })}
-    />
-  );
-}
-
-function LibraryReviewRoute() {
-  const { installationId } = libraryReviewRoute.useParams();
-  const { intent } = libraryReviewRoute.useSearch();
-  const navigate = libraryReviewRoute.useNavigate();
-  return (
-    <LibraryReviewPage
-      installationId={installationId}
-      gateway={tauriLibraryGateway}
-      onBack={() => navigate({ to: "/library" })}
-      onOpenWork={(code) => navigate({ to: "/works/$code", params: { code } })}
-      focusPreparation={intent === "install"}
-    />
+    <LazyRoute>
+      <CatalogImportPage
+        gateway={tauriCatalogImportGateway}
+        onOpenCatalog={() => navigate({ to: "/", search: catalogRouteSearch(defaultCatalogRouteState) })}
+      />
+    </LazyRoute>
   );
 }
 
@@ -344,12 +432,14 @@ function LibraryMediaRoute() {
   const { installationId } = libraryMediaRoute.useParams();
   const navigate = libraryMediaRoute.useNavigate();
   return (
-    <MediaSessionPage
-      installationId={installationId}
-      gateway={tauriLibraryGateway}
-      catalogGateway={tauriCatalogGateway}
-      onBack={() => navigate({ to: "/library" })}
-    />
+    <LazyRoute>
+      <MediaSessionPage
+        installationId={installationId}
+        gateway={tauriLibraryGateway}
+        catalogGateway={tauriCatalogGateway}
+        onBack={() => navigate({ to: "/library" })}
+      />
+    </LazyRoute>
   );
 }
 
@@ -357,7 +447,7 @@ function CatalogRoute() {
   const filters = catalogRoute.useSearch();
   const navigate = catalogRoute.useNavigate();
   const updateRoute = useCallback((
-    change: Partial<Pick<typeof filters, "sort" | "timeline" | "month" | "page">>,
+    change: Partial<Pick<typeof filters, "sort" | "timeline" | "month" | "page" | "day">>,
     replace = false,
   ) => {
     if (readOnlyDeepLinkNavigationPending || router.history.location.pathname !== "/") return;
@@ -380,13 +470,14 @@ function CatalogRoute() {
 function WorkRoute() {
   const { code } = workRoute.useParams();
   const navigate = workRoute.useNavigate();
+  const { t } = usePresentation();
   const back = () => {
     if (window.history.length > 1) window.history.back();
     else void navigate({ to: "/", search: catalogRouteSearch(defaultCatalogRouteState) });
   };
 
   return (
-    <Suspense fallback={<DetailModuleLoading />}>
+    <Suspense fallback={<ModuleLoading label={t("detail.routeLoading")} />}>
       <WorkDetailPage
         code={code}
         gateway={tauriCatalogGateway}
@@ -406,6 +497,7 @@ function WorkRoute() {
           to: "/library/$installationId/media",
           params: { installationId },
         })}
+        deliveryGateway={deliveryGateway}
         onInstallAndroidApp={__DLA_TARGET_PLATFORM__ === "android"
           ? (work) => navigate({ to: "/android-packages", search: { work } })
           : undefined}
@@ -415,12 +507,16 @@ function WorkRoute() {
   );
 }
 
-function DetailModuleLoading() {
+function LazyRoute({ children }: { children: ReactNode }) {
   const { t } = usePresentation();
+  return <Suspense fallback={<ModuleLoading label={t("app.routeLoading")} />}>{children}</Suspense>;
+}
+
+function ModuleLoading({ label }: { label: string }) {
   return (
-    <main className="work-detail-loading" aria-live="polite" aria-label={t("detail.routeLoading")}>
+    <main className="work-detail-loading" aria-live="polite" aria-label={label}>
       <div className="work-detail-loading-layout"><span /><span /></div>
-      <div className="route-loading-overlay"><i /><strong>{t("detail.routeLoading")}</strong></div>
+      <div className="route-loading-overlay"><i /><strong>{label}</strong></div>
     </main>
   );
 }

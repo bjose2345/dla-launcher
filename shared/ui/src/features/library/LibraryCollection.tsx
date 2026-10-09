@@ -1,17 +1,19 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowRight, ListChecks, Play } from "lucide-react";
-import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { ListChecks, Play } from "lucide-react";
+import { memo, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 
 import type { CatalogWork } from "../catalog";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import type { MessageKey } from "../../i18n/catalogs";
 import { LibraryArtwork } from "./LibraryArtwork";
+import type { ManageTab } from "./LibraryManageDrawer";
 import {
   libraryContentKind,
+  libraryContentKindLabel,
   libraryDisplayCreator,
   libraryDisplayTitle,
-  type LibraryContentKind,
 } from "./libraryHome";
+import { LibraryWorkMenu } from "./LibraryWorkMenu";
 import { mediaActionMessageKey } from "./mediaSession";
 import {
   launchActivityIsActive,
@@ -34,6 +36,8 @@ export interface LibraryCollectionEntry {
   resume: MediaResume | null;
   latestLaunch: Pick<LaunchActivity, "status"> | null;
   launchTotals: LibraryLaunchTotals | null;
+  /** Installed files, or the scanned files of a work that was not unpacked. */
+  fileCount: number;
   health: InstallationHealthReport | null;
 }
 
@@ -41,14 +45,16 @@ export function LibraryCollection({
   entries,
   activatingInstallationId,
   onActivate,
-  onOpenReview,
+  onManage,
   onOpenWork,
+  onBrowse,
 }: {
   entries: LibraryCollectionEntry[];
   activatingInstallationId: string | null;
   onActivate: (entry: LibraryCollectionEntry) => void;
-  onOpenReview: (installationId: string) => void | Promise<void>;
+  onManage: (installationId: string, tab: ManageTab) => void | Promise<void>;
   onOpenWork: (code: string) => void | Promise<void>;
+  onBrowse?: (installationId: string) => void;
 }) {
   const { t } = usePresentation();
   const gridRef = useRef<HTMLDivElement>(null);
@@ -122,9 +128,10 @@ export function LibraryCollection({
                   <LibraryCollectionCard
                     entry={entry}
                     busy={activatingInstallationId === entry.installation.id}
-                    onActivate={() => onActivate(entry)}
-                    onOpenReview={() => void onOpenReview(entry.installation.id)}
-                    onOpenWork={entry.work ? () => void onOpenWork(entry.work!.code) : undefined}
+                    onActivate={onActivate}
+                    onManage={onManage}
+                    onOpenWork={onOpenWork}
+                    onBrowse={onBrowse}
                     key={entry.installation.id}
                   />
                 ))}
@@ -146,22 +153,30 @@ export function libraryGridColumnCount(width: number): number {
   return Math.max(1, Math.floor((width + 16) / 226));
 }
 
-function LibraryCollectionCard({
+// Virtual rows re-render on every scroll tick; the card builds its own
+// handlers so unchanged entries are skipped.
+const LibraryCollectionCard = memo(function LibraryCollectionCard({
   entry,
   busy,
-  onActivate,
-  onOpenReview,
-  onOpenWork,
+  onActivate: activateEntry,
+  onManage: manageInstallation,
+  onOpenWork: openWorkCode,
+  onBrowse: browseInstallation,
 }: {
   entry: LibraryCollectionEntry;
   busy: boolean;
-  onActivate: () => void;
-  onOpenReview: () => void;
-  onOpenWork?: () => void;
+  onActivate: (entry: LibraryCollectionEntry) => void;
+  onManage: (installationId: string, tab: ManageTab) => void | Promise<void>;
+  onOpenWork: (code: string) => void | Promise<void>;
+  onBrowse?: (installationId: string) => void;
 }) {
   const { locale, showPlayTime, t } = usePresentation();
   const preferEnglish = locale !== "ja-JP";
   const { action, installation, work, resume } = entry;
+  const onActivate = () => activateEntry(entry);
+  const onManage = (tab: ManageTab) => void manageInstallation(installation.id, tab);
+  const onOpenWork = work ? () => void openWorkCode(work.code) : undefined;
+  const onBrowse = browseInstallation ? () => browseInstallation(installation.id) : undefined;
   const title = libraryDisplayTitle(installation, work, preferEnglish);
   const creator = libraryDisplayCreator(installation, work, preferEnglish);
   const kind = libraryContentKind(installation, action);
@@ -172,7 +187,7 @@ function LibraryCollectionCard({
     ? t(mediaActionMessageKey(action))
     : action === "launch_executable"
       ? t("detail.play")
-      : t("library.review");
+      : t("library.setUp");
   const openPrimary = onOpenWork ?? onActivate;
 
   return (
@@ -180,7 +195,7 @@ function LibraryCollectionCard({
       <button className="library-collection-cover cover-hover-trigger" type="button" onClick={openPrimary}>
         <LibraryArtwork kind={kind} title={title} work={work} />
         <span className="library-collection-shade" aria-hidden="true" />
-        <span className="library-collection-kind">{contentKindLabel(kind, t)}</span>
+        <span className="library-collection-kind">{libraryContentKindLabel(kind, t)}</span>
         <CollectionStateChip entry={entry} />
         <span className="library-collection-play" aria-hidden="true"><Play fill="currentColor" /></span>
         <NowPlayingBars installationId={installation.id} alwaysVisible={kind === "audio"} />
@@ -206,18 +221,17 @@ function LibraryCollectionCard({
                 ? t("library.home.resume")
                 : activateLabel}
         </button>
-        <button className="library-collection-manage" type="button" title={t("library.home.manage")} onClick={onOpenReview}>
-          <ListChecks aria-hidden="true" /><span>{t("library.home.manage")}</span>
-        </button>
-        {onOpenWork ? (
-          <button className="library-collection-details" type="button" title={t("library.home.details")} onClick={onOpenWork}>
-            <ArrowRight aria-hidden="true" /><span>{t("library.home.details")}</span>
-          </button>
-        ) : null}
+        <LibraryWorkMenu
+          className="library-collection-menu"
+          title={title}
+          onOpenWork={onOpenWork}
+          onManage={onManage}
+          onBrowse={onBrowse}
+        />
       </footer>
     </article>
   );
-}
+});
 
 function CollectionStateChip({ entry }: { entry: LibraryCollectionEntry }) {
   const { t } = usePresentation();
@@ -256,20 +270,6 @@ export function collectionState(entry: LibraryCollectionEntry): CollectionState 
   if (entry.installation.status === "needs_review") return "review";
   if (!entry.resume && !entry.latestLaunch) return "new";
   return null;
-}
-
-function contentKindLabel(
-  kind: LibraryContentKind,
-  t: ReturnType<typeof usePresentation>["t"],
-): string {
-  switch (kind) {
-    case "audio": return t("library.home.filterAudio");
-    case "images": return t("library.home.filterImages");
-    case "video": return t("library.home.filterVideo");
-    case "documents": return t("library.home.filterDocuments");
-    case "apps": return t("library.home.filterApps");
-    default: return t("domain.media.unknown");
-  }
 }
 
 function resumePercent(resume: MediaResume | null): number | null {

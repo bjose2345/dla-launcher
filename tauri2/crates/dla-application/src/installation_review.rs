@@ -235,6 +235,7 @@ mod tests {
             categories: Vec::new(),
             tags: Vec::new(),
             synthetic: true,
+            latest_update: None,
         }
     }
 

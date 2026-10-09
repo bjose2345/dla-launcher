@@ -798,7 +798,9 @@ fn detect_media_type(bytes: &[u8]) -> Option<CatalogArtworkMediaType> {
     if bytes.len() >= 12
         && &bytes[4..8] == b"ftyp"
         && bytes[8..bytes.len().min(32)]
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|brand| brand == b"avif" || brand == b"avis")
     {
         return Some(CatalogArtworkMediaType::Avif);

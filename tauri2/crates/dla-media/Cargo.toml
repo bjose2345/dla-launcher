@@ -11,7 +11,7 @@ dla-detection.workspace = true
 dla-domain.workspace = true
 encoding_rs.workspace = true
 hex.workspace = true
-log = "=0.4.33"
+log = "=0.4.34"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

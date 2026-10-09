@@ -7,12 +7,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { KeyBindingsProvider } from "./KeyBindingsProvider";
 import { PresentationProvider } from "./PresentationProvider";
 import {
-  SettingsPage,
   parseSettingsSearch,
   parseSettingsTab,
   type SettingsTab,
-  type WorkPreferenceGateway,
-} from "./SettingsPage";
+} from "./settingsRoute";
+import { SettingsPage, type WorkPreferenceGateway } from "./SettingsPage";
 import type { WindowGateway, WindowMetrics } from "./windowSizing";
 import type { CoverCacheGateway, CoverCacheSummary } from "./coverCache";
 

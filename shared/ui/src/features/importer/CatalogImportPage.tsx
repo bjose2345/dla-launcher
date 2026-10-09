@@ -19,6 +19,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { formatByteSize } from "../../formatByteSize";
+import { formatDateTime } from "../../i18n/formatters";
 import {
   catalogProfileMessageKey,
   generationKindMessageKey,
@@ -391,7 +392,7 @@ function ReviewStep({
         <span className="import-package-copy">
           <strong>{preview.displayName}</strong>
           <span>
-            {manifest.source.name} · {formatTimestamp(manifest.createdAt, locale)} · {formatByteSize(preview.compressedBytes, locale)}
+            {manifest.source.name} · {formatDateTime(manifest.createdAt, locale)} · {formatByteSize(preview.compressedBytes, locale)}
           </span>
         </span>
         <span className="import-profile-badge">{t(catalogProfileMessageKey(manifest.profile))}</span>
@@ -810,7 +811,7 @@ function InstalledCatalogs({
           {generations.map((generation) => {
             const profile = t(catalogProfileMessageKey(generation.profile));
             const hasPackageName = generation.packageName.trim().length > 0;
-            const importedAt = formatTimestamp(generation.importedAt, locale);
+            const importedAt = formatDateTime(generation.importedAt, locale);
             const kind = t(generationKindMessageKey(generation.kind));
             const label = hasPackageName
               ? generation.packageName
@@ -949,11 +950,6 @@ function ImportCallout({
 }
 
 export { formatByteSize } from "../../formatByteSize";
-
-function formatTimestamp(value: string, locale: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale);
-}
 
 async function refreshAfterCatalogOperation(queryClient: ReturnType<typeof useQueryClient>): Promise<void> {
   await Promise.all([

@@ -8,24 +8,30 @@ import {
   useTable,
   type SortingState,
 } from "@tanstack/react-table";
-import { ArrowRight, ChevronDown, ChevronUp, ChevronsUpDown } from "lucide-react";
+import { ChevronDown, ChevronUp, ChevronsUpDown, ListChecks, Play } from "lucide-react";
 
 import { usePresentation } from "../../preferences/PresentationProvider";
+import { displayPath } from "../../displayPath";
+import { installationFolder } from "./libraryPresentation";
 import { LibraryArtwork } from "./LibraryArtwork";
 import { collectionState, type LibraryCollectionEntry } from "./LibraryCollection";
+import type { ManageTab } from "./LibraryManageDrawer";
+import { LibraryWorkMenu } from "./LibraryWorkMenu";
 import {
   libraryContentKind,
+  libraryContentKindLabel,
   libraryDisplayCreator,
   libraryDisplayTitle,
   type LibraryContentKind,
 } from "./libraryHome";
+import { mediaActionMessageKey } from "./mediaSession";
 
 interface LibraryRow {
   entry: LibraryCollectionEntry;
   title: string;
   creator: string;
   kind: LibraryContentKind;
-  items: number;
+  files: number;
   progress: number | null;
 }
 
@@ -38,11 +44,15 @@ const columnHelper = createColumnHelper<typeof features, LibraryRow>();
 export function LibraryTable({
   entries,
   onActivate,
-  onOpenReview,
+  onManage,
+  onOpenWork,
+  onBrowse,
 }: {
   entries: LibraryCollectionEntry[];
   onActivate: (entry: LibraryCollectionEntry) => void;
-  onOpenReview: (installationId: string) => void | Promise<void>;
+  onManage: (installationId: string, tab: ManageTab) => void | Promise<void>;
+  onOpenWork: (code: string) => void | Promise<void>;
+  onBrowse?: (installationId: string) => void;
 }) {
   const { locale, t } = usePresentation();
   const [sorting, setSorting] = useState<SortingState>([{ id: "title", desc: false }]);
@@ -55,7 +65,7 @@ export function LibraryTable({
       title: libraryDisplayTitle(entry.installation, entry.work, preferEnglish),
       creator: libraryDisplayCreator(entry.installation, entry.work, preferEnglish),
       kind: libraryContentKind(entry.installation, entry.action),
-      items: entry.installation.detection.contentItems.length,
+      files: entry.fileCount,
       progress: resume && resume.durationMs !== null && resume.durationMs > 0
         ? Math.round(Math.max(0, Math.min(100, (resume.positionMs / resume.durationMs) * 100)))
         : null,
@@ -76,7 +86,7 @@ export function LibraryTable({
           </span>
           <span className="library-table-name">
             <strong title={context.getValue()}>{context.getValue()}</strong>
-            <small>{context.row.original.entry.installation.rootPath}</small>
+            <small><code className="app-path">{displayPath(installationFolder(context.row.original.entry.installation))}</code></small>
           </span>
         </div>
       ),
@@ -89,12 +99,12 @@ export function LibraryTable({
       header: () => t("library.table.kind"),
       cell: (context) => (
         <span className="library-table-kind" data-library-kind={context.getValue()}>
-          {contentKindLabel(context.getValue(), t)}
+          {libraryContentKindLabel(context.getValue(), t)}
         </span>
       ),
     }),
-    columnHelper.accessor("items", {
-      header: () => t("library.table.items"),
+    columnHelper.accessor("files", {
+      header: () => t("library.table.files"),
       cell: (context) => <span className="library-table-number">{context.getValue()}</span>,
     }),
     columnHelper.accessor("progress", {
@@ -124,23 +134,38 @@ export function LibraryTable({
     columnHelper.display({
       id: "actions",
       header: () => "",
-      cell: (context) => (
-        <button
-          className="library-table-open"
-          type="button"
-          aria-label={t("library.home.details")}
-          disabled={collectionState(context.row.original.entry) === "running"}
-          onClick={() => {
-            const entry = context.row.original.entry;
-            if (entry.action) onActivate(entry);
-            else void onOpenReview(entry.installation.id);
-          }}
-        >
-          <ArrowRight aria-hidden="true" />
-        </button>
-      ),
+      cell: (context) => {
+        const { entry, title } = context.row.original;
+        const { action, work } = entry;
+        const activateLabel = action && action !== "launch_executable"
+          ? t(mediaActionMessageKey(action))
+          : action === "launch_executable"
+            ? t("detail.play")
+            : t("library.setUp");
+        return (
+          <span className="library-table-actions">
+            <button
+              className="library-table-open"
+              type="button"
+              aria-label={activateLabel}
+              title={activateLabel}
+              disabled={collectionState(entry) === "running"}
+              onClick={() => onActivate(entry)}
+            >
+              {action ? <Play fill="currentColor" aria-hidden="true" /> : <ListChecks aria-hidden="true" />}
+            </button>
+            <LibraryWorkMenu
+              className="library-table-menu"
+              title={title}
+              onOpenWork={work ? () => void onOpenWork(work.code) : undefined}
+              onManage={(tab) => void onManage(entry.installation.id, tab)}
+              onBrowse={onBrowse ? () => onBrowse(entry.installation.id) : undefined}
+            />
+          </span>
+        );
+      },
     }),
-  ]), [t, onActivate, onOpenReview]);
+  ]), [t, onActivate, onManage, onOpenWork, onBrowse]);
 
   const table = useTable({
     features,
@@ -210,16 +235,3 @@ function ariaSort(direction: false | "asc" | "desc"): "ascending" | "descending"
   return "none";
 }
 
-function contentKindLabel(
-  kind: LibraryContentKind,
-  t: ReturnType<typeof usePresentation>["t"],
-): string {
-  switch (kind) {
-    case "audio": return t("library.home.filterAudio");
-    case "images": return t("library.home.filterImages");
-    case "video": return t("library.home.filterVideo");
-    case "documents": return t("library.home.filterDocuments");
-    case "apps": return t("library.home.filterApps");
-    default: return t("domain.media.unknown");
-  }
-}

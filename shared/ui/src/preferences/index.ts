@@ -1,14 +1,14 @@
+export { SettingsPage } from "./SettingsPage";
 export {
-  SettingsPage,
   parseSettingsSearch,
   parseSettingsTab,
   settingsTabs,
   type SettingsRouteSearch,
   type SettingsTab,
-} from "./SettingsPage";
+} from "./settingsRoute";
 export { PresentationProvider, usePresentation } from "./PresentationProvider";
 export { KeyBindingsProvider, useBoundKeys, useKeyBindings } from "./KeyBindingsProvider";
-export { initializePresentationPreferences, translate } from "./preferences";
+export { initializePresentationPreferences, loadLocaleCatalog, translate } from "./preferences";
 export type { LocaleId, MessageKey, ThemeId } from "./preferences";
 export {
   coverCacheCapacities,

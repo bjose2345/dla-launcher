@@ -1,0 +1,51 @@
+.app-action-menu-button {
+  display: inline-grid;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-chip-sm);
+  background: color-mix(in oklch, var(--app-panel-raised) 80%, transparent);
+  color: var(--app-muted);
+  cursor: pointer;
+}
+
+.app-action-menu-button:hover,
+.app-action-menu-button[aria-expanded="true"] {
+  color: var(--color-base-content);
+}
+
+.app-action-menu-button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.app-action-menu {
+  display: grid;
+  padding: 4px;
+  box-shadow: inset 0 0 0 1px var(--app-border), 0 14px 30px color-mix(in oklch, black 35%, transparent);
+  background: var(--app-panel-raised);
+}
+
+.app-action-menu button {
+  padding: 9px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--color-base-content);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.app-action-menu button:hover,
+.app-action-menu button:focus-visible {
+  background: color-mix(in oklch, var(--color-base-content) 8%, transparent);
+}
+
+.app-action-menu button.is-danger {
+  color: var(--color-error);
+}

@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { installReadOnlyDeepLinkNavigation } from "@dla-launcher/shared-ui/app";
-import { ImageReaderProvider, MediaPlaybackProvider } from "@dla-launcher/shared-ui/library";
+import { ImageReaderProvider, MediaPlaybackProvider } from "@dla-launcher/shared-ui/library/shell";
 import { tauriLibraryGateway } from "./gateways/tauriLibraryGateway";
 import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
@@ -9,10 +9,11 @@ import "@dla-launcher/shared-ui/styles.css";
 import {
   initializePresentationPreferences,
   KeyBindingsProvider,
+  loadLocaleCatalog,
   PresentationProvider,
   translate,
-} from "@dla-launcher/shared-ui/preferences";
-import { ApplicationErrorBoundary, installGlobalFaultCapture } from "@dla-launcher/shared-ui/support";
+} from "@dla-launcher/shared-ui/preferences/shell";
+import { ApplicationErrorBoundary, installGlobalFaultCapture } from "@dla-launcher/shared-ui/support/shell";
 
 import { navigateReadOnlyDeepLink, router } from "./router";
 import { tauriDeepLinkGateway } from "./gateways/tauriDeepLinkGateway";
@@ -20,6 +21,7 @@ import { tauriSupportGateway } from "./gateways/tauriSupportGateway";
 
 const presentation = initializePresentationPreferences();
 installGlobalFaultCapture(tauriSupportGateway);
+await loadLocaleCatalog(presentation.locale);
 
 const queryClient = new QueryClient({
   defaultOptions: {

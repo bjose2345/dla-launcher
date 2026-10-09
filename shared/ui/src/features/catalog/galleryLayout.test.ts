@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { balanceGalleryColumns, galleryColumnCount } from "./galleryLayout";
+import { balanceGalleryColumns, bentoSpans, galleryColumnCount } from "./galleryLayout";
 
 describe("gallery layout", () => {
   it("uses the same responsive column limits as the Archive gallery", () => {
@@ -28,5 +28,23 @@ describe("gallery layout", () => {
   it("does not create empty columns and normalizes invalid ratios", () => {
     expect(balanceGalleryColumns([0, Number.NaN], 3)).toEqual([[0], [1]]);
     expect(balanceGalleryColumns([], 3)).toEqual([]);
+  });
+});
+
+describe("bento mosaic", () => {
+  it("fills every two-row block, alternating the feature's side", () => {
+    expect(bentoSpans(1)).toEqual(["full"]);
+    expect(bentoSpans(2)).toEqual(["feature", "feature"]);
+    expect(bentoSpans(5)).toEqual(["feature", "single", "single", "single", "single"]);
+    expect(bentoSpans(8)).toEqual([
+      "feature", "single", "single", "single", "single",
+      "feature-r", "wide", "wide",
+    ]);
+  });
+
+  it("turns a remainder of one into two blocks of three", () => {
+    expect(bentoSpans(6)).toEqual(["feature", "wide", "wide", "feature-r", "wide", "wide"]);
+    expect(bentoSpans(11)).toHaveLength(11);
+    expect(bentoSpans(11).slice(-6)).toEqual(["feature-r", "wide", "wide", "feature", "wide", "wide"]);
   });
 });

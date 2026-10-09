@@ -366,6 +366,7 @@ fn persist_work(
             categories: category_values(&work.categories),
             tags: named_values(&work.tags),
             synthetic: false,
+            latest_update: None,
         },
         sample_image_urls: Vec::new(),
         file_formats: category_values(&work.file_types),

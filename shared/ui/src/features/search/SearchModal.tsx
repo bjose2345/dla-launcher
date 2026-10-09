@@ -22,6 +22,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
+import { errorMessage } from "../../app/errorMessage";
 import { useDocumentScrollLock } from "../../app/useDocumentScrollLock";
 import type { MessageKey } from "../../i18n/catalogs";
 import {
@@ -566,8 +567,4 @@ function shortcutGroup(kind: SearchShortcutKind): Extract<CatalogFacetGroup, "ge
 
 function isArchiveHash(text: string): boolean {
   return /^(?:[a-f\d]{32}|[a-f\d]{40}|[a-f\d]{64})$/i.test(text);
-}
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : String(error ?? fallback);
 }

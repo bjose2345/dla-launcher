@@ -21,6 +21,7 @@ import {
 
 import { usePresentation } from "../../preferences/PresentationProvider";
 import { useBoundKeys } from "../../preferences/KeyBindingsProvider";
+import { isInteractiveTarget } from "../../preferences/keyBindings";
 import {
   clampPlaybackPosition,
   clampPlaybackRate,
@@ -935,10 +936,6 @@ function VideoPoster({ urls, title, itemName }: { urls: string[]; title: string;
       )}
     </div>
   );
-}
-
-function isInteractiveTarget(target: EventTarget | null): boolean {
-  return target instanceof Element && Boolean(target.closest("button, input, select, textarea, a"));
 }
 
 function videoControlsAreFocused(): boolean {

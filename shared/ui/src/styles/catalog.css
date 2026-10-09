@@ -32,12 +32,10 @@
   position: relative;
   z-index: 12;
   display: flex;
-  min-height: 118px;
   flex: 0 0 auto;
-  align-items: center;
-  justify-content: space-between;
-  gap: 28px;
-  padding: 20px 28px;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 28px 18px;
   border-bottom: 1px solid var(--app-border);
   background-color: var(--app-backdrop);
   background-image: radial-gradient(color-mix(in oklch, var(--color-base-content) 13%, transparent) 0.8px, transparent 0.8px);
@@ -84,61 +82,63 @@
   font-variant-numeric: tabular-nums;
 }
 
-.catalog-month-tools {
+.catalog-month-head {
   display: flex;
   align-items: flex-end;
-  flex-direction: column;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 28px;
 }
 
-.catalog-month-navigation {
+.catalog-month-rail {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: stretch;
+  gap: 6px;
 }
 
-.catalog-month-arrow,
-.catalog-month-calendar {
-  position: relative;
-  display: inline-grid;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  place-items: center;
+.catalog-month-rail-year,
+.catalog-month-rail-arrow {
+  display: inline-flex;
+  height: 52px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
   border: 0;
-  background: transparent;
+  clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
+  background: color-mix(in oklch, var(--color-base-content) 10%, transparent);
   color: var(--color-base-content);
   cursor: pointer;
+  transition: background-color 150ms ease;
 }
 
-.catalog-month-arrow::before,
-.catalog-month-calendar::before {
-  position: absolute;
-  inset: 5px;
-  border: 1px solid var(--app-border);
-  background: color-mix(in oklch, var(--app-panel-raised) 86%, transparent);
-  content: "";
-  rotate: 45deg;
-  transition: border-color 150ms ease, background-color 150ms ease, scale 150ms ease;
+.catalog-month-rail-year {
+  min-width: 92px;
+  gap: 6px;
+  padding: 0 14px;
+  font: inherit;
+  font-size: 0.86rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
 }
 
-.catalog-month-arrow:hover:not(:disabled)::before,
-.catalog-month-calendar:hover::before,
-.catalog-month-calendar[aria-expanded="true"]::before {
-  border-color: var(--color-primary);
-  background: color-mix(in oklch, var(--color-primary) 18%, var(--app-panel-raised));
-  scale: 1.06;
+.catalog-month-rail-arrow {
+  width: 44px;
+  padding: 0;
 }
 
-.catalog-month-arrow:disabled {
+.catalog-month-rail-year:hover,
+.catalog-month-rail-year[aria-expanded="true"],
+.catalog-month-rail-arrow:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--color-base-content) 16%, transparent);
+}
+
+.catalog-month-rail-arrow:disabled {
+  background: color-mix(in oklch, var(--color-base-content) 5%, transparent);
+  color: color-mix(in oklch, var(--color-base-content) 30%, transparent);
   cursor: default;
-  opacity: 0.28;
 }
 
-.catalog-month-arrow svg,
-.catalog-month-calendar svg {
-  position: relative;
-  z-index: 1;
+.catalog-month-rail-year svg,
+.catalog-month-rail-arrow svg {
   width: 18px;
   height: 18px;
   fill: none;
@@ -148,8 +148,88 @@
   stroke-width: 1.8;
 }
 
-.catalog-month-picker-root {
-  position: relative;
+.catalog-month-rail-year svg {
+  width: 14px;
+  opacity: 0.7;
+  transition: transform 150ms ease;
+}
+
+.catalog-month-rail-year svg.expanded {
+  transform: rotate(180deg);
+}
+
+.catalog-month-rail-scroll {
+  width: 0;
+  min-width: 0;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.catalog-month-rail-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.catalog-month-rail-months {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(3.5rem, 1fr));
+  gap: 4px;
+}
+
+.catalog-month-rail-months button {
+  display: flex;
+  height: 52px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 4px;
+  border: 0;
+  clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
+  background: color-mix(in oklch, var(--color-base-content) 5%, transparent);
+  color: var(--color-base-content);
+  cursor: pointer;
+  font: inherit;
+  transition: background-color 150ms ease;
+}
+
+.catalog-month-rail-months button:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--color-base-content) 15%, transparent);
+}
+
+.catalog-month-rail-months button.active {
+  background: var(--color-primary);
+  color: var(--color-primary-content);
+}
+
+.catalog-month-rail-months button:disabled {
+  background: color-mix(in oklch, var(--color-base-content) 3%, transparent);
+  color: color-mix(in oklch, var(--color-base-content) 30%, transparent);
+  cursor: default;
+}
+
+.catalog-month-rail-months strong {
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
+.catalog-month-rail-months small {
+  height: 14px;
+  color: color-mix(in oklch, currentcolor 62%, transparent);
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 14px;
+}
+
+.catalog-month-rail-months button.active small {
+  color: color-mix(in oklch, var(--color-primary-content) 75%, transparent);
+}
+
+.catalog-month-rail-year:focus-visible,
+.catalog-month-rail-arrow:focus-visible,
+.catalog-month-rail-months button:focus-visible {
+  outline: 2px solid color-mix(in oklch, var(--color-primary) 60%, transparent);
+  outline-offset: -2px;
 }
 
 .catalog-month-picker {
@@ -185,6 +265,13 @@
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 8px;
+}
+
+.catalog-month-picker-header > strong {
+  padding: 0 6px;
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
 }
 
 .catalog-month-picker-header > button {
@@ -266,46 +353,108 @@
   font-weight: 750;
 }
 
-.catalog-day-density {
+.catalog-day-rail-scroll {
+  /* A zero width keeps the 31 cells from widening the masthead; the
+     percentage minimum then stretches the scroller to the row. */
+  width: 0;
+  min-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.catalog-day-rail-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.catalog-day-rail {
   display: grid;
-  justify-items: end;
+  grid-template-columns: repeat(var(--catalog-rail-days, 31), minmax(2.25rem, 1fr));
   gap: 4px;
 }
 
-.catalog-day-density > div {
+.catalog-day-rail-cell {
   display: flex;
-  height: 40px;
-  align-items: end;
-  gap: 3px;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.catalog-day-density button {
-  width: 7px;
-  height: var(--density-height);
-  padding: 0;
+.catalog-day-rail-cell button {
+  position: relative;
+  display: flex;
+  height: 44px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 4px;
+  overflow: hidden;
   border: 0;
-  background: color-mix(in oklch, var(--color-base-content) 25%, transparent);
-  clip-path: polygon(0 3px, 100% 0, 100% 100%, 0 100%);
+  clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
+  background: color-mix(in oklch, var(--color-base-content) 5%, transparent);
+  color: var(--color-base-content);
   cursor: pointer;
+  font: inherit;
   transition: background-color 150ms ease;
 }
 
-.catalog-day-density button:hover:not(:disabled) {
-  background: color-mix(in oklch, var(--color-primary) 70%, transparent);
+.catalog-day-rail-cell button:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--color-base-content) 15%, transparent);
 }
 
-.catalog-day-density button:disabled {
-  background: color-mix(in oklch, var(--color-base-content) 10%, transparent);
+.catalog-day-rail-cell button.active {
+  background: var(--color-primary);
+  color: var(--color-primary-content);
+}
+
+.catalog-day-rail-cell button:disabled {
+  background: color-mix(in oklch, var(--color-base-content) 3%, transparent);
+  color: color-mix(in oklch, var(--color-base-content) 30%, transparent);
   cursor: default;
 }
 
-.catalog-day-density small {
-  color: var(--app-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.625rem;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+.catalog-day-rail-cell button i {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: color-mix(in oklch, var(--color-base-content) 10%, transparent);
+  transition: height 420ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.catalog-day-rail-cell button.active i {
+  background: color-mix(in oklch, var(--color-primary-content) 15%, transparent);
+}
+
+.catalog-day-rail-cell strong {
+  position: relative;
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
+.catalog-day-rail-cell small {
+  position: relative;
+  height: 14px;
+  color: color-mix(in oklch, currentcolor 62%, transparent);
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 14px;
+}
+
+.catalog-day-rail-cell button.active small {
+  color: color-mix(in oklch, var(--color-primary-content) 75%, transparent);
+}
+
+.catalog-day-rail-cell > span {
+  height: 2px;
+}
+
+.catalog-day-rail-cell > span.marked {
+  background: color-mix(in oklch, var(--color-primary) 70%, transparent);
+}
+
+.catalog-day-rail-cell button:focus-visible {
+  outline: 2px solid color-mix(in oklch, var(--color-primary) 60%, transparent);
+  outline-offset: -2px;
 }
 
 .catalog-month-loading {
@@ -541,8 +690,9 @@
   display: flex;
   min-height: 52px;
   flex: 0 0 auto;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 14px;
+  gap: 8px 14px;
   padding: 7px 12px;
   border-bottom: 1px solid #30323b;
   background: #1a1b21;
@@ -566,6 +716,7 @@
   cursor: pointer;
   font-size: 0.74rem;
   font-weight: 690;
+  white-space: nowrap;
 }
 
 .catalog-view-toggle button:hover {
@@ -627,6 +778,7 @@
 
 .catalog-timeline-basis strong {
   font-size: 0.74rem;
+  white-space: nowrap;
 }
 
 .catalog-timeline-selector {
@@ -1584,6 +1736,69 @@
   pointer-events: none;
 }
 
+.catalog-activity-flag {
+  position: absolute;
+  z-index: 3;
+  top: 8px;
+  left: 8px;
+  display: inline-flex;
+  max-width: calc(100% - 16px);
+  filter: drop-shadow(0 2px 6px rgb(0 0 0 / 40%));
+  pointer-events: none;
+}
+
+.catalog-activity-flag > span,
+.catalog-activity-flag > small {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  clip-path: polygon(5px 0, 100% 0, calc(100% - 5px) 100%, 0 100%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.5rem;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  line-height: 1.45;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.catalog-activity-flag > span {
+  gap: 4px;
+}
+
+.catalog-activity-flag.added > span {
+  background: linear-gradient(100deg, var(--color-warning), color-mix(in oklch, var(--color-warning) 60%, white));
+  color: var(--color-warning-content);
+}
+
+.catalog-activity-flag.updated > span {
+  background: linear-gradient(100deg, var(--color-info), color-mix(in oklch, var(--color-info) 60%, white));
+  color: var(--color-info-content);
+}
+
+.catalog-activity-flag > small {
+  overflow: hidden;
+  margin-left: -5px;
+  padding-right: 9px;
+  padding-left: 10px;
+  background: rgb(12 12 18 / 86%);
+  box-shadow: inset 0 -1.5px 0 var(--color-info);
+  color: rgb(255 255 255 / 90%);
+  letter-spacing: 0.16em;
+  text-overflow: ellipsis;
+}
+
+.catalog-activity-flag svg {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.6;
+}
+
 .catalog-work-card-copy {
   position: absolute;
   z-index: 2;
@@ -1813,7 +2028,9 @@ button.catalog-page.ellipsis {
   min-height: calc(100% - 36px);
   grid-template-columns: minmax(360px, 1.15fr) minmax(420px, 0.92fr);
   margin: 0;
-  overflow: hidden;
+  /* A clip, not a scroll container, so the sticky art column follows the
+     page scroller rather than this frame. */
+  overflow: clip;
   border: 1px solid #252832;
   border-radius: 22px;
   background: #0d0e12;
@@ -1876,10 +2093,28 @@ button.catalog-page.ellipsis {
   border-left: 0;
 }
 
+.work-hero-stage {
+  --work-hero-stage-max-height: calc(100dvh - var(--app-topbar-height, 72px) - 36px);
+  /* The copy column is far taller than any window; the art and its back
+     button keep to one viewport and stay in view while the copy scrolls. */
+  position: sticky;
+  top: 18px;
+  display: grid;
+  align-self: start;
+  height: 100%;
+  min-height: min(670px, var(--work-hero-stage-max-height));
+  max-height: var(--work-hero-stage-max-height);
+}
+
+.work-hero-stage > .work-hero-image-missing {
+  min-height: 0;
+}
+
 .work-hero-art {
   position: relative;
   display: grid;
-  min-height: 670px;
+  width: 100%;
+  height: 100%;
   padding: 0;
   overflow: hidden;
   border: 0;
@@ -1926,7 +2161,7 @@ button.catalog-page.ellipsis {
   z-index: 1;
   width: 100%;
   height: 100%;
-  max-height: calc(100vh - 100px);
+  max-height: 100%;
   object-fit: contain;
   filter: drop-shadow(0 18px 35px rgb(0 0 0 / 42%));
   pointer-events: none;
@@ -1996,6 +2231,7 @@ button.catalog-page.ellipsis {
   position: relative;
   z-index: 2;
   padding: 31px 28px 40px;
+  container: work-copy / inline-size;
   background: linear-gradient(90deg, rgb(13 14 18 / 94%), #101116 18%);
 }
 
@@ -2181,13 +2417,42 @@ button.catalog-page.ellipsis {
 }
 
 .work-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   margin: 14px 0 23px;
+  padding: 5px 10px;
+  border: 1px dashed rgb(236 233 228 / 22%);
+  border-radius: 6px;
+  background: transparent;
   color: #797c88;
+  cursor: pointer;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.72rem;
   font-weight: 800;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+  transition: border-color 150ms ease, color 150ms ease;
+}
+
+.work-code:hover {
+  border-color: color-mix(in oklch, var(--color-primary) 60%, transparent);
+  color: rgb(236 233 228 / 75%);
+}
+
+.work-code:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.work-code.copied {
+  border-color: color-mix(in oklch, var(--color-success) 55%, transparent);
+  color: var(--color-success);
+}
+
+.work-code svg {
+  width: 14px;
+  height: 14px;
 }
 
 .work-metadata-row {
@@ -2210,14 +2475,14 @@ button.catalog-page.ellipsis {
 }
 
 .work-metadata-label i {
-  display: grid;
-  width: 27px;
-  height: 27px;
-  place-items: center;
-  border: 1px solid currentcolor;
-  border-radius: 50%;
-  color: #777b87;
-  font-style: normal;
+  display: block;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  border-radius: 5px;
+  background: color-mix(in oklch, currentcolor 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, currentcolor 55%, transparent);
+  color: #b6b8c2;
 }
 
 .tone-gold .work-metadata-label i { color: #b98a15; }
@@ -2280,6 +2545,63 @@ button.catalog-page.ellipsis {
   to { transform: translateX(135%); }
 }
 
+.work-metadata-more {
+  padding: 9px 16px 9px 13px;
+  border: 1px dashed color-mix(in oklch, var(--color-primary) 55%, transparent);
+  clip-path: polygon(7px 0, 100% 0, calc(100% - 7px) 100%, 0 100%);
+  background: color-mix(in oklch, var(--color-primary) 10%, transparent);
+  color: var(--color-primary);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.84rem;
+  font-weight: 650;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.work-metadata-more:hover {
+  border-color: color-mix(in oklch, var(--color-primary) 80%, transparent);
+  background: color-mix(in oklch, var(--color-primary) 20%, transparent);
+}
+
+.work-metadata-more:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+/* "+N more": the revealed chips rise in on a short stagger. */
+.work-metadata-chip.revealed {
+  animation: work-metadata-reveal 280ms cubic-bezier(0.22, 1, 0.36, 1) var(--reveal-delay, 0ms) backwards;
+}
+
+@keyframes work-metadata-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .work-metadata-chip.revealed {
+    animation: none;
+  }
+}
+
+/* Labels sit beside their chips once the panel is wide enough, else above. */
+.work-resume-panel {
+  container-type: inline-size;
+}
+
+@container (max-width: 28rem) {
+  .work-metadata-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 7px;
+  }
+
+  .work-metadata-label {
+    padding-top: 0;
+  }
+}
+
 .work-metadata-values > span.muted {
   color: #858893;
   background: #282a31;
@@ -2308,6 +2630,15 @@ button.catalog-page.ellipsis {
   color: #d8d9e0;
   font-weight: 700;
   text-align: right;
+  white-space: nowrap;
+}
+
+/* Released, Updated, Archive size and Versions in one column when the hero's
+   data column is narrow. */
+@container work-copy (max-width: 30rem) {
+  .work-data-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .work-source-actions {
@@ -2365,6 +2696,58 @@ button.catalog-page.ellipsis {
   background: #30323a;
   color: #777a85;
   cursor: default;
+}
+
+/* The download panel always takes its own row because of its hint, so its
+   button leans the same way on both sides instead of seaming to a neighbor. */
+.work-source-actions > .delivery-work-panel {
+  flex: 1 1 100%;
+  margin-top: 6px;
+}
+
+.work-source-actions .work-local-button-delivery {
+  width: 100%;
+  margin-left: 0;
+  padding-right: calc(22px + var(--work-action-slant));
+  padding-left: calc(22px + var(--work-action-slant));
+  clip-path: polygon(
+    var(--work-action-slant) 0,
+    100% 0,
+    calc(100% - var(--work-action-slant)) 100%,
+    0 100%
+  );
+}
+
+/* A copy column too narrow for two seamed buttons stacks every action at
+   full width with one uniform lean. */
+@container work-copy (max-width: 36rem) {
+  .work-source-actions {
+    flex-direction: column;
+    width: 100%;
+    gap: 6px;
+    background: transparent;
+  }
+
+  .work-source-button,
+  .work-local-button {
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
+    margin-left: 0;
+    padding-right: calc(22px + var(--work-action-slant));
+    padding-left: calc(22px + var(--work-action-slant));
+    clip-path: polygon(
+      var(--work-action-slant) 0,
+      100% 0,
+      calc(100% - var(--work-action-slant)) 100%,
+      0 100%
+    );
+  }
+
+  .work-source-actions > .delivery-work-panel {
+    flex: 0 0 auto;
+    margin-top: 0;
+  }
 }
 
 .work-local-button-launching {
@@ -2594,9 +2977,11 @@ button.catalog-page.ellipsis {
 
 .work-detail-section-heading {
   display: flex;
-  align-items: center;
   min-width: 0;
+  flex: 1;
+  align-items: center;
   gap: 12px;
+  margin-right: 12px;
 }
 
 .work-detail-section summary h2 {

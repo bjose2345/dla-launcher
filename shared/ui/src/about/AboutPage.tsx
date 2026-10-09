@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Check, Copy, ExternalLink, Info, LoaderCircle, Users } from "lucide-react";
+import { Check, Copy, ExternalLink, Info, LoaderCircle, Package, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { BrandMark } from "../app/BrandMark";
@@ -11,16 +11,26 @@ import { SettingsSection } from "../preferences/SettingsSection";
 import type { SystemGateway, SystemReport } from "../preferences/systemReport";
 import type { WindowGateway } from "../preferences/windowSizing";
 
+/** A program the launcher's package installs beside it, with its licenses. */
+export interface IncludedSoftware {
+  name: string;
+  version: string;
+  author: string;
+  licenses: string;
+}
+
 export function AboutPage({
   systemGateway,
   windowGateway,
   onOpenProject,
   version = "",
+  includedSoftware = [],
 }: {
   systemGateway?: SystemGateway;
   windowGateway?: WindowGateway;
   onOpenProject?: () => void | Promise<void>;
   version?: string;
+  includedSoftware?: readonly IncludedSoftware[];
 }) {
   const { t } = usePresentation();
   return (
@@ -36,6 +46,7 @@ export function AboutPage({
           windowGateway={windowGateway}
           version={version}
         />
+        {includedSoftware.length > 0 ? <IncludedSoftwareSection programs={includedSoftware} /> : null}
       </div>
     </main>
   );
@@ -159,6 +170,27 @@ function AboutBuildSection({
           {t("common.requestFailed", { error: String(system.error) })}
         </p>
       ) : null}
+    </SettingsSection>
+  );
+}
+
+function IncludedSoftwareSection({ programs }: { programs: readonly IncludedSoftware[] }) {
+  const { t } = usePresentation();
+  return (
+    <SettingsSection
+      icon={<Package aria-hidden="true" />}
+      title={t("settings.includedSoftware")}
+      description={t("settings.includedSoftwareHelp")}
+    >
+      <ul className="settings-included">
+        {programs.map((program) => (
+          <li key={program.name}>
+            <strong>{`${program.name} ${program.version}`}</strong>
+            <span>{program.author}</span>
+            <span>{program.licenses}</span>
+          </li>
+        ))}
+      </ul>
     </SettingsSection>
   );
 }

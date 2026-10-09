@@ -1,0 +1,38 @@
+[package]
+name = "dla-connector"
+description = "Supervises the bundled cloudflared access tcp forward to the DLA downloads service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }
+
+[[bin]]
+# A stand-in for cloudflared used only by this crate's tests.
+name = "fake-cloudflared"
+path = "src/bin/fake-cloudflared.rs"
+test = false
+doc = false
+
+[[bin]]
+# A stand-in for the app, killed outright by the crash test.
+name = "connector-host"
+path = "src/bin/connector-host.rs"
+test = false
+doc = false

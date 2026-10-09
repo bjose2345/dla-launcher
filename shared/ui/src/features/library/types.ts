@@ -549,6 +549,8 @@ export interface LibraryGateway {
   repairInstallation(installationId: string): Promise<InstallationHealthReport>;
   removeInstallation(installationId: string): Promise<void>;
   uninstallInstallation(installationId: string): Promise<void>;
+  /** Opens the work's folder in the system file manager, on desktop. */
+  openInstallationFolder?(installationId: string): Promise<void>;
   cleanupMaintenance(): Promise<MaintenanceCleanupReport>;
   launchInstallation(installationId: string): Promise<LaunchActivity>;
   stopLaunch(activityId: string): Promise<LaunchActivity>;
@@ -654,3 +656,6 @@ export function packagePreparationNeedsPreparedRefresh(
   return progress?.installationId === installationId
     && packagePreparationIsTerminal(progress.stage);
 }
+
+export const manageTabs = ["general", "files"] as const;
+export type ManageTab = (typeof manageTabs)[number];

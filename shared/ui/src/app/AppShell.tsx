@@ -1,16 +1,17 @@
 import { Link, Outlet } from "@tanstack/react-router";
 import {
+  CloudDownload,
   Download,
   FolderSearch,
   Info,
   LayoutGrid,
   Library,
+  LifeBuoy,
+  PackageOpen,
   PanelLeftClose,
   PanelLeftOpen,
-  PackageOpen,
   Search,
   Settings,
-  LifeBuoy,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
@@ -35,6 +36,7 @@ const navIcons = {
   scanner: FolderSearch,
   import: Download,
   androidPackage: PackageOpen,
+  downloads: CloudDownload,
   settings: Settings,
   support: LifeBuoy,
   about: Info,
@@ -54,6 +56,8 @@ interface AppShellProps {
   candidate: string;
   navigation?: AppShellNavItem[];
   launchIndicator?: ReactNode;
+  /** Background work worth seeing from anywhere, shown in the sidebar. */
+  sidebarActivity?: ReactNode;
   mediaDock?: ReactNode;
   readerOverlay?: ReactNode;
   onOpenSettings?: () => void;
@@ -75,6 +79,7 @@ function AppFrame({
   candidate,
   navigation = [],
   launchIndicator,
+  sidebarActivity,
   mediaDock,
   readerOverlay,
   onOpenSettings,
@@ -154,6 +159,7 @@ function AppFrame({
                 <SidebarLink item={item} collapsed={collapsed} key={item.to} />
               ))}
             </nav>
+            {sidebarActivity ? <div className="app-sidebar-activity">{sidebarActivity}</div> : null}
             {secondary.length ? (
               <nav className="app-sidebar-secondary" aria-label={t("nav.secondary")}>
                 {secondary.map((item) => (

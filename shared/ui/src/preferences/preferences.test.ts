@@ -4,6 +4,7 @@ import {
   defaultLocale,
   defaultPresentationPreferences,
   defaultTheme,
+  loadLocaleCatalog,
   readPresentationPreferences,
   translate,
 } from "./preferences";
@@ -28,12 +29,14 @@ describe("presentation preferences", () => {
     expect(defaultPresentationPreferences.sidebarCollapsed).toBe(false);
   });
 
-  it("translates launcher labels and interpolates values", () => {
+  it("translates launcher labels and interpolates values", async () => {
+    await Promise.all([loadLocaleCatalog("es-ES"), loadLocaleCatalog("ja-JP")]);
     expect(translate("es-ES", "nav.settings")).toBe("Ajustes");
     expect(translate("ja-JP", "catalog.loaded", { loaded: 60, total: 1000 })).toBe("1000件中60件を読込済み");
   });
 
-  it("uses the selected locale without an English fallback", () => {
+  it("uses the selected locale once its catalog is loaded", async () => {
+    await loadLocaleCatalog("de-DE");
     expect(translate("de-DE", "detail.gallery")).toBe("Galerie");
   });
 });

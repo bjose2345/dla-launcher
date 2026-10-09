@@ -1,4 +1,4 @@
-import type { CatalogWork } from "./types";
+import type { CatalogRom, CatalogWork } from "./types";
 import { visualImageUrls } from "./workImages";
 
 export function ageRatingLabel(
@@ -69,4 +69,24 @@ function decodeWrappedImageSource(value: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** All the work's archive bytes and how many releases (update date and
+ *  version) they form. */
+export function archiveTotals(roms: CatalogRom[]): { bytes: number; versions: number } {
+  const releases = new Set(roms.map((rom) => `${rom.updateDate}\u0000${rom.version}`));
+  const bytes = roms.reduce((total, rom) => total + (Number(rom.size) || 0), 0);
+  return { bytes, versions: releases.size };
+}
+
+/** "418 MB": decimal units with one fraction digit at most. */
+export function formatArchiveSize(bytes: number, locale: string): string {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
+    unit += 1;
+  }
+  return `${value.toLocaleString(locale, { maximumFractionDigits: unit === 0 ? 0 : 1 })} ${units[unit]}`;
 }

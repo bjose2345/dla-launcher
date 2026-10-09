@@ -938,6 +938,32 @@
   overflow-wrap: anywhere;
 }
 
+.settings-included {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  background: var(--app-border);
+  list-style: none;
+}
+
+.settings-included li {
+  display: grid;
+  gap: 2px;
+  padding: 10px 13px;
+  background: var(--app-panel);
+}
+
+.settings-included strong {
+  font-size: 0.86rem;
+}
+
+.settings-included span {
+  color: var(--app-muted);
+  font-size: 0.74rem;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 640px) {
   .settings-developer,
   .settings-developer.is-right {

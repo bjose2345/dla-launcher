@@ -14,11 +14,39 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   COREPACK_ENABLE_DOWNLOAD_PROMPT: 0
-  TAURI_CLI_VERSION: 2.11.4
+  TAURI_CLI_VERSION: 2.12.1
 
 jobs:
+  sidecars:
+    name: Fetch the pinned sidecars
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Download cloudflared and 7-Zip at their pinned checksums
+        run: |
+          sh tauri2/scripts/fetch-cloudflared.sh
+          sh tauri2/scripts/fetch-7zip.sh
+          # A tarball keeps the Linux executable bits across the artifact store.
+          tar -C tauri2/src-tauri -cf sidecars.tar binaries
+
+      - name: Share the sidecars with the desktop builds
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dla-launcher-sidecars
+          path: sidecars.tar
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
   build:
     name: Build ${{ matrix.name }}
+    needs: sidecars
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -67,8 +95,32 @@ jobs:
             gstreamer1.0-plugins-base \
             gstreamer1.0-plugins-good \
             gstreamer1.0-plugins-ugly \
-            gstreamer1.0-tools \
-            p7zip-full
+            gstreamer1.0-tools
+
+      - name: Download the pinned sidecars
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: dla-launcher-sidecars
+
+      - name: Place the sidecars beside the Tauri project
+        shell: bash
+        run: tar -C tauri2/src-tauri -xf sidecars.tar && rm sidecars.tar
+
+      - name: Write the launcher access token
+        shell: bash
+        env:
+          DLA_LAUNCHER_ACCESS_TOKEN: ${{ secrets.DLA_LAUNCHER_ACCESS_TOKEN }}
+        run: |
+          # Repository secret holding the contents of state/tunnel/launcher-token.json.
+          # Forks and builds without it still succeed; Install from DLA is then unavailable.
+          if [[ -n "$DLA_LAUNCHER_ACCESS_TOKEN" ]]; then
+            token_file="$RUNNER_TEMP/launcher-token.json"
+            printf '%s' "$DLA_LAUNCHER_ACCESS_TOKEN" > "$token_file"
+            echo "DLA_LAUNCHER_ACCESS_TOKEN_FILE=$token_file" >> "$GITHUB_ENV"
+            echo "The launcher access token is set for this build."
+          else
+            echo "No DLA_LAUNCHER_ACCESS_TOKEN secret; Install from DLA will be unavailable in this build."
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6

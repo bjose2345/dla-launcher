@@ -1,5 +1,16 @@
 {
   "bundle": {
-    "targets": ["deb", "rpm"]
+    "targets": [
+      "deb",
+      "rpm"
+    ],
+    "externalBin": [
+      "binaries/dla-cloudflared",
+      "binaries/dla-7zip"
+    ],
+    "resources": {
+      "binaries/7zip/linux/License.txt": "licenses/7-Zip.txt",
+      "binaries/cloudflared/LICENSE": "licenses/cloudflared.txt"
+    }
   }
 }

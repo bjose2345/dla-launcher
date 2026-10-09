@@ -824,6 +824,8 @@ fn secure_directory(path: &Path) -> Result<(), String> {
         fs::set_permissions(path, fs::Permissions::from_mode(0o700))
             .map_err(|error| error.to_string())?;
     }
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 
@@ -834,6 +836,8 @@ fn secure_file(path: &Path) -> Result<(), String> {
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))
             .map_err(|error| error.to_string())?;
     }
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 

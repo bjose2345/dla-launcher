@@ -15,6 +15,15 @@
         },
         {
           "url": "https://*.dlsite.com/*"
+        },
+        {
+          "url": "https://img.dlsitearchive.com/*"
+        },
+        {
+          "url": "https://img.dlsite.jp/*"
+        },
+        {
+          "url": "https://dlsitearchive.com/*"
         }
       ]
     }

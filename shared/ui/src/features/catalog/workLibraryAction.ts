@@ -22,13 +22,14 @@ export async function readWorkLibraryAction(
   workCode: string,
 ): Promise<WorkLibraryAction> {
   const installations = await gateway.listInstallationsForWork(workCode);
-  const snapshots = await Promise.all(
-    installations.map(async (installation) => ({
-      installation,
-      prepared: await gateway.readPreparedPackage(installation.id),
-    })),
-  );
-  return resolveWorkLibraryAction(snapshots);
+  const prepared = installations.length
+    ? await gateway.readPreparedPackages(installations.map((installation) => installation.id))
+    : [];
+  const preparedByInstallation = new Map(prepared.map((item) => [item.installationId, item]));
+  return resolveWorkLibraryAction(installations.map((installation) => ({
+    installation,
+    prepared: preparedByInstallation.get(installation.id) ?? null,
+  })));
 }
 
 export function resolveWorkLibraryAction(

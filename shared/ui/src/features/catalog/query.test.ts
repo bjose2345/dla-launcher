@@ -52,10 +52,19 @@ describe("shared catalog query state", () => {
     });
     expect(parseCatalogSearch({ month: "2026-19", timeline: "other", page: -2 })).toMatchObject({
       month: "",
-      timeline: "added",
+      timeline: "activity",
       page: 1,
     });
+    expect(parseCatalogSearch({ timeline: "activity" }).timeline).toBe("activity");
     expect(parseCatalogSearch({ month: "0000-01" }).month).toBe("");
     expect(parseCatalogSearch({ month: "9999-12" }).month).toBe("");
+  });
+
+  it("keeps a locked day only when it is a calendar date", () => {
+    expect(parseCatalogSearch({ month: "2026-08", day: "2026-08-09" }).day).toBe("2026-08-09");
+    expect(parseCatalogSearch({ day: "2026-08-32" }).day).toBe("");
+    expect(parseCatalogSearch({ day: "2026-13-01" }).day).toBe("");
+    expect(parseCatalogSearch({ day: "20260809" }).day).toBe("");
+    expect(parseCatalogSearch({}).day).toBe("");
   });
 });

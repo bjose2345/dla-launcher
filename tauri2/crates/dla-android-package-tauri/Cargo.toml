@@ -8,10 +8,10 @@ authors.workspace = true
 links = "dla-android-package-tauri"
 
 [build-dependencies]
-tauri-plugin = { version = "=2.6.3", features = ["build"] }
+tauri-plugin = { version = "=2.7.1", features = ["build"] }
 
 [dependencies]
 dla-application.workspace = true
 dla-domain.workspace = true
 serde.workspace = true
-tauri = { version = "=2.11.5", features = [] }
+tauri = { version = "=2.12.1", features = [] }

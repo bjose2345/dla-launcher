@@ -6,7 +6,6 @@ export type ScanStatus =
   | "interrupted"
   | "failed";
 
-export type ScanMatchOutcome = "matched" | "ambiguous" | "unmatched";
 export type ScanMatchConfidence = "possible" | "strong" | "exact";
 
 export interface ScanCounters {
@@ -36,6 +35,7 @@ export interface ScanSession {
     followSymlinks: boolean;
     hashPolicy: "candidate_archives";
     workerLimit: number;
+    purpose?: "library" | "install";
   };
   counters: ScanCounters;
   startedAt: string;
@@ -80,46 +80,102 @@ export interface ScanProgress {
   currentRelativePath: string | null;
 }
 
-export interface ScanMatchCandidate {
+export type ScanFindingKind = "folder" | "archive" | "file";
+
+/** What adding a finding needs from the user. */
+export type ScanFindingState = "ready" | "choose" | "unknown" | "mixed" | "incomplete";
+
+export interface ScanFindingCandidate {
   workCode: string;
   confidence: ScanMatchConfidence;
-  reasonCodes: string[];
-  rank: number;
 }
 
-export interface ScanEvidence {
-  id: string;
-  resultId: string;
-  sourceEntryId: string | null;
-  kind: string;
-  normalizedValue: string;
-  reasonCode: string;
-  createdAt: string;
+/** One work a scan found: an archive set, a folder, a file or the whole root. */
+export interface ScanFinding {
+  key: string;
+  /** Below the scan root; empty when the whole root is one work. */
+  relativePath: string;
+  kind: ScanFindingKind;
+  state: ScanFindingState;
+  workCode: string | null;
+  candidates: ScanFindingCandidate[];
+  fileCount: number;
+  sizeBytes: number;
+  volumeCount: number;
+  /** The Library entry for this work, and the catalog work it is matched to now. */
+  inLibrary: { installationId: string; sameFiles: boolean; workCode: string | null } | null;
+  ignored: boolean;
 }
 
-export interface ScanResult {
-  id: string;
+export interface ScanFindingList {
   sessionId: string;
-  candidateEntryId: string | null;
-  outcome: ScanMatchOutcome;
-  selectedWorkCode: string | null;
-  confidence: ScanMatchConfidence | null;
-  candidates: ScanMatchCandidate[];
-  evidence: ScanEvidence[];
-  createdAt: string;
-  updatedAt: string;
+  rootId: string;
+  rootPath: string;
+  findings: ScanFinding[];
 }
 
-export interface ScanResultItem {
-  result: ScanResult;
-  relativePath: string | null;
+export interface AddScanFinding {
+  key: string;
+  /** The catalog work the user picked. */
+  workCode?: string | null;
+  /** Adds the finding without a catalog work. */
+  unknown?: boolean;
 }
 
-export interface ScanResultPage {
-  items: ScanResultItem[];
-  total: number;
-  limit: number;
-  offset: number;
+export type ScanAddOutcome = "added" | "installing" | "already_in_library" | "refused";
+export type ScanFindingRefusal = "not_found" | "choose_work" | "mixed" | "incomplete" | "failed";
+
+export interface ScanAddResult {
+  key: string;
+  outcome: ScanAddOutcome;
+  installationId: string | null;
+  refusal: ScanFindingRefusal | null;
+  detail: string | null;
+}
+
+export type ScanInstallStatus =
+  | "queued"
+  | "installing"
+  | "installed"
+  | "needs_review"
+  | "failed"
+  | "cancelled";
+
+/** An archive the scanner found, installing so it can join the Library. */
+export interface ScanInstall {
+  installationId: string;
+  key: string;
+  name: string;
+  workCode: string | null;
+  status: ScanInstallStatus;
+  detail: string | null;
+}
+
+export interface ScanInstallView {
+  /** Counts changes; the newest view wins when replies and events cross. */
+  revision: number;
+  installFolder: string | null;
+  installs: ScanInstall[];
+}
+
+export interface ScanAddResponse {
+  results: ScanAddResult[];
+  installs: ScanInstallView;
+}
+
+export const scanInstallsKey = ["scanner", "installs"] as const;
+
+export function scanInstallIsActive(status: ScanInstallStatus): boolean {
+  return status === "queued" || status === "installing";
+}
+
+/** Installs archives into the install folder Install from DLA also uses. */
+export interface ScanInstallGateway {
+  readInstalls(): Promise<ScanInstallView>;
+  subscribeInstalls(listener: (view: ScanInstallView) => void): Promise<() => void>;
+  selectInstallFolder(): Promise<ScanInstallView | null>;
+  installArchive(installationId: string): Promise<ScanInstallView>;
+  cancelInstall(installationId: string): Promise<ScanInstallView>;
 }
 
 export interface ScanIssue {
@@ -140,22 +196,18 @@ export interface ScanIssuePage {
   offset: number;
 }
 
-export interface ScannerGateway extends ScannerRootPreferenceGateway {
+export interface ScannerGateway extends ScannerRootPreferenceGateway, ScanInstallGateway {
   selectRoot(): Promise<SelectedScanRoot | null>;
   start(accessHandle: string): Promise<ScanSessionView>;
   cancel(sessionId: string): Promise<boolean>;
   readLatest(): Promise<ScanSessionView | null>;
-  browseResults(request: {
-    sessionId: string;
-    outcome?: ScanMatchOutcome;
-    limit?: number;
-    offset?: number;
-  }): Promise<ScanResultPage>;
+  listFindings(sessionId: string): Promise<ScanFindingList>;
+  setFindingIgnored(rootId: string, key: string, ignored: boolean): Promise<void>;
+  addFindings(sessionId: string, findings: AddScanFinding[]): Promise<ScanAddResponse>;
   browseIssues(request: {
     sessionId: string;
     limit?: number;
     offset?: number;
   }): Promise<ScanIssuePage>;
-  createInstallation(sessionId: string, selectedResultId: string): Promise<{ id: string }>;
   subscribeProgress(listener: (progress: ScanProgress) => void): Promise<() => void>;
 }

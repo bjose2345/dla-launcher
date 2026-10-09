@@ -1,12 +1,27 @@
-import { useEffect, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import {
+  Suspense,
+  lazy,
+  useEffect,
+  useMemo,
+  useRef,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
+} from "react";
 
 import { useDocumentScrollLock } from "../../app/useDocumentScrollLock";
 import { useBoundKeys } from "../../preferences/KeyBindingsProvider";
 import { usePresentation } from "../../preferences/PresentationProvider";
-import { DocumentReader } from "./DocumentReader";
-import { ImageReader } from "./ImageReader";
 import { useImageReader } from "./ImageReaderProvider";
 import type { LibraryGateway } from "./types";
+
+// The overlay is mounted above the router from startup; the readers load the
+// first time a session opens.
+const DocumentReader = lazy(() =>
+  import("./DocumentReader").then((module) => ({ default: module.DocumentReader })),
+);
+const ImageReader = lazy(() =>
+  import("./ImageReader").then((module) => ({ default: module.ImageReader })),
+);
 
 export function ReaderOverlay({ gateway }: { gateway: LibraryGateway }) {
   const reader = useImageReader();
@@ -82,9 +97,23 @@ export function ReaderOverlay({ gateway }: { gateway: LibraryGateway }) {
       tabIndex={-1}
       onKeyDown={trapFocus}
     >
-      {content}
+      <Suspense fallback={null}>
+        {content}
+        <FocusFirstReaderControl overlay={overlayRef} />
+      </Suspense>
     </div>
   );
+}
+
+// When the reader chunk arrives after the overlay took focus, move focus on
+// to the reader's first control as an already loaded reader would have.
+function FocusFirstReaderControl({ overlay }: { overlay: RefObject<HTMLDivElement | null> }) {
+  useEffect(() => {
+    const container = overlay.current;
+    if (!container || document.activeElement !== container) return;
+    focusableElements(container)[0]?.focus();
+  }, [overlay]);
+  return null;
 }
 
 const focusableSelector = [

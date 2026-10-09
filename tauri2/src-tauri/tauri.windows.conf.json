@@ -1,0 +1,13 @@
+{
+  "bundle": {
+    "externalBin": [
+      "binaries/dla-cloudflared",
+      "binaries/dla-7zip"
+    ],
+    "resources": {
+      "binaries/7zip/windows/7z.dll": "7z.dll",
+      "binaries/7zip/windows/License.txt": "licenses/7-Zip.txt",
+      "binaries/cloudflared/LICENSE": "licenses/cloudflared.txt"
+    }
+  }
+}

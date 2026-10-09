@@ -8,7 +8,7 @@ import { developers } from "../preferences/developers";
 import { PresentationProvider } from "../preferences/PresentationProvider";
 import type { SystemGateway, SystemReport } from "../preferences/systemReport";
 import type { WindowGateway, WindowMetrics } from "../preferences/windowSizing";
-import { AboutPage } from "./AboutPage";
+import { AboutPage, type IncludedSoftware } from "./AboutPage";
 
 afterEach(() => {
   cleanup();
@@ -80,6 +80,23 @@ describe("AboutPage", () => {
     expect(within(build).queryByRole("button", { name: "Visit our GitHub" })).toBeNull();
     expect(screen.queryByText("Create a diagnostic report")).toBeNull();
   });
+
+  it("names the bundled programs and their licenses only when the package has some", async () => {
+    renderAbout();
+    await screen.findByRole("heading", { name: "About this build" });
+    expect(screen.queryByRole("heading", { name: "Included software" })).toBeNull();
+    cleanup();
+
+    renderAbout({
+      includedSoftware: [
+        { name: "7-Zip", version: "26.04", author: "Igor Pavlov", licenses: "LGPL-2.1-or-later, unRAR" },
+      ],
+    });
+    const section = (await screen.findByRole("heading", { name: "Included software" })).closest("section");
+    if (!section) throw new Error("Included software was not rendered");
+    expect(within(section).getByText("7-Zip 26.04")).toBeTruthy();
+    expect(within(section).getByText("LGPL-2.1-or-later, unRAR")).toBeTruthy();
+  });
 });
 
 function renderAbout(props: {
@@ -87,6 +104,7 @@ function renderAbout(props: {
   systemGateway?: SystemGateway;
   onOpenProject?: () => void | Promise<void>;
   version?: string;
+  includedSoftware?: readonly IncludedSoftware[];
 } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -97,6 +115,7 @@ function renderAbout(props: {
           systemGateway={props.systemGateway}
           onOpenProject={props.onOpenProject}
           version={props.version ?? "v0.1.0-alpha.1"}
+          includedSoftware={props.includedSoftware}
         />
       </PresentationProvider>
     </QueryClientProvider>,

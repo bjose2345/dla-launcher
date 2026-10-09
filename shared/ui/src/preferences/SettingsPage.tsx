@@ -20,10 +20,13 @@ import {
 } from "lucide-react";
 import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
+import { displayPath } from "../displayPath";
+import { listFormatter } from "../i18n/formatters";
 import type { WorkPreference, WorkPreferenceKind } from "../features/library/types";
 import type { ScannerRootPreferenceGateway } from "../features/scanner/types";
 import { scannerRootPreferenceKey } from "../features/scanner/types";
 import { useKeyBindings } from "./KeyBindingsProvider";
+import { settingsTabs, type SettingsTab } from "./settingsRoute";
 import { formatByteSize } from "../formatByteSize";
 import {
   coverCacheCapacities,
@@ -48,24 +51,6 @@ import { locales, themes } from "./preferences";
 import { usePresentation } from "./PresentationProvider";
 import { SettingsSection } from "./SettingsSection";
 import { windowPresets, type WindowGateway, type WindowPreset } from "./windowSizing";
-
-export const settingsTabs = ["general", "library", "display", "controls"] as const;
-
-export type SettingsTab = (typeof settingsTabs)[number];
-
-export function parseSettingsTab(value: unknown): SettingsTab {
-  return settingsTabs.find((tab) => tab === value) ?? "general";
-}
-
-export interface SettingsRouteSearch {
-  tab: SettingsTab;
-  legacyAbout?: true;
-}
-
-export function parseSettingsSearch(search: Record<string, unknown>): SettingsRouteSearch {
-  if (search.tab === "about") return { tab: "general", legacyAbout: true };
-  return { tab: parseSettingsTab(search.tab) };
-}
 
 const tabLabelKeys = {
   general: "settings.tab.general",
@@ -713,7 +698,7 @@ function BindingRow({
     const found = bindingActions.find((candidate) => candidate.id === actionId);
     return found ? [found] : [];
   }) ?? [];
-  const feedbackNames = new Intl.ListFormat(locale, { style: "long", type: "conjunction" })
+  const feedbackNames = listFormatter(locale)
     .format(feedbackActions.map((candidate) => t(candidate.labelKey)));
   const slots = Math.min(action.slots, combos.length + 1);
 
@@ -817,7 +802,9 @@ function ScannerRootSection({ gateway }: { gateway: ScannerRootPreferenceGateway
           {preference.isPending ? (
             <strong><LoaderCircle className="settings-spin" aria-hidden="true" />{t("settings.scannerRootLoading")}</strong>
           ) : (
-            <strong>{preference.data?.displayPath ?? t("settings.scannerRootUnavailable")}</strong>
+            <strong>{preference.data?.displayPath
+              ? <code className="app-path">{displayPath(preference.data.displayPath)}</code>
+              : t("settings.scannerRootUnavailable")}</strong>
           )}
           {preference.data ? (
             <span className={`settings-folder-state${preference.data.available ? "" : " pending"}`}>

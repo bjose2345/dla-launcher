@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   AlertTriangle,
-  ArrowRight,
   AudioLines,
   AudioWaveform,
   Grid3X3,
@@ -23,6 +22,8 @@ import {
 
 import type { AndroidAppGateway, AndroidAppRuntimeState, AndroidAppView } from "../../android-package";
 import type { CatalogDetailGateway, CatalogWork } from "../catalog";
+import type { ScanInstallGateway } from "../scanner/types";
+import type { SearchGateway } from "../search/types";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import {
   LibraryCollection,
@@ -34,6 +35,8 @@ import { LibraryShelves } from "./LibraryShelves";
 import { LibraryTable } from "./LibraryTable";
 import { effectiveIdentity } from "./libraryPresentation";
 import { LibraryLensRail } from "./LibraryLensRail";
+import { LibraryManageDrawer, type ManageTab } from "./LibraryManageDrawer";
+import { LibraryWorkMenu } from "./LibraryWorkMenu";
 import { useMediaPlayback } from "./MediaPlaybackProvider";
 import { isReaderAction, useImageReader } from "./ImageReaderProvider";
 import { mediaItemName } from "./mediaSession";
@@ -43,6 +46,7 @@ import { TrackWaveform } from "./TrackWaveform";
 import {
   featuredInstallationId,
   libraryContentKind,
+  libraryContentKindLabel,
   libraryDisplayCreator,
   libraryDisplayTitle,
   launchTotalsByInstallation,
@@ -87,7 +91,12 @@ function readAudioVisualizerMode(): AudioVisualizerMode {
 export function LibraryPage({
   gateway,
   catalogGateway,
-  onOpenReview,
+  searchGateway,
+  installs,
+  manage,
+  spotlight,
+  onManage,
+  onCloseManage,
   onOpenMedia,
   onOpenWork,
   androidAppGateway,
@@ -96,7 +105,14 @@ export function LibraryPage({
   gateway: LibraryGateway;
   androidAppGateway?: AndroidAppGateway;
   catalogGateway: CatalogDetailGateway;
-  onOpenReview: (installationId: string) => void | Promise<void>;
+  searchGateway?: Pick<SearchGateway, "search">;
+  installs?: ScanInstallGateway;
+  /** The work whose Manage panel is open over the Library. */
+  manage?: { installationId: string; tab?: ManageTab };
+  /** A work to show in the featured spot, such as one just added. */
+  spotlight?: string;
+  onManage: (installationId: string, tab?: ManageTab) => void | Promise<void>;
+  onCloseManage?: () => void;
   onOpenMedia: (installationId: string) => void | Promise<void>;
   onOpenWork: (code: string) => void | Promise<void>;
   onReinstallAndroidApp?: (workCode: string) => void | Promise<void>;
@@ -200,6 +216,8 @@ export function LibraryPage({
       latestLaunch: launches.data?.find((activity) => activity.installationId === installation.id) ?? null,
       launchTotals: totalsByInstallation.get(installation.id) ?? null,
       health: healthByInstallation.get(installation.id) ?? null,
+      fileCount: preparedByInstallation.get(installation.id)?.installedFileCount
+        ?? installation.detection.contentItems.length,
     };
   });
   const entryByInstallation = new Map(collectionEntries.map((entry) => [
@@ -239,7 +257,8 @@ export function LibraryPage({
   const featuredId = shelves.data
     ? featuredInstallationId(shelves.data, lensInstallationIds)
     : null;
-  const featured = lensEntries.find((entry) => entry.installation.id === featuredId)
+  const featured = (spotlight ? collectionEntries.find((entry) => entry.installation.id === spotlight) : undefined)
+    ?? lensEntries.find((entry) => entry.installation.id === featuredId)
     ?? lensEntries[0]
     ?? null;
   const libraryWorkKeys = new Set([
@@ -315,12 +334,17 @@ export function LibraryPage({
       setConfirmRemoveAndroidApp(null);
     },
   });
+  const browse = gateway.openInstallationFolder
+    ? (installationId: string) => {
+      gateway.openInstallationFolder!(installationId).catch(() => void onManage(installationId, "files"));
+    }
+    : undefined;
   const activate = (
     entry: LibraryCollectionEntry,
     requestedAction: LaunchActionKind | null = entry.action,
   ) => {
     if (!requestedAction) {
-      void onOpenReview(entry.installation.id);
+      void onManage(entry.installation.id);
     } else if (requestedAction === "play_audio") {
       if (playback.session?.installationId === entry.installation.id) playback.toggle();
       else void playback.openWork(entry.installation.id);
@@ -333,7 +357,7 @@ export function LibraryPage({
       if (entry.latestLaunch && launchActivityIsActive(entry.latestLaunch.status)) return;
       launch.mutate(entry.installation.id);
     } else {
-      void onOpenReview(entry.installation.id);
+      void onManage(entry.installation.id);
     }
   };
   const metadataErrors = [preparedPackages.error, catalogWorks.error];
@@ -445,8 +469,9 @@ export function LibraryPage({
               preferEnglish={locale !== "ja-JP"}
               busy={launch.isPending && launch.variables === featured.installation.id}
               onActivate={() => activate(featured)}
-              onOpenReview={() => void onOpenReview(featured.installation.id)}
+              onManage={(tab) => void onManage(featured.installation.id, tab)}
               onOpenWork={featured.work ? () => void onOpenWork(featured.work!.code) : undefined}
+              onBrowse={browse ? () => browse(featured.installation.id) : undefined}
             />
           ) : null}
 
@@ -454,15 +479,18 @@ export function LibraryPage({
             <LibraryTable
               entries={lensEntries}
               onActivate={activate}
-              onOpenReview={onOpenReview}
+              onManage={onManage}
+              onOpenWork={onOpenWork}
+              onBrowse={browse}
             />
           ) : view === "grid" ? (
             <LibraryCollection
               entries={lensEntries}
               activatingInstallationId={launch.isPending ? launch.variables ?? null : null}
               onActivate={activate}
-              onOpenReview={onOpenReview}
+              onManage={onManage}
               onOpenWork={onOpenWork}
+              onBrowse={browse}
             />
           ) : (
             <>
@@ -477,6 +505,9 @@ export function LibraryPage({
                     const entry = entryByInstallation.get(installationId);
                     if (entry) activate(entry, action);
                   }}
+                  onManage={(installationId, tab) => void onManage(installationId, tab)}
+                  onOpenWork={onOpenWork}
+                  onBrowse={browse}
                 />
               ) : null}
 
@@ -499,6 +530,19 @@ export function LibraryPage({
           <h2>{t("library.emptyTitle")}</h2>
           <p>{t("library.emptyHelp")}</p>
         </section>
+      ) : null}
+
+      {manage ? (
+        <LibraryManageDrawer
+          installationId={manage.installationId}
+          initialTab={manage.tab}
+          gateway={gateway}
+          catalogGateway={catalogGateway}
+          searchGateway={searchGateway}
+          installs={installs}
+          onClose={() => onCloseManage?.()}
+          onOpenWork={(code) => void onOpenWork(code)}
+        />
       ) : null}
     </main>
   );
@@ -650,18 +694,20 @@ function LibraryFeature({
   preferEnglish,
   busy,
   onActivate,
-  onOpenReview,
+  onManage,
   onOpenWork,
+  onBrowse,
 }: {
   entry: LibraryCollectionEntry;
   gateway: LibraryGateway;
   preferEnglish: boolean;
   busy: boolean;
   onActivate: () => void;
-  onOpenReview: () => void;
+  onManage: (tab: ManageTab) => void;
   onOpenWork?: () => void;
+  onBrowse?: () => void;
 }) {
-  const { showPlayTime, t } = usePresentation();
+  const { locale, showPlayTime, t } = usePresentation();
   const playback = useMediaPlayback();
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
   const [waveformDuration, setWaveformDuration] = useState<number | null>(null);
@@ -694,7 +740,7 @@ function LibraryFeature({
       ? t(mediaActionMessageKey(action))
       : action === "launch_executable"
         ? t("detail.play")
-        : t("library.review");
+        : t("library.setUp");
   const featureItems = useQuery({
     queryKey: ["library", "media", "items", installation.id],
     queryFn: () => gateway.listMediaItems(installation.id),
@@ -810,8 +856,12 @@ function LibraryFeature({
         <h2>{title}</h2>
         <p>{creator}</p>
         <div className="library-feature-meta">
-          <span>{kindLabel(kind, t)}</span>
-          <span>{installation.detection.contentItems.length} {t("library.home.items")}</span>
+          <span>{libraryContentKindLabel(kind, t)}</span>
+          <span>
+            {entry.fileCount === 1
+              ? t("library.home.filesOne")
+              : t("library.home.files", { count: entry.fileCount.toLocaleString(locale) })}
+          </span>
           {work?.releaseDate ? <span>{work.releaseDate.slice(0, 4)}</span> : null}
           {showPlayTime && entry.launchTotals ? (
             <span>{playTimeLabel(entry.launchTotals.totalDurationMs, t)}</span>
@@ -871,33 +921,17 @@ function LibraryFeature({
                   ? t("media.pause")
                   : actionLabel}
           </button>
-          {onOpenWork ? (
-            <button className="library-feature-secondary" type="button" onClick={onOpenWork}>
-              {t("library.home.details")}<ArrowRight aria-hidden="true" />
-            </button>
-          ) : (
-            <button className="library-feature-secondary" type="button" onClick={onOpenReview}>
-              {t("library.home.manage")}<ListChecks aria-hidden="true" />
-            </button>
-          )}
+          <LibraryWorkMenu
+            className="library-feature-menu"
+            title={title}
+            onOpenWork={onOpenWork}
+            onManage={onManage}
+            onBrowse={onBrowse}
+          />
         </div>
       </div>
     </section>
   );
-}
-
-function kindLabel(
-  kind: ReturnType<typeof libraryContentKind>,
-  t: ReturnType<typeof usePresentation>["t"],
-): string {
-  switch (kind) {
-    case "audio": return t("library.home.filterAudio");
-    case "images": return t("library.home.filterImages");
-    case "video": return t("library.home.filterVideo");
-    case "documents": return t("library.home.filterDocuments");
-    case "apps": return t("library.home.filterApps");
-    default: return t("domain.media.unknown");
-  }
 }
 
 function LibraryErrors({ errors }: { errors: Array<unknown> }) {

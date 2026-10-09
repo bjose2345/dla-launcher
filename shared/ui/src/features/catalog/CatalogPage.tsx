@@ -6,6 +6,7 @@ import { CatalogResults } from "./CatalogResults";
 import { CatalogEmptyState, catalogSnapshotIsEmpty } from "./CatalogEmptyState";
 import { catalogRequest, nextCatalogOffset } from "./query";
 import type { CatalogGateway, CatalogRouteState, CatalogTimeline } from "./types";
+import { errorMessage } from "../../app/errorMessage";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import { CatalogMonthlyPage } from "./CatalogMonthlyPage";
 
@@ -14,7 +15,7 @@ interface CatalogPageProps {
   gateway: CatalogGateway;
   onOpenWork?: (code: string) => void | Promise<void>;
   onRouteChange?: (
-    change: Partial<Pick<CatalogRouteState, "sort" | "timeline" | "month" | "page">>,
+    change: Partial<Pick<CatalogRouteState, "sort" | "timeline" | "month" | "page" | "day">>,
     replace?: boolean,
   ) => void;
 }
@@ -91,8 +92,4 @@ function CatalogLoading() {
       {Array.from({ length: 7 }, (_, index) => <span key={index} />)}
     </section>
   );
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

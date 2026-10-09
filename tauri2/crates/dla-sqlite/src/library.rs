@@ -5,7 +5,17 @@ use rusqlite_migration::{M, Migrations};
 
 use crate::database;
 
-const LIBRARY_MIGRATION_LIST: &[M<'static>] = &[M::up(include_str!("../schema/library.sql"))];
+// Public builds ship the schema as of 2026-08-27 as version 1; every later
+// migration follows in order, so alpha.2 libraries upgrade in place.
+const LIBRARY_MIGRATION_LIST: &[M<'static>] = &[
+    M::up(include_str!("../schema/library.sql")),
+    M::up(include_str!(
+        "../migrations/library/0019_add_delivery_jobs.sql"
+    )),
+    M::up(include_str!(
+        "../migrations/library/0020_add_scan_purpose_and_ignored_findings.sql"
+    )),
+];
 const LIBRARY_MIGRATIONS: Migrations<'static> = Migrations::from_slice(LIBRARY_MIGRATION_LIST);
 
 pub struct SqliteLibraryStore {

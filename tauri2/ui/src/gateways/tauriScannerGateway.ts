@@ -1,7 +1,9 @@
 import type {
+  ScanAddResponse,
+  ScanFindingList,
+  ScanInstallView,
   ScanIssuePage,
   ScanProgress,
-  ScanResultPage,
   ScanRootPreference,
   ScanSessionView,
   ScannerGateway,
@@ -35,16 +37,34 @@ export const tauriScannerGateway: ScannerGateway = {
   readLatest(): Promise<ScanSessionView | null> {
     return invoke("read_latest_library_scan");
   },
-  browseResults(request): Promise<ScanResultPage> {
-    return invoke("browse_library_scan_results", { request });
+  listFindings(sessionId): Promise<ScanFindingList> {
+    return invoke("list_scan_findings", { sessionId });
+  },
+  setFindingIgnored(rootId, key, ignored): Promise<void> {
+    return invoke("set_scan_finding_ignored", { rootId, key, ignored });
+  },
+  addFindings(sessionId, findings): Promise<ScanAddResponse> {
+    return invoke("add_scan_findings", { request: { sessionId, findings } });
   },
   browseIssues(request): Promise<ScanIssuePage> {
     return invoke("browse_library_scan_issues", { request });
   },
-  createInstallation(sessionId: string, selectedResultId: string): Promise<{ id: string }> {
-    return invoke("create_installation_from_scan", { sessionId, selectedResultId });
-  },
   subscribeProgress(listener): Promise<() => void> {
     return listen<ScanProgress>("scanner-progress", (event) => listener(event.payload));
+  },
+  readInstalls(): Promise<ScanInstallView> {
+    return invoke("read_scan_installs");
+  },
+  subscribeInstalls(listener): Promise<() => void> {
+    return listen<ScanInstallView>("scan-installs-changed", (event) => listener(event.payload));
+  },
+  selectInstallFolder(): Promise<ScanInstallView | null> {
+    return invoke("select_install_folder");
+  },
+  installArchive(installationId): Promise<ScanInstallView> {
+    return invoke("install_library_archive", { installationId });
+  },
+  cancelInstall(installationId): Promise<ScanInstallView> {
+    return invoke("cancel_scan_install", { installationId });
   },
 };

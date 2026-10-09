@@ -1,3 +1,4 @@
+import { browserStorage, type PreferenceStorage } from "../../preferences/browserStorage";
 import type { MediaSessionItem } from "./types";
 
 export type ImageReaderProfile = "gallery" | "manga";
@@ -17,8 +18,6 @@ export interface ImageReaderChapter {
   path: string;
   items: MediaSessionItem[];
 }
-
-type PreferenceStorage = Pick<Storage, "getItem" | "setItem">;
 
 const STORAGE_PREFIX = "dla-launcher:image-reader:v1";
 const MIN_ZOOM = 0.5;
@@ -42,7 +41,7 @@ export function imageReaderProfilePreferences(
 
 export function readImageReaderPreferences(
   installationId: string,
-  storage = browserStorage(),
+  storage: PreferenceStorage | undefined = browserStorage(),
 ): ImageReaderPreferences {
   if (!storage) return defaultImageReaderPreferences;
   try {
@@ -64,7 +63,7 @@ export function readImageReaderPreferences(
 export function writeImageReaderPreferences(
   installationId: string,
   preferences: ImageReaderPreferences,
-  storage = browserStorage(),
+  storage: PreferenceStorage | undefined = browserStorage(),
 ): void {
   if (!storage) return;
   try {
@@ -175,15 +174,6 @@ export function readerClickStep(
 
 function storageKey(installationId: string): string {
   return `${STORAGE_PREFIX}:${installationId}`;
-}
-
-function browserStorage(): PreferenceStorage | undefined {
-  if (typeof window === "undefined") return undefined;
-  try {
-    return window.localStorage;
-  } catch {
-    return undefined;
-  }
 }
 
 function isProfile(value: unknown): value is ImageReaderProfile {

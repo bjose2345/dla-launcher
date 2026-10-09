@@ -1,0 +1,666 @@
+/* Install from DLA: the work page panel, the sign-in dialog and Downloads. */
+
+.delivery-work-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.work-local-button-delivery {
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  padding-top: 11px;
+  padding-bottom: 11px;
+  text-align: center;
+}
+
+.work-local-button-delivery > span {
+  margin-left: 0;
+}
+
+.work-local-button-delivery-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.work-local-button-delivery-label > span {
+  margin-left: 0;
+}
+
+.work-local-button-delivery-label svg {
+  width: 16px;
+  height: 16px;
+}
+
+.work-local-button-delivery small {
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  opacity: 0.72;
+}
+
+.delivery-dialog-plans {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 18px 0 0;
+  color: var(--app-muted);
+  font-size: 0.8rem;
+}
+
+.delivery-work-hint {
+  margin: 0;
+  color: var(--app-muted);
+  font-size: 0.78rem;
+}
+
+.delivery-installed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  color: var(--color-success);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.delivery-installed p {
+  margin: 0;
+}
+
+.delivery-button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 14px;
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-chip);
+  background: var(--app-panel-raised);
+  color: var(--app-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.delivery-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.delivery-button:hover:not(:disabled) {
+  color: var(--color-base-content);
+}
+
+.delivery-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.delivery-button-primary {
+  background: var(--color-primary);
+  box-shadow: none;
+  color: var(--color-primary-content);
+}
+
+.delivery-button-primary:hover:not(:disabled) {
+  color: var(--color-primary-content);
+}
+
+.delivery-button-danger {
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-error) 45%, transparent);
+  background: color-mix(in oklch, var(--color-error) 12%, transparent);
+  color: var(--color-error);
+}
+
+.delivery-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-primary);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 750;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.delivery-icon-button {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--app-muted);
+  cursor: pointer;
+}
+
+.delivery-icon-button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.delivery-spin {
+  width: 15px;
+  height: 15px;
+  animation: delivery-spin 0.9s linear infinite;
+}
+
+@keyframes delivery-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .delivery-spin {
+    animation: none;
+  }
+}
+
+.delivery-problem {
+  margin: 0;
+  color: var(--color-error);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.delivery-job {
+  display: grid;
+  gap: 8px;
+}
+
+.delivery-job-status {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.delivery-job-failed .delivery-job-status {
+  color: var(--color-error);
+}
+
+.delivery-job-installed .delivery-job-status {
+  color: var(--color-success);
+}
+
+.delivery-job-progress {
+  width: 100%;
+  height: 8px;
+  accent-color: var(--color-primary);
+}
+
+.delivery-job-detail {
+  margin: 0;
+  color: var(--app-muted);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.delivery-job-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.delivery-dialog-backdrop {
+  position: fixed;
+  z-index: 80;
+  display: grid;
+  inset: 0;
+  padding: 16px;
+  place-items: center;
+  background: color-mix(in oklch, var(--app-backdrop) 72%, transparent);
+  backdrop-filter: blur(6px);
+  animation: delivery-backdrop-in 200ms ease both;
+}
+
+.delivery-dialog {
+  position: relative;
+  width: min(440px, 100%);
+  overflow: hidden;
+  border: 1px solid color-mix(in oklch, var(--color-base-content) 12%, transparent);
+  border-radius: 14px;
+  background: linear-gradient(180deg, color-mix(in oklch, var(--app-panel-raised) 94%, var(--color-primary)), var(--app-panel-raised) 55%);
+  box-shadow: 0 30px 80px -20px rgb(0 0 0 / 80%);
+  animation: delivery-dialog-in 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* The archive's banner: the app's dotted backdrop under a soft glow. */
+.delivery-dialog-banner {
+  display: flex;
+  height: 92px;
+  align-items: flex-end;
+  gap: 14px;
+  padding: 0 24px 16px;
+  border-bottom: 1px solid color-mix(in oklch, var(--color-primary) 30%, transparent);
+  background-color: color-mix(in oklch, var(--color-primary) 8%, transparent);
+  background-image:
+    radial-gradient(120% 150% at 0% 0%, color-mix(in oklch, var(--color-primary) 36%, transparent), transparent 62%),
+    radial-gradient(color-mix(in oklch, var(--color-base-content) 16%, transparent) 0.8px, transparent 0.8px);
+  background-size: auto, 14px 14px;
+}
+
+.delivery-dialog-emblem {
+  position: relative;
+  display: grid;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--color-primary-content);
+}
+
+.delivery-dialog-emblem::before {
+  position: absolute;
+  inset: 7px;
+  border-radius: 7px;
+  background: linear-gradient(135deg, var(--color-primary), color-mix(in oklch, var(--color-primary) 62%, black));
+  box-shadow: 0 10px 26px -8px color-mix(in oklch, var(--color-primary) 75%, transparent);
+  content: "";
+  rotate: 45deg;
+}
+
+.delivery-dialog-emblem svg {
+  position: relative;
+  width: 20px;
+  height: 20px;
+}
+
+.delivery-dialog-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 11px;
+  padding: 5px 24px 5px 11px;
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 100%, 0 100%);
+  background: linear-gradient(100deg, var(--color-primary), color-mix(in oklch, var(--color-primary) 78%, black));
+  color: #fff;
+  font-size: 0.66rem;
+  font-weight: 850;
+  letter-spacing: 0.22em;
+}
+
+.delivery-dialog-tab small {
+  color: rgb(255 255 255 / 72%);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.delivery-dialog-close {
+  position: absolute;
+  z-index: 1;
+  top: 12px;
+  right: 12px;
+}
+
+.delivery-dialog-body {
+  padding: 20px 24px 24px;
+}
+
+.delivery-dialog-body h2 {
+  margin: 0;
+  font-size: 1.45rem;
+  font-weight: 850;
+  letter-spacing: -0.02em;
+}
+
+.delivery-dialog-lead {
+  margin: 6px 0 22px;
+  color: var(--app-muted);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.delivery-form {
+  display: grid;
+  gap: 14px;
+}
+
+.delivery-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.delivery-form label > span:first-child {
+  color: var(--app-subtle);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.delivery-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.delivery-field > svg {
+  position: absolute;
+  left: 13px;
+  width: 17px;
+  height: 17px;
+  color: var(--app-subtle);
+  pointer-events: none;
+  transition: color 150ms ease;
+}
+
+.delivery-field:focus-within > svg {
+  color: var(--color-primary);
+}
+
+.delivery-field input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 46px 0 42px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: color-mix(in oklch, var(--app-backdrop) 82%, black);
+  color: var(--color-base-content);
+  font: inherit;
+  font-size: 0.92rem;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.delivery-field input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-primary) 22%, transparent);
+  outline: none;
+}
+
+.delivery-field-reveal {
+  position: absolute;
+  right: 6px;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--app-subtle);
+  cursor: pointer;
+}
+
+.delivery-field-reveal:hover {
+  background: color-mix(in oklch, var(--color-base-content) 10%, transparent);
+  color: var(--color-base-content);
+}
+
+.delivery-field-reveal:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.delivery-field-reveal svg {
+  width: 17px;
+  height: 17px;
+}
+
+.delivery-sign-in-problem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 9px 12px;
+  border-left: 3px solid var(--color-error);
+  background: color-mix(in oklch, var(--color-error) 12%, transparent);
+}
+
+.delivery-sign-in-problem svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.delivery-dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.delivery-sign-in-submit {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 26px 0 22px;
+  border: 0;
+  clip-path: polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
+  background: linear-gradient(100deg, var(--color-primary), color-mix(in oklch, var(--color-primary) 78%, white));
+  color: var(--color-primary-content);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 750;
+  transition: filter 150ms ease;
+}
+
+.delivery-sign-in-submit:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.delivery-sign-in-submit:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.delivery-sign-in-submit:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+}
+
+.delivery-sign-in-submit svg {
+  width: 17px;
+  height: 17px;
+}
+
+.delivery-sign-in-arrow {
+  transition: transform 200ms ease;
+}
+
+.delivery-sign-in-submit:hover .delivery-sign-in-arrow {
+  transform: translateX(3px);
+}
+
+@keyframes delivery-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.98);
+  }
+}
+
+@keyframes delivery-backdrop-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .delivery-dialog,
+  .delivery-dialog-backdrop {
+    animation: none;
+  }
+}
+
+.downloads-page {
+  --downloads-gutter: max(16px, calc((100% - 1060px) / 2));
+
+  min-height: 0;
+  width: 100%;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0 0 80px;
+}
+
+.downloads-masthead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 34px var(--downloads-gutter) 26px;
+  border-bottom: 1px solid var(--app-border);
+  background-color: var(--app-backdrop);
+}
+
+.downloads-masthead h1 {
+  margin: 0;
+  font-size: clamp(1.7rem, 3.4vw, 2.5rem);
+  font-weight: 850;
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
+.downloads-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 6px;
+  color: var(--color-primary);
+  font-size: 0.62rem;
+  font-weight: 850;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.downloads-eyebrow svg {
+  width: 13px;
+  height: 13px;
+}
+
+.downloads-settings {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.downloads-setting {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  font-size: 0.8rem;
+}
+
+.downloads-setting code {
+  overflow-wrap: anywhere;
+}
+
+.downloads-body {
+  display: grid;
+  gap: 14px;
+  padding: 22px var(--downloads-gutter) 0;
+}
+
+.downloads-empty {
+  margin: 0;
+  color: var(--app-muted);
+}
+
+.downloads-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.downloads-item {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  background: var(--app-panel-raised);
+}
+
+.downloads-item header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.downloads-code {
+  color: var(--app-muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.app-sidebar-activity {
+  display: grid;
+  gap: 8px;
+  padding: 10px 8px;
+}
+
+.delivery-activity {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 10px;
+  border: 0;
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent);
+  background: color-mix(in oklch, var(--color-primary) 10%, var(--app-panel-raised));
+  color: var(--color-base-content);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  grid-template-columns: 18px minmax(0, 1fr);
+}
+
+.delivery-activity-icon {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--color-primary);
+}
+
+.delivery-activity-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.delivery-activity-text strong {
+  overflow: hidden;
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.delivery-activity-text span {
+  color: var(--app-muted);
+}
+
+.delivery-activity-progress {
+  width: 100%;
+  height: 5px;
+  accent-color: var(--color-primary);
+  grid-column: 1 / -1;
+}
+
+.app-sidebar[data-collapsed="true"] .delivery-activity {
+  padding: 8px 6px;
+  grid-template-columns: 1fr;
+  justify-items: center;
+}
+
+.app-sidebar[data-collapsed="true"] .delivery-activity-text {
+  display: none;
+}
+

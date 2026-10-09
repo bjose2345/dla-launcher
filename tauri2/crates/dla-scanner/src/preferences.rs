@@ -113,7 +113,10 @@ mod tests {
 
         assert_eq!(
             locations.default_root().expect("default root").display_path,
-            "/home/example/My Works"
+            Path::new("/home/example")
+                .join("My Works")
+                .display()
+                .to_string()
         );
     }
 

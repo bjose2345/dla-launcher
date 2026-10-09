@@ -103,7 +103,7 @@ describe("MediaPlaybackProvider shortcuts", () => {
     await waitFor(() => expect(play).toHaveBeenCalledOnce());
     expect(load).toHaveBeenCalled();
     expect(AudioContext).not.toHaveBeenCalled();
-    expect(screen.getByTestId("playing").textContent).toBe("playing");
+    await waitFor(() => expect(screen.getByTestId("playing").textContent).toBe("playing"));
 
     fireEvent.click(screen.getByRole("button", { name: "Enable analyser" }));
 

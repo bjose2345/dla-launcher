@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  formatShelfDate,
-  shelfResumePercent,
-} from "./LibraryShelves";
+import { shelfResumePercent } from "./LibraryShelves";
 import type { MediaResume } from "./types";
 
 describe("library shelf presentation", () => {
@@ -12,10 +9,6 @@ describe("library shelf presentation", () => {
     expect(shelfResumePercent(resume(120_000, 100_000))).toBe(100);
     expect(shelfResumePercent(resume(-1, 100_000))).toBe(0);
     expect(shelfResumePercent(resume(1, null))).toBeNull();
-  });
-
-  it("preserves malformed timestamps instead of throwing", () => {
-    expect(formatShelfDate("not-a-date", "en-US")).toBe("not-a-date");
   });
 });
 

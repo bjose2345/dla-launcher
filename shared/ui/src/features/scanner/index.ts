@@ -1,9 +1,15 @@
+export { ScanInstallActivity } from "./ScanInstallActivity";
 export { ScannerPage } from "./ScannerPage";
 export type {
+  AddScanFinding,
+  ScanAddResponse,
+  ScanFinding,
+  ScanFindingList,
+  ScanInstall,
+  ScanInstallGateway,
+  ScanInstallView,
   ScanIssuePage,
-  ScanMatchOutcome,
   ScanProgress,
-  ScanResultPage,
   ScanRootPreference,
   ScanRootPreferenceSource,
   ScanSessionView,
@@ -11,4 +17,5 @@ export type {
   ScannerRootPreferenceGateway,
   SelectedScanRoot,
 } from "./types";
-export { scannerRootPreferenceKey } from "./types";
+export { scanInstallsKey, scannerRootPreferenceKey } from "./types";
+export { useScanInstalls } from "./useScanInstalls";

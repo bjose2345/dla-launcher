@@ -1,10 +1,14 @@
-use std::io;
+use std::{
+    collections::{BTreeSet, HashMap},
+    io,
+};
 
 use dla_application::{
     installation_from_scan::{
-        InstallationScanResultScope, InstallationScanSelection, InstallationScanSource,
-        InstallationScanSourceError,
+        InstallationScanResultScope, InstallationScanSelection, InstallationScanSnapshot,
+        InstallationScanSource, InstallationScanSourceError,
     },
+    scan_findings::IgnoredScanFindingStore,
     scanner::{
         ScanIssuePage, ScanIssueQuery, ScanRepository, ScanResultItem, ScanResultPage,
         ScanResultQuery, ScanRootLocation, ScanRootPreferenceRepository, ScanWriteBatch,
@@ -14,8 +18,8 @@ use dla_application::{
 use dla_domain::scanner::{
     ScanCounters, ScanEntry, ScanEntryId, ScanEntryKind, ScanEntryPresence, ScanEvidence,
     ScanEvidenceKind, ScanHashPolicy, ScanIssue, ScanIssueCode, ScanMatchCandidate,
-    ScanMatchConfidence, ScanMatchOutcome, ScanOptions, ScanResult, ScanResultId, ScanRoot,
-    ScanRootId, ScanSession, ScanSessionId, ScanStatus,
+    ScanMatchConfidence, ScanMatchOutcome, ScanOptions, ScanPurpose, ScanResult, ScanResultId,
+    ScanRoot, ScanRootId, ScanSession, ScanSessionId, ScanStatus,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params, types::Type};
 
@@ -215,7 +219,8 @@ impl ScanRepository for SqliteLibraryStore {
             connection
                 .query_row(
                     &format!(
-                        "{} ORDER BY started_at DESC, session_id DESC LIMIT 1",
+                        "{} WHERE purpose = 'library'
+                         ORDER BY started_at DESC, session_id DESC LIMIT 1",
                         scan_session_select()
                     ),
                     [],
@@ -264,6 +269,124 @@ impl InstallationScanSource for SqliteLibraryStore {
         })
         .map_err(InstallationScanSourceError::persistence)
     }
+
+    fn load_session(
+        &self,
+        session_id: &ScanSessionId,
+    ) -> Result<Option<InstallationScanSnapshot>, InstallationScanSourceError> {
+        self.with_connection(|connection| {
+            let transaction = connection.transaction()?;
+            let snapshot = read_installation_scan_snapshot(&transaction, session_id)?;
+            transaction.commit()?;
+            Ok(snapshot)
+        })
+        .map_err(InstallationScanSourceError::persistence)
+    }
+}
+
+impl IgnoredScanFindingStore for SqliteLibraryStore {
+    fn read_ignored_scan_findings(
+        &self,
+        root_id: &ScanRootId,
+    ) -> Result<BTreeSet<String>, InstallationScanSourceError> {
+        self.with_connection(|connection| {
+            let mut statement = connection
+                .prepare("SELECT scope_key FROM library_scan_ignored_finding WHERE root_id = ?1")?;
+            let keys = statement.query_map(params![root_id.0], |row| row.get::<_, String>(0))?;
+            keys.collect()
+        })
+        .map_err(InstallationScanSourceError::persistence)
+    }
+
+    fn set_scan_finding_ignored(
+        &self,
+        root_id: &ScanRootId,
+        key: &str,
+        ignored: bool,
+        now: &str,
+    ) -> Result<(), InstallationScanSourceError> {
+        self.with_connection(|connection| {
+            if ignored {
+                connection.execute(
+                    "INSERT INTO library_scan_ignored_finding (root_id, scope_key, ignored_at)
+                     VALUES (?1, ?2, ?3)
+                     ON CONFLICT (root_id, scope_key) DO UPDATE SET ignored_at = excluded.ignored_at",
+                    params![root_id.0, key, now],
+                )?;
+            } else {
+                connection.execute(
+                    "DELETE FROM library_scan_ignored_finding WHERE root_id = ?1 AND scope_key = ?2",
+                    params![root_id.0, key],
+                )?;
+            }
+            Ok(())
+        })
+        .map_err(InstallationScanSourceError::persistence)
+    }
+}
+
+fn read_installation_scan_snapshot(
+    connection: &Connection,
+    session_id: &ScanSessionId,
+) -> rusqlite::Result<Option<InstallationScanSnapshot>> {
+    let Some(session) = connection
+        .query_row(
+            &format!("{} WHERE session_id = ?1", scan_session_select()),
+            params![session_id.0],
+            read_scan_session,
+        )
+        .optional()?
+    else {
+        return Ok(None);
+    };
+    let root = read_scan_root(connection, &session.root_id)?;
+    let mut candidates = HashMap::<String, Vec<ScanMatchCandidate>>::new();
+    {
+        let mut statement = connection.prepare(
+            "SELECT candidate.result_id, candidate.work_code, candidate.confidence,
+                    candidate.reason_codes, candidate.rank
+             FROM library_scan_candidate candidate
+             JOIN library_scan_result result ON result.result_id = candidate.result_id
+             WHERE result.session_id = ?1
+             ORDER BY candidate.result_id, candidate.rank",
+        )?;
+        let rows = statement.query_map(params![session.id.0], |row| {
+            let reason_codes = serde_json::from_str(&row.get::<_, String>(3)?)
+                .map_err(|error| invalid_text(error.to_string()))?;
+            Ok((
+                row.get::<_, String>(0)?,
+                ScanMatchCandidate {
+                    work_code: row.get(1)?,
+                    confidence: parse_scan_match_confidence(&row.get::<_, String>(2)?)?,
+                    reason_codes,
+                    rank: read_u32(row, 4)?,
+                },
+            ))
+        })?;
+        for row in rows {
+            let (result_id, candidate) = row?;
+            candidates.entry(result_id).or_default().push(candidate);
+        }
+    }
+    let results = read_scan_result_rows(
+        connection,
+        "WHERE result.session_id = ?1 ORDER BY result.result_id",
+        params![session.id.0],
+    )?
+    .into_iter()
+    .map(|item| {
+        let mut result = item.result;
+        result.candidates = candidates.remove(&result.id.0).unwrap_or_default();
+        result
+    })
+    .collect();
+    let entries = read_session_entries(connection, &session)?;
+    Ok(Some(InstallationScanSnapshot {
+        root,
+        session,
+        entries,
+        results,
+    }))
 }
 
 fn read_installation_scan_selection(
@@ -281,22 +404,7 @@ fn read_installation_scan_selection(
     else {
         return Ok(None);
     };
-    let root = connection.query_row(
-        "SELECT root_id, platform, path_key, display_path, created_at, updated_at
-         FROM library_scan_root
-         WHERE root_id = ?1",
-        params![session.root_id.0],
-        |row| {
-            Ok(ScanRoot {
-                id: ScanRootId(row.get(0)?),
-                platform: row.get(1)?,
-                path_key: row.get(2)?,
-                display_path: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
-            })
-        },
-    )?;
+    let root = read_scan_root(connection, &session.root_id)?;
     let mut selected_results = read_scan_result_rows(
         connection,
         "WHERE result.result_id = ?1",
@@ -317,6 +425,25 @@ fn read_installation_scan_selection(
         entries,
         result_scopes,
     }))
+}
+
+fn read_scan_root(connection: &Connection, root_id: &ScanRootId) -> rusqlite::Result<ScanRoot> {
+    connection.query_row(
+        "SELECT root_id, platform, path_key, display_path, created_at, updated_at
+         FROM library_scan_root
+         WHERE root_id = ?1",
+        params![root_id.0],
+        |row| {
+            Ok(ScanRoot {
+                id: ScanRootId(row.get(0)?),
+                platform: row.get(1)?,
+                path_key: row.get(2)?,
+                display_path: row.get(3)?,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+            })
+        },
+    )
 }
 
 fn read_session_entries(
@@ -403,8 +530,8 @@ fn insert_scan_session(connection: &Connection, session: &ScanSession) -> rusqli
          (session_id, root_id, status, follow_symlinks, hash_policy, worker_limit,
           discovered_files, discovered_directories, inspected_files, matched, ambiguous,
           unmatched, recoverable_errors, started_at, finished_at, fatal_error_code,
-          fatal_error_message)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+          fatal_error_message, purpose)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         params![
             session.id.0,
             session.root_id.0,
@@ -423,6 +550,7 @@ fn insert_scan_session(connection: &Connection, session: &ScanSession) -> rusqli
             session.finished_at,
             session.fatal_error_code.map(scan_issue_code),
             session.fatal_error_message,
+            scan_purpose(session.options.purpose),
         ],
     )?;
     Ok(())
@@ -739,7 +867,7 @@ fn scan_session_select() -> &'static str {
     "SELECT session_id, root_id, status, follow_symlinks, hash_policy, worker_limit,
             discovered_files, discovered_directories, inspected_files, matched, ambiguous,
             unmatched, recoverable_errors, started_at, finished_at, fatal_error_code,
-            fatal_error_message
+            fatal_error_message, purpose
      FROM library_scan_session"
 }
 
@@ -752,6 +880,7 @@ fn read_scan_session(row: &Row<'_>) -> rusqlite::Result<ScanSession> {
             follow_symlinks: row.get(3)?,
             hash_policy: parse_scan_hash_policy(&row.get::<_, String>(4)?)?,
             worker_limit: read_u16(row, 5)?,
+            purpose: parse_scan_purpose(&row.get::<_, String>(17)?)?,
         },
         counters: ScanCounters {
             discovered_files: read_u64(row, 6)?,
@@ -834,6 +963,21 @@ fn scan_hash_policy(value: ScanHashPolicy) -> &'static str {
 fn parse_scan_hash_policy(value: &str) -> rusqlite::Result<ScanHashPolicy> {
     match value {
         "candidate_archives" => Ok(ScanHashPolicy::CandidateArchives),
+        value => Err(invalid_text(value)),
+    }
+}
+
+fn scan_purpose(value: ScanPurpose) -> &'static str {
+    match value {
+        ScanPurpose::Library => "library",
+        ScanPurpose::Install => "install",
+    }
+}
+
+fn parse_scan_purpose(value: &str) -> rusqlite::Result<ScanPurpose> {
+    match value {
+        "library" => Ok(ScanPurpose::Library),
+        "install" => Ok(ScanPurpose::Install),
         value => Err(invalid_text(value)),
     }
 }
@@ -1096,6 +1240,14 @@ mod tests {
             page.items[0].result.evidence[0].source_entry_id,
             Some(entry_id)
         );
+        let snapshot = reopened
+            .load_session(&restored.id)
+            .expect("load session")
+            .expect("session snapshot");
+        assert_eq!(snapshot.root.id, root.id);
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(snapshot.results.len(), 1);
+        assert_eq!(snapshot.results[0].candidates[0].work_code, "RJ01326398");
     }
 
     #[test]
@@ -1356,6 +1508,54 @@ mod tests {
                 .interrupt_active_sessions("2026-08-05T12:02:00Z")
                 .expect("repeat interruption"),
             0
+        );
+    }
+
+    #[test]
+    fn the_latest_scan_skips_install_scans_and_ignored_findings_persist() {
+        let directory = tempdir().expect("temporary directory");
+        let store = SqliteLibraryStore::open(&directory.path().join("library.sqlite"))
+            .expect("library store");
+        let now = "2026-08-05T12:00:00Z".to_owned();
+        let root = scan_root(&now);
+        store.save_root(&root).expect("save root");
+        let library = scan_session(&now);
+        let mut install = scan_session("2026-08-05T12:05:00Z");
+        install.id = ScanSessionId("session-install".to_owned());
+        install.options.purpose = ScanPurpose::Install;
+        store.begin_session(&library).expect("library session");
+        store.begin_session(&install).expect("install session");
+
+        let latest = store
+            .read_latest_session()
+            .expect("read latest session")
+            .expect("latest session");
+        assert_eq!(latest.id, library.id);
+        assert_eq!(
+            store
+                .read_session(&install.id)
+                .expect("read install session")
+                .expect("install session")
+                .options
+                .purpose,
+            ScanPurpose::Install
+        );
+
+        for (key, ignored) in [
+            ("directory:extras", true),
+            ("directory:extras", true),
+            ("entry:entry-1", true),
+            ("entry:entry-1", false),
+        ] {
+            store
+                .set_scan_finding_ignored(&root.id, key, ignored, &now)
+                .expect("ignore finding");
+        }
+        assert_eq!(
+            store
+                .read_ignored_scan_findings(&root.id)
+                .expect("ignored findings"),
+            BTreeSet::from(["directory:extras".to_owned()])
         );
     }
 

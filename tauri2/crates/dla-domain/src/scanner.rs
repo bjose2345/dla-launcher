@@ -95,12 +95,24 @@ pub struct ScanRoot {
     pub updated_at: String,
 }
 
+/// Why a folder was scanned. The Scanner shows only library scans; an install
+/// scan is Install from DLA reading the archives it just downloaded.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScanPurpose {
+    #[default]
+    Library,
+    Install,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanOptions {
     pub follow_symlinks: bool,
     pub hash_policy: ScanHashPolicy,
     pub worker_limit: u16,
+    #[serde(default)]
+    pub purpose: ScanPurpose,
 }
 
 impl Default for ScanOptions {
@@ -109,6 +121,7 @@ impl Default for ScanOptions {
             follow_symlinks: false,
             hash_policy: ScanHashPolicy::CandidateArchives,
             worker_limit: 4,
+            purpose: ScanPurpose::Library,
         }
     }
 }

@@ -1,13 +1,14 @@
 import { Trophy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { numberFormatter } from "../../i18n/formatters";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import type { CatalogRating } from "./types";
 import { ratingCountValue } from "./ratingAnimation";
 
 export function WorkRatingPanel({ rating }: { rating: CatalogRating | null }) {
   const { locale, t } = usePresentation();
-  const numberFormat = new Intl.NumberFormat(locale);
+  const numberFormat = numberFormatter(locale);
   const score = rating ? Math.max(0, Math.min(100, Math.round((rating.score / 5) * 100))) : null;
   const animatedScore = useAnimatedScore(score);
 

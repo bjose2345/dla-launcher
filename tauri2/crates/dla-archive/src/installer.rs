@@ -4,8 +4,12 @@ use std::{
     io::{BufReader, Read, Write},
     path::{Path, PathBuf},
     process::Stdio,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use dla_application::{
@@ -28,7 +32,8 @@ use walkdir::WalkDir;
 use zip::ZipArchive;
 
 use crate::{
-    DesktopPackageManifestReader, portable_path, rar_tool::rar_tool_candidates,
+    DesktopPackageManifestReader, portable_path,
+    rar_tool::{RarToolKind, rar_tool_candidates},
     source::resolve_source_files,
 };
 
@@ -780,7 +785,25 @@ fn rename_directory_noreplace(source: &Path, destination: &Path) -> std::io::Res
 
 #[cfg(target_os = "windows")]
 fn rename_directory_noreplace(source: &Path, destination: &Path) -> std::io::Result<()> {
-    fs::rename(source, destination)
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
+
+    let wide = |path: &Path| {
+        path.as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<u16>>()
+    };
+    let (source, destination) = (wide(source), wide(destination));
+    // Without MOVEFILE_REPLACE_EXISTING any existing destination is a
+    // conflict; std's rename replaces an empty directory.
+    let moved = unsafe { MoveFileExW(source.as_ptr(), destination.as_ptr(), 0) };
+    if moved != 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
@@ -936,9 +959,14 @@ fn extract_rar(
     let mut unavailable = Vec::new();
     for tool in rar_tool_candidates() {
         let mut command = tool.extraction_command(primary, staging);
+        let reports_percent = tool.kind() == RarToolKind::SevenZip;
         let mut child = match command
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
+            .stdout(if reports_percent {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stderr(Stdio::null())
             .spawn()
         {
@@ -949,6 +977,12 @@ fn extract_rar(
             }
             Err(error) => return Err(PackagePreparationError::adapter(error)),
         };
+        let percent = Arc::new(AtomicU64::new(0));
+        if let Some(output) = child.stdout.take() {
+            let percent = Arc::clone(&percent);
+            thread::spawn(move || follow_percent(output, &percent));
+        }
+        let mut measured_at = Instant::now();
         loop {
             if cancellation.is_cancelled() {
                 let _ = child.kill();
@@ -963,7 +997,42 @@ fn extract_rar(
                         tool.label()
                     )));
                 }
-                None => thread::sleep(Duration::from_millis(50)),
+                None => {
+                    if measured_at.elapsed() >= RAR_PROGRESS_INTERVAL {
+                        measured_at = Instant::now();
+                        // UnRAR reports nothing, so its progress is what it
+                        // has written so far. 7-Zip sizes files before
+                        // filling them, so its own percentage is used.
+                        let (bytes, files) = if reports_percent {
+                            let done = percent.load(Ordering::Relaxed);
+                            (
+                                manifest.total_uncompressed_bytes * done / 100,
+                                manifest.file_count * done / 100,
+                            )
+                        } else {
+                            extracted_so_far(staging)
+                        };
+                        let published = publish(
+                            request,
+                            progress,
+                            PackagePreparationStage::Extracting,
+                            PackagePreparationCounters {
+                                total_bytes: manifest.total_uncompressed_bytes,
+                                processed_bytes: bytes.min(manifest.total_uncompressed_bytes),
+                                total_files: manifest.file_count,
+                                processed_files: files.min(manifest.file_count),
+                            },
+                            Some(primary.to_string_lossy().into_owned()),
+                            "Extracting RAR volumes as archive data; executable volumes are never run",
+                        );
+                        if let Err(error) = published {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            return Err(error);
+                        }
+                    }
+                    thread::sleep(Duration::from_millis(50));
+                }
             }
         }
     }
@@ -971,6 +1040,53 @@ fn extract_rar(
         "RAR support requires 7-Zip or UnRAR ({})",
         unavailable.join(", ")
     )))
+}
+
+const RAR_PROGRESS_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Follows 7-Zip's `-bsp1` progress, which redraws "NN% - name" with
+/// backspaces, keeping the highest percentage. Digits in a name are skipped.
+fn follow_percent(mut output: impl Read, percent: &AtomicU64) {
+    let mut buffer = [0_u8; 4096];
+    let mut digits: Option<u64> = None;
+    let mut in_name = false;
+    while let Ok(count) = output.read(&mut buffer) {
+        if count == 0 {
+            return;
+        }
+        for &byte in &buffer[..count] {
+            match byte {
+                b'\x08' | b'\r' | b'\n' => {
+                    digits = None;
+                    in_name = false;
+                }
+                b'0'..=b'9' if !in_name => {
+                    let digit = u64::from(byte - b'0');
+                    digits = Some(digits.unwrap_or(0).saturating_mul(10).saturating_add(digit));
+                }
+                b'%' if !in_name => {
+                    if let Some(value) = digits.take().filter(|value| *value <= 100) {
+                        percent.fetch_max(value, Ordering::Relaxed);
+                    }
+                    in_name = true;
+                }
+                _ => digits = None,
+            }
+        }
+    }
+}
+
+/// Bytes and files an external tool has written into the staging folder.
+fn extracted_so_far(staging: &Path) -> (u64, u64) {
+    WalkDir::new(staging)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .fold((0, 0), |(bytes, files), entry| {
+            let size = entry.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+            (bytes + size, files + 1)
+        })
 }
 
 fn verify_staging(
@@ -1207,6 +1323,25 @@ mod tests {
             self.0.lock().expect("progress").push(value.stage);
             Ok(())
         }
+    }
+
+    #[test]
+    fn rar_progress_follows_seven_zips_percentage_not_names() {
+        let output: &[u8] =
+            b"  0M Scan\x08\x08\x08\x08  0%\x08\x08\x08\x08 45% - g/50%.bin\x08\x08\x08 85% - g/9.bin\x08\x08";
+        let percent = AtomicU64::new(0);
+        follow_percent(output, &percent);
+        assert_eq!(percent.load(Ordering::Relaxed), 85);
+    }
+
+    #[test]
+    fn rar_progress_counts_what_the_tool_has_written() {
+        let staging = tempdir().expect("temporary directory");
+        assert_eq!(extracted_so_far(staging.path()), (0, 0));
+        fs::create_dir_all(staging.path().join("elf/data")).unwrap();
+        fs::write(staging.path().join("elf/elf.exe"), [0_u8; 300]).unwrap();
+        fs::write(staging.path().join("elf/data/a.bin"), [0_u8; 200]).unwrap();
+        assert_eq!(extracted_so_far(staging.path()), (500, 2));
     }
 
     #[test]

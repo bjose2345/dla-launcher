@@ -10,8 +10,7 @@ use dla_application::{
     scan_execution::{PreparedScan, ScanExecutionService},
     scanner::{
         PrepareScanRequest, ScanCancellation, ScanIssuePage, ScanIssueRequest, ScanProgressSink,
-        ScanResultPage, ScanResultRequest, ScanRootPreference, ScanRootPreferenceService,
-        ScanSessionView, ScannerError,
+        ScanRootPreference, ScanRootPreferenceService, ScanSessionView, ScannerError,
     },
 };
 use dla_domain::scanner::{ScanOptions, ScanProgress, ScanSessionId};
@@ -19,7 +18,9 @@ use dla_scanner::ScanAccessRegistry;
 use tauri::{AppHandle, Emitter};
 
 #[cfg(desktop)]
-use dla_application::scanner::ScanRootLocation;
+use dla_application::scanner::{ScanResultPage, ScanResultRequest, ScanRootLocation};
+#[cfg(desktop)]
+use dla_domain::scanner::ScanPurpose;
 #[cfg(desktop)]
 use dla_scanner::ApprovedScanRoot;
 #[cfg(desktop)]
@@ -126,6 +127,54 @@ impl ScanController {
         Ok(view)
     }
 
+    /// Scans one folder and waits for the result, taking the single scan slot
+    /// as soon as no library scan holds it. Install from DLA scans its
+    /// downloaded archives this way.
+    #[cfg(desktop)]
+    pub fn scan_folder_now(
+        &self,
+        path: &Path,
+        cancellation: &dyn ScanCancellation,
+    ) -> Result<ScanSessionView, ScannerError> {
+        let approved = self.access.approve(path)?;
+        let prepared = loop {
+            if cancellation.is_cancelled() {
+                return Err(ScannerError::InvalidRequest(
+                    "the scan was cancelled".to_owned(),
+                ));
+            }
+            let mut active = self
+                .active
+                .lock()
+                .map_err(|error| ScannerError::Persistence(error.to_string()))?;
+            if active.is_empty() {
+                let prepared = self.service.prepare(PrepareScanRequest {
+                    platform: approved.platform.clone(),
+                    path_key: approved.path_key.clone(),
+                    display_path: approved.display_path.clone(),
+                    access_handle: approved.access_handle.clone(),
+                    options: ScanOptions {
+                        purpose: ScanPurpose::Install,
+                        ..ScanOptions::default()
+                    },
+                })?;
+                active.insert(
+                    prepared.session.id.clone(),
+                    Arc::new(AtomicScanCancellation::default()),
+                );
+                break prepared;
+            }
+            drop(active);
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        };
+        let session_id = prepared.session.id.clone();
+        let result = self.service.execute(prepared, cancellation);
+        if let Ok(mut active) = self.active.lock() {
+            active.remove(&session_id);
+        }
+        result
+    }
+
     pub fn cancel(&self, session_id: &ScanSessionId) -> Result<bool, ScannerError> {
         let active = self
             .active
@@ -143,6 +192,7 @@ impl ScanController {
         self.service.read_latest()
     }
 
+    #[cfg(desktop)]
     pub fn browse_results(
         &self,
         request: ScanResultRequest,

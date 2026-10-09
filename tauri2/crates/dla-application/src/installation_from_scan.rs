@@ -2,12 +2,12 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use dla_detection::{
     MediaClassificationError, MediaClassificationRequest, PackageSourceSetError, classify_media,
-    classify_package, discover_package_source_set,
+    classify_media_type, classify_package, discover_package_source_set,
 };
 use dla_domain::{
     installation::{
         CatalogIdentity, Installation, InstallationId, InstallationOverrides, InstallationPlatform,
-        InstallationStatus,
+        InstallationStatus, MediaType, RelativePath,
     },
     package::{CatalogPackageContext, SourceArtifact},
     scanner::{
@@ -57,12 +57,27 @@ impl InstallationScanSourceError {
     }
 }
 
+/// Every present entry and every result of one session, for listing what a
+/// scan found. Results carry their candidates but not their evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InstallationScanSnapshot {
+    pub root: ScanRoot,
+    pub session: ScanSession,
+    pub entries: Vec<ScanEntry>,
+    pub results: Vec<ScanResult>,
+}
+
 pub trait InstallationScanSource: Send + Sync {
     fn load(
         &self,
         session_id: &ScanSessionId,
         selected_result_id: &ScanResultId,
     ) -> Result<Option<InstallationScanSelection>, InstallationScanSourceError>;
+
+    fn load_session(
+        &self,
+        session_id: &ScanSessionId,
+    ) -> Result<Option<InstallationScanSnapshot>, InstallationScanSourceError>;
 }
 
 #[derive(Debug, Error)]
@@ -192,8 +207,18 @@ impl InstallationFromScanService {
         let Some(scope_key) = scope.key.as_deref() else {
             return Ok(legacy_id);
         };
+        let selected_path_key = selection
+            .selected_result
+            .candidate_entry_id
+            .as_ref()
+            .and_then(|entry_id| selection.entries.iter().find(|entry| &entry.id == entry_id))
+            .map(|entry| entry.path_key.as_str());
         if let Some(existing) = self.library.read(&legacy_id)?
-            && legacy_installation_matches(&existing, selection, catalog_identity)
+            && legacy_installation_matches(
+                &existing,
+                selected_path_key,
+                catalog_identity.map(|identity| identity.work_code.as_str()),
+            )
         {
             return Ok(legacy_id);
         }
@@ -314,7 +339,7 @@ pub fn installation_id_for_scan_root(root: &ScanRoot) -> InstallationId {
     InstallationId(format!("installation-{}", root.id.0))
 }
 
-fn installation_id_for_scan_scope(root: &ScanRoot, scope_key: &str) -> InstallationId {
+pub(crate) fn installation_id_for_scan_scope(root: &ScanRoot, scope_key: &str) -> InstallationId {
     let encoded = scope_key
         .as_bytes()
         .iter()
@@ -337,53 +362,14 @@ fn installation_scope(
         .iter()
         .find(|entry| &entry.id == selected_entry_id)
         .ok_or_else(|| invalid_selection("selected candidate entry is absent"))?;
-    let matched_work_codes = result_scope_work_codes(&selection.result_scopes, None);
-    let whole_root = catalog_identity.is_some() && matched_work_codes.len() == 1
-        || catalog_identity.is_none()
-            && matched_work_codes.is_empty()
-            && selection.result_scopes.len() == 1;
-    if whole_root {
+    if session_is_one_work(&selection.entries, &selection.result_scopes) {
         return Ok(InstallationScope {
             entries: selection.entries.clone(),
             key: None,
         });
     }
 
-    let (entry_ids, scope_key) = if let Some(source_set) =
-        discover_package_source_set(selected_entry_id, &selection.entries)?
-    {
-        let primary = source_set
-            .volumes
-            .first()
-            .ok_or_else(|| invalid_selection("package source set is empty"))?;
-        if !selection
-            .entries
-            .iter()
-            .any(|entry| entry.id == primary.scan_entry_id)
-        {
-            return Err(invalid_selection("package primary volume is absent"));
-        }
-        let ids = source_set
-            .volumes
-            .iter()
-            .map(|volume| volume.scan_entry_id.clone())
-            .collect::<BTreeSet<_>>();
-        (ids, format!("package:entry:{}", primary.scan_entry_id.0))
-    } else if let Some((directory, _)) = selected_entry.path_key.split_once('/') {
-        let prefix = format!("{directory}/");
-        let ids = selection
-            .entries
-            .iter()
-            .filter(|entry| entry.path_key == directory || entry.path_key.starts_with(&prefix))
-            .map(|entry| entry.id.clone())
-            .collect::<BTreeSet<_>>();
-        (ids, format!("directory:{directory}"))
-    } else {
-        (
-            BTreeSet::from([selected_entry.id.clone()]),
-            format!("entry:{}", selected_entry.id.0),
-        )
-    };
+    let (entry_ids, scope_key) = natural_scope(selected_entry, &selection.entries)?;
     let scoped_work_codes = result_scope_work_codes(&selection.result_scopes, Some(&entry_ids));
     if scoped_work_codes.len() > 1 {
         return Err(InstallationFromScanError::MultipleMatchedWorks(
@@ -412,7 +398,143 @@ fn installation_scope(
     })
 }
 
-fn result_scope_work_codes(
+/// Whether a session's whole root is one work. A root that holds several
+/// works divides into one installation per archive set, top-level folder or
+/// top-level file. The root is one work when it holds a single result, or
+/// at most one matched work and loose content at its top level: a program,
+/// audio, video or Android package, a matched file, or nothing but loose
+/// files.
+pub(crate) fn session_is_one_work(
+    entries: &[ScanEntry],
+    result_scopes: &[InstallationScanResultScope],
+) -> bool {
+    let work_codes = result_scope_work_codes(result_scopes, None);
+    if work_codes.len() > 1 {
+        return false;
+    }
+    if result_scopes.len() <= 1 {
+        return true;
+    }
+    let loose = entries
+        .iter()
+        .filter(|entry| is_loose_top_level_file(entry, entries))
+        .collect::<Vec<_>>();
+    if loose.is_empty() {
+        return false;
+    }
+    if loose.iter().any(|entry| is_playable(entry)) {
+        return true;
+    }
+    if entries.len() == loose.len() {
+        return true;
+    }
+    !work_codes.is_empty()
+        && result_scopes.iter().any(|scope| {
+            scope.matched_work_code.is_some()
+                && loose
+                    .iter()
+                    .any(|entry| entry.id == scope.candidate_entry_id)
+        })
+}
+
+/// The scope an entry belongs to when its root holds several works: its
+/// whole archive set, its top-level folder, or the entry itself.
+pub(crate) fn natural_scope(
+    selected_entry: &ScanEntry,
+    entries: &[ScanEntry],
+) -> Result<(BTreeSet<ScanEntryId>, String), InstallationFromScanError> {
+    if let Some(source_set) = discover_package_source_set(&selected_entry.id, entries)? {
+        let primary = source_set
+            .volumes
+            .first()
+            .ok_or_else(|| invalid_selection("package source set is empty"))?;
+        if !entries
+            .iter()
+            .any(|entry| entry.id == primary.scan_entry_id)
+        {
+            return Err(invalid_selection("package primary volume is absent"));
+        }
+        let ids = source_set
+            .volumes
+            .iter()
+            .map(|volume| volume.scan_entry_id.clone())
+            .collect::<BTreeSet<_>>();
+        return Ok((ids, package_scope_key(&primary.scan_entry_id)));
+    }
+    if let Some((directory, _)) = selected_entry.path_key.split_once('/') {
+        let prefix = format!("{directory}/");
+        let ids = entries
+            .iter()
+            .filter(|entry| entry.path_key == directory || entry.path_key.starts_with(&prefix))
+            .map(|entry| entry.id.clone())
+            .collect::<BTreeSet<_>>();
+        return Ok((ids, directory_scope_key(directory)));
+    }
+    Ok((
+        BTreeSet::from([selected_entry.id.clone()]),
+        entry_scope_key(&selected_entry.id),
+    ))
+}
+
+pub(crate) fn package_scope_key(primary: &ScanEntryId) -> String {
+    format!("package:entry:{}", primary.0)
+}
+
+pub(crate) fn directory_scope_key(directory_path_key: &str) -> String {
+    format!("directory:{directory_path_key}")
+}
+
+pub(crate) fn entry_scope_key(entry: &ScanEntryId) -> String {
+    format!("entry:{}", entry.0)
+}
+
+/// A file directly below the root that is not a volume of an archive set.
+fn is_loose_top_level_file(entry: &ScanEntry, entries: &[ScanEntry]) -> bool {
+    entry.kind == ScanEntryKind::File
+        && !entry.path_key.contains('/')
+        && !is_legacy_rar_volume(entry)
+        && (!may_be_package_volume(entry)
+            || matches!(discover_package_source_set(&entry.id, entries), Ok(None)))
+}
+
+fn file_name(entry: &ScanEntry) -> String {
+    entry
+        .path_key
+        .rsplit('/')
+        .next()
+        .unwrap_or(&entry.path_key)
+        .to_ascii_lowercase()
+}
+
+/// Names that discover_package_source_set may read as an archive set.
+pub(crate) fn may_be_package_volume(entry: &ScanEntry) -> bool {
+    let name = file_name(entry);
+    let Some((stem, extension)) = name.rsplit_once('.') else {
+        return false;
+    };
+    matches!(extension, "zip" | "rar") || extension == "exe" && stem.contains(".part")
+}
+
+/// A `.r00`-style continuation volume, which belongs to the `.rar` beside it.
+fn is_legacy_rar_volume(entry: &ScanEntry) -> bool {
+    let name = file_name(entry);
+    name.rsplit_once('.').is_some_and(|(_, extension)| {
+        extension.len() == 3
+            && extension.starts_with('r')
+            && extension[1..].bytes().all(|byte| byte.is_ascii_digit())
+    })
+}
+
+fn is_playable(entry: &ScanEntry) -> bool {
+    RelativePath::parse(entry.relative_path.clone()).is_ok_and(|path| {
+        matches!(
+            classify_media_type(&path),
+            MediaType::Executable | MediaType::Audio | MediaType::Video | MediaType::AndroidPackage
+        )
+    })
+}
+
+pub(crate) fn result_scope_work_codes(
     result_scopes: &[InstallationScanResultScope],
     entry_ids: Option<&BTreeSet<ScanEntryId>>,
 ) -> BTreeSet<String> {
@@ -425,28 +547,18 @@ fn result_scope_work_codes(
         .collect()
 }
 
-fn legacy_installation_matches(
+pub(crate) fn legacy_installation_matches(
     installation: &Installation,
-    selection: &InstallationScanSelection,
-    catalog_identity: Option<&CatalogIdentity>,
+    selected_path_key: Option<&str>,
+    work_code: Option<&str>,
 ) -> bool {
-    let catalog_matches = catalog_identity.is_some_and(|identity| {
+    let catalog_matches = work_code.is_some_and(|code| {
         installation
             .detection
             .catalog_identity
             .as_ref()
-            .is_some_and(|existing| {
-                existing
-                    .work_code
-                    .eq_ignore_ascii_case(identity.work_code.trim())
-            })
+            .is_some_and(|existing| existing.work_code.eq_ignore_ascii_case(code.trim()))
     });
-    let selected_path_key = selection
-        .selected_result
-        .candidate_entry_id
-        .as_ref()
-        .and_then(|entry_id| selection.entries.iter().find(|entry| &entry.id == entry_id))
-        .map(|entry| entry.path_key.as_str());
     catalog_matches
         || selected_path_key.is_some_and(|path_key| {
             installation
@@ -613,6 +725,13 @@ mod tests {
             _selected_result_id: &ScanResultId,
         ) -> Result<Option<InstallationScanSelection>, InstallationScanSourceError> {
             Ok(self.selection.clone())
+        }
+
+        fn load_session(
+            &self,
+            _session_id: &ScanSessionId,
+        ) -> Result<Option<InstallationScanSnapshot>, InstallationScanSourceError> {
+            Ok(None)
         }
     }
 

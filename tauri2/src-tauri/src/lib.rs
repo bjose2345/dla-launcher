@@ -1,10 +1,16 @@
 mod catalog_import;
 mod commands;
 mod cover_protocol;
+#[cfg(desktop)]
+mod delivery;
+#[cfg(desktop)]
+mod delivery_access;
 mod media_protocol;
 mod native_video;
 mod package_preparation;
+mod protocol_workers;
 mod read_only_navigation;
+mod scan_installs;
 mod scanner;
 mod search;
 mod support;
@@ -21,6 +27,7 @@ use dla_application::{
         CatalogGenerationKind, CatalogGenerationState, CatalogGenerationSummary,
         CatalogImportService, CatalogPackageProfile,
     },
+    delivery::InstallFolderStore,
     identity::CatalogIdentityReader,
     installation::InstallationStore,
     installation_from_scan::{InstallationFromScanService, InstallationScanSource},
@@ -42,6 +49,7 @@ use dla_application::{
     },
     recommendation::{CatalogRecommendationReader, CatalogRecommendationService},
     scan_execution::ScanExecutionService,
+    scan_findings::{IgnoredScanFindingStore, ScanFindingService},
     scanner::{
         ArchiveHasher, FilesystemScanner, ScanClock, ScanIdentifiers, ScanRepository,
         ScanRootLocationProvider, ScanRootPreferenceRepository, ScanRootPreferenceService,
@@ -71,6 +79,7 @@ use tauri::Manager;
 use catalog_import::CatalogImportController;
 use commands::AppState;
 use package_preparation::PackagePreparationController;
+use protocol_workers::ProtocolWorkers;
 use scanner::{ScanController, TauriScanProgressSink};
 use search::SearchIndexController;
 use support::SupportRuntime;
@@ -93,32 +102,52 @@ pub fn run() {
             reveal_main_window(app);
         }))
     };
+    // Artwork and media get separate pools so a burst of cover downloads can
+    // never delay the audio or video the user is already playing.
+    let cover_workers =
+        Arc::new(ProtocolWorkers::start("dla-cover", 8).expect("cover protocol worker threads"));
+    let media_workers =
+        Arc::new(ProtocolWorkers::start("dla-media", 4).expect("media protocol worker threads"));
+    let media_protocol_workers = Arc::clone(&media_workers);
+    let video_protocol_workers = Arc::clone(&media_workers);
     let builder = builder
         .plugin(tauri_plugin_deep_link::init())
-        .register_asynchronous_uri_scheme_protocol("dla-media", |context, request, responder| {
-            let app = context.app_handle().clone();
-            std::thread::spawn(move || {
-                responder.respond(media_protocol::respond(&app, request));
-            });
-        })
-        .register_asynchronous_uri_scheme_protocol("dla-video", |context, request, responder| {
-            let app = context.app_handle().clone();
-            std::thread::spawn(move || {
-                responder.respond(media_protocol::respond_video_document(&app, request));
-            });
-        })
-        .register_asynchronous_uri_scheme_protocol("dla-subtitle", |context, request, responder| {
-            let app = context.app_handle().clone();
-            std::thread::spawn(move || {
-                responder.respond(media_protocol::respond_subtitle(&app, request));
-            });
-        })
-        .register_asynchronous_uri_scheme_protocol("dla-cover", |context, request, responder| {
-            let app = context.app_handle().clone();
-            std::thread::spawn(move || {
-                responder.respond(cover_protocol::respond(&app, request));
-            });
-        })
+        .register_asynchronous_uri_scheme_protocol(
+            "dla-media",
+            move |context, request, responder| {
+                let app = context.app_handle().clone();
+                media_protocol_workers.run(move || {
+                    responder.respond(media_protocol::respond(&app, request));
+                });
+            },
+        )
+        .register_asynchronous_uri_scheme_protocol(
+            "dla-video",
+            move |context, request, responder| {
+                let app = context.app_handle().clone();
+                video_protocol_workers.run(move || {
+                    responder.respond(media_protocol::respond_video_document(&app, request));
+                });
+            },
+        )
+        .register_asynchronous_uri_scheme_protocol(
+            "dla-subtitle",
+            move |context, request, responder| {
+                let app = context.app_handle().clone();
+                media_workers.run(move || {
+                    responder.respond(media_protocol::respond_subtitle(&app, request));
+                });
+            },
+        )
+        .register_asynchronous_uri_scheme_protocol(
+            "dla-cover",
+            move |context, request, responder| {
+                let app = context.app_handle().clone();
+                cover_workers.run(move || {
+                    responder.respond(cover_protocol::respond(&app, request));
+                });
+            },
+        )
         .plugin(tauri_plugin_opener::init());
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_dialog::init());
@@ -280,6 +309,15 @@ pub fn run() {
             let scan_access = Arc::new(ScanAccessRegistry::new());
             let desktop_filesystem = Arc::new(DesktopFilesystem::new(Arc::clone(&scan_access)));
             let filesystem_scanner: Arc<dyn FilesystemScanner> = desktop_filesystem.clone();
+            #[cfg(desktop)]
+            let known_digests = Arc::new(delivery::KnownDigests::default());
+            #[cfg(desktop)]
+            let archive_hasher: Arc<dyn ArchiveHasher> = Arc::new(delivery::KnownDigestHasher::new(
+                desktop_filesystem,
+                Arc::clone(&scan_access),
+                Arc::clone(&known_digests),
+            ));
+            #[cfg(mobile)]
             let archive_hasher: Arc<dyn ArchiveHasher> = desktop_filesystem;
             let scan_clock: Arc<dyn ScanClock> = Arc::new(SystemScanClock);
             let scan_identifiers: Arc<dyn ScanIdentifiers> = Arc::new(SystemScanIdentifiers);
@@ -324,7 +362,7 @@ pub fn run() {
             ));
             let installation_from_scan =
                 Arc::new(InstallationFromScanService::with_package_inspection(
-                    installation_scan_source,
+                    Arc::clone(&installation_scan_source),
                     Arc::clone(&installation_store),
                     Arc::clone(&package_manifest_reader),
                     Arc::clone(&catalog_reader),
@@ -389,6 +427,85 @@ pub fn run() {
                 )),
                 app.handle().clone(),
             ));
+            #[cfg(desktop)]
+            let delivery = {
+                use dla_application::delivery::{DeliveryService, DeliveryStore};
+                use dla_delivery::{DeliveryClient, Endpoint, FileTransfer, ManifestLocator};
+
+                // A plain-HTTP loopback stand-in for the self-test, else the
+                // private route when this build carries the launcher token.
+                let self_test = std::env::var("DLA_LAUNCHER_DOWNLOADS")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty());
+                let (endpoint, forward) = match (self_test, delivery_access::embedded()) {
+                    (Some(base), _) => (Some(Endpoint::self_test(&base)?), None),
+                    (None, Some(access)) => {
+                        let forward = Arc::new(delivery::Forward::new(
+                            access,
+                            delivery::cloudflared_sidecar(),
+                        ));
+                        let ca: Arc<[u8]> =
+                            Arc::from(&include_bytes!("../../certs/dla-upload-ca.crt")[..]);
+                        (
+                            Some(Endpoint::private(ca).through(forward.dial())),
+                            Some(forward),
+                        )
+                    }
+                    (None, None) => (None, None),
+                };
+                let client = endpoint.map(DeliveryClient::new).transpose()?.map(Arc::new);
+                // Without a route the service still lists and removes jobs;
+                // nothing can sign in, so nothing is downloaded.
+                let remote = match &client {
+                    Some(client) => Arc::clone(client),
+                    None => Arc::new(DeliveryClient::new(Endpoint::self_test(
+                        "http://127.0.0.1:9/v1",
+                    )?)?),
+                };
+                let delivery_store: Arc<dyn DeliveryStore> = library.clone();
+                let install_folders: Arc<dyn InstallFolderStore> = library.clone();
+                let service = Arc::new(DeliveryService::new(
+                    Arc::clone(&catalog_reader),
+                    delivery_store,
+                    install_folders,
+                    Arc::new(ManifestLocator::new(
+                        Arc::clone(&remote),
+                        Some(data_directory.join("delivery/manifests.json")),
+                    )),
+                    Arc::new(FileTransfer::new(remote)),
+                    Arc::new(delivery::ShellInstaller::new(
+                        Arc::clone(&scanner),
+                        Arc::clone(&installation_from_scan),
+                        Arc::clone(&package_preparation),
+                        Arc::clone(&installation_review),
+                        known_digests,
+                    )),
+                ));
+                service.reconcile_after_restart(&current_timestamp())?;
+                Arc::new(delivery::DeliveryController::new(
+                    service,
+                    client,
+                    forward,
+                    app.handle().clone(),
+                ))
+            };
+            let ignored_findings: Arc<dyn IgnoredScanFindingStore> = library.clone();
+            let scan_findings = Arc::new(ScanFindingService::new(
+                installation_scan_source,
+                ignored_findings,
+                Arc::clone(&installation_store),
+                installation_from_scan,
+                Arc::clone(&installation_review),
+            ));
+            let install_folders: Arc<dyn InstallFolderStore> = library.clone();
+            let scan_installs = Arc::new(scan_installs::ScanInstallController::new(
+                Arc::clone(&scan_findings),
+                Arc::clone(&package_preparation),
+                Arc::clone(&installation_review),
+                Arc::clone(&maintenance),
+                install_folders,
+                app.handle().clone(),
+            ));
             let android_package = Arc::new(AndroidPackageService::new(Arc::clone(
                 &app.state::<dla_android_package_tauri::AndroidPackagePlatformState>().0,
             )));
@@ -411,7 +528,8 @@ pub fn run() {
                 search_index_controller,
                 scanner,
                 catalog_import,
-                installation_from_scan,
+                scan_findings,
+                scan_installs,
                 installation_review,
                 library_shelves,
                 work_preferences,
@@ -422,6 +540,8 @@ pub fn run() {
                 media,
                 personalized_voice,
                 native_video: Arc::new(native_video::NativeVideoController::default()),
+                #[cfg(desktop)]
+                delivery,
             });
             Ok(())
             })();
@@ -472,9 +592,14 @@ pub fn run() {
             commands::start_library_scan,
             commands::cancel_library_scan,
             commands::read_latest_library_scan,
-            commands::browse_library_scan_results,
             commands::browse_library_scan_issues,
-            commands::create_installation_from_scan,
+            commands::list_scan_findings,
+            commands::set_scan_finding_ignored,
+            commands::add_scan_findings,
+            commands::read_scan_installs,
+            commands::install_library_archive,
+            commands::cancel_scan_install,
+            commands::select_install_folder,
             commands::list_library_installations,
             commands::read_library_shelves,
             commands::read_work_preference,
@@ -486,6 +611,15 @@ pub fn run() {
             commands::save_library_installation_review,
             commands::select_installation_destination,
             commands::select_installation_location,
+            commands::read_delivery,
+            commands::delivery_sign_in,
+            commands::delivery_sign_out,
+            commands::delivery_install,
+            commands::delivery_pause,
+            commands::delivery_resume,
+            commands::delivery_cancel,
+            commands::delivery_remove,
+            commands::select_delivery_install_folder,
             commands::read_prepared_package,
             commands::read_prepared_packages,
             commands::read_installation_health,
@@ -496,6 +630,7 @@ pub fn run() {
             commands::repair_library_installation,
             commands::remove_library_installation,
             commands::uninstall_library_installation,
+            commands::open_installation_folder,
             commands::cleanup_library_maintenance,
             commands::inspect_package_destination,
             commands::start_package_preparation,

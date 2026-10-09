@@ -1,11 +1,7 @@
+import { browserStorage } from "../../preferences/browserStorage";
+
 export const RECENT_SEARCHES_STORAGE_KEY = "dla-launcher:recent-searches:v1";
 export const RECENT_SEARCHES_LIMIT = 5;
-
-interface SearchStorage {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-  removeItem(key: string): void;
-}
 
 export function readRecentSearches(storage = browserStorage()): string[] {
   if (!storage) return [];
@@ -43,8 +39,4 @@ export function recordRecentSearch(query: string, storage = browserStorage()): s
 
 export function clearRecentSearches(storage = browserStorage()): void {
   storage?.removeItem(RECENT_SEARCHES_STORAGE_KEY);
-}
-
-function browserStorage(): SearchStorage | undefined {
-  return typeof window === "undefined" ? undefined : window.localStorage;
 }

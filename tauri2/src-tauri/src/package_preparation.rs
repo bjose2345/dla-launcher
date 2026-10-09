@@ -15,7 +15,7 @@ use dla_domain::{
     installation::InstallationId,
     package::{
         ArchiveRetentionPolicy, PackagePreparationCounters, PackagePreparationProgress,
-        PackagePreparationStage,
+        PackagePreparationStage, PreparedPackageInstallation,
     },
 };
 use tauri::{AppHandle, Emitter};
@@ -151,6 +151,22 @@ impl PackagePreparationProgressSink for TauriPackagePreparationProgressSink {
     }
 }
 
+/// Publishes as usual and also tells an observer, such as Install from DLA.
+struct ObservedProgress<'a> {
+    sink: &'a dyn PackagePreparationProgressSink,
+    observer: &'a (dyn Fn(&PackagePreparationProgress) + Sync),
+}
+
+impl PackagePreparationProgressSink for ObservedProgress<'_> {
+    fn publish(
+        &self,
+        progress: &PackagePreparationProgress,
+    ) -> Result<(), PackagePreparationError> {
+        (self.observer)(progress);
+        self.sink.publish(progress)
+    }
+}
+
 struct ActiveOperation {
     installation_id: InstallationId,
     cancellation: PackagePreparationCancellationToken,
@@ -282,6 +298,69 @@ impl PackagePreparationController {
             controller.finish(&operation_id, result.map(|_| ()))
         });
         Ok(initial)
+    }
+
+    /// Prepares an installation and waits for the result, taking the single
+    /// preparation slot as soon as it is free. `cancelled` is polled while
+    /// waiting and during the work. Install from DLA prepares this way.
+    pub fn execute_now(
+        &self,
+        installation_id: InstallationId,
+        destination_parent: String,
+        destination_conflict_policy: PackageDestinationConflictPolicy,
+        archive_retention: ArchiveRetentionPolicy,
+        cancelled: &(dyn Fn() -> bool + Sync),
+        observer: &(dyn Fn(&PackagePreparationProgress) + Sync),
+    ) -> Result<PreparedPackageInstallation, PackagePreparationError> {
+        let operation_id = Uuid::new_v4().to_string();
+        let cancellation = PackagePreparationCancellationToken::default();
+        loop {
+            if cancelled() {
+                return Err(PackagePreparationError::Cancelled);
+            }
+            match self.claim(
+                operation_id.clone(),
+                installation_id.clone(),
+                cancellation.clone(),
+            ) {
+                Ok(()) => break,
+                Err(PackagePreparationError::AlreadyRunning) => {
+                    std::thread::sleep(Duration::from_millis(500))
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        let finished = std::sync::atomic::AtomicBool::new(false);
+        let result = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                while !finished.load(std::sync::atomic::Ordering::Acquire) {
+                    if cancelled() {
+                        cancellation.cancel();
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+            });
+            let result = self.service.execute(
+                ExecutePackagePreparationRequest {
+                    operation_id: operation_id.clone(),
+                    installation_id,
+                    destination_parent,
+                    destination_conflict_policy,
+                    archive_retention,
+                    prepared_at: dla_sqlite::current_timestamp(),
+                },
+                &cancellation,
+                &ObservedProgress {
+                    sink: self.progress.as_ref(),
+                    observer,
+                },
+            );
+            finished.store(true, std::sync::atomic::Ordering::Release);
+            result
+        });
+        self.release(&operation_id);
+        result
     }
 
     pub fn cancel(&self, operation_id: &str) -> Result<bool, PackagePreparationError> {

@@ -887,7 +887,7 @@ mod tests {
             if activity.status == LaunchActivityStatus::Running
                 && self
                     .fail_running_saves
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+                    .try_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
                         remaining.checked_sub(1)
                     })
                     .is_ok()

@@ -30,6 +30,9 @@ added only when the user imports a `.dla` package, available from the
 - Scan user-selected folders and retain explainable matching evidence.
 - Review, prepare, verify, relocate, repair, launch, and remove installations.
 - Play supported local audio and video and read images and PDF documents.
+- Download and install works from the DLA archive with an Elite subscription,
+  signing in with the subscriber's own account inside the launcher; transfers
+  are verified, resumable, and unpacked with the bundled 7-Zip.
 - Handle read-only work deep links on desktop and Android.
 - Inspect and install a user-selected standalone APK through Android's system
   confirmation flow, then associate, observe, and launch the installed app.
@@ -67,7 +70,9 @@ git clone https://github.com/bjose2345/dla-launcher.git
 cd dla-launcher
 corepack enable
 pnpm install --frozen-lockfile
-cargo install tauri-cli --version 2.11.4 --locked
+cargo install tauri-cli --version 2.12.1 --locked
+sh tauri2/scripts/fetch-cloudflared.sh
+sh tauri2/scripts/fetch-7zip.sh
 cd tauri2
 cargo tauri dev
 ```
@@ -82,6 +87,13 @@ cargo tauri build --ci
 Windows produces MSI and NSIS installers. Linux produces DEB and RPM packages;
 AppImage is currently excluded by the Linux release configuration. Android
 setup and release signing are documented in [Building](docs/BUILDING.md#android).
+
+The desktop packages bundle [cloudflared](https://github.com/cloudflare/cloudflared)
+(Apache-2.0) and the official [7-Zip](https://www.7-zip.org/) console tool
+(LGPL-2.1 with the unRAR restriction) as `dla-cloudflared` and `dla-7zip`. Their
+license texts are installed under `licenses/` and listed in About under
+Included software. Install from DLA needs an access token for the downloads
+route; see [Building](docs/BUILDING.md#bundled-sidecars).
 
 ## Verify a change
 
@@ -109,6 +121,7 @@ shared/fixtures/     Synthetic, test-only contract and media fixtures
 tauri2/crates/       Rust domain, application, and adapter crates
 tauri2/src-tauri/    Tauri composition root and platform configuration
 tauri2/ui/           Thin Tauri frontend gateway and router
+tauri2/scripts/      Sidecar fetch, Windows build, and Android verification scripts
 tauri2/tests/        Native Android test applications
 docs/                Public build documentation
 ```

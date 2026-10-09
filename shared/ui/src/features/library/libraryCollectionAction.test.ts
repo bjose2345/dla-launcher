@@ -97,5 +97,6 @@ function entry({
       ? { status }
       : null,
     launchTotals: null,
+    fileCount: 1,
   };
 }

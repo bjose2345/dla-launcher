@@ -1,0 +1,773 @@
+/* ── scan in progress ─────────────────────────────────────── */
+
+.scan-progress {
+  position: relative;
+  display: grid;
+  align-items: start;
+  gap: 14px;
+  grid-template-columns: 22px minmax(0, 1fr);
+  overflow: hidden;
+  padding: 18px 20px 20px;
+  border: 1px solid var(--app-border);
+  border-left: 3px solid var(--color-primary);
+  clip-path: var(--app-notch-sm);
+  background: var(--app-panel);
+}
+
+.scan-progress > svg {
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  color: var(--color-primary);
+}
+
+.scan-progress div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.scan-progress strong {
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.scan-progress span {
+  color: var(--app-muted);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.scan-progress code {
+  overflow: hidden;
+  color: var(--app-subtle);
+  font-size: 0.74rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scan-progress-bar {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  overflow: hidden;
+  background: color-mix(in oklch, var(--color-primary) 18%, transparent);
+}
+
+.scan-progress-bar::after {
+  position: absolute;
+  inset: 0;
+  width: 30%;
+  background: var(--color-primary);
+  animation: scan-sweep 1.4s ease-in-out infinite;
+  content: "";
+}
+
+@keyframes scan-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(340%); }
+}
+
+.scanner-callout.is-notice {
+  border-left-color: var(--color-warning);
+  background: color-mix(in oklch, var(--color-warning) 10%, transparent);
+  color: var(--color-warning);
+}
+
+/* ── summary ──────────────────────────────────────────────── */
+
+.scan-summary {
+  display: grid;
+  gap: 8px;
+}
+
+.scan-summary p {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  color: var(--app-muted);
+  font-size: 0.84rem;
+}
+
+.scan-summary p > svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--color-success);
+}
+
+.scan-summary strong {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--color-base-content);
+  font-size: 0.92rem;
+  overflow-wrap: anywhere;
+}
+
+.scan-summary .scan-install-folder {
+  flex-wrap: wrap;
+  align-items: center;
+  padding-left: 24px;
+  overflow-wrap: anywhere;
+}
+
+.scan-nothing {
+  margin: 0;
+  color: var(--app-muted);
+}
+
+/* ── sections ─────────────────────────────────────────────── */
+
+.scan-section {
+  display: grid;
+  gap: 10px;
+}
+
+.scan-section > header,
+.scan-section > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.scan-section h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 850;
+  letter-spacing: -0.02em;
+}
+
+.scan-section > header .scan-button {
+  margin-left: auto;
+}
+
+.scan-section.is-folded > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.scan-section.is-folded > summary::-webkit-details-marker {
+  display: none;
+}
+
+.scan-section.is-folded > summary::before {
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--app-muted);
+  border-bottom: 2px solid var(--app-muted);
+  content: "";
+  rotate: -45deg;
+  transition: rotate 120ms ease;
+}
+
+.scan-section.is-folded[open] > summary::before {
+  rotate: 45deg;
+}
+
+.scan-count {
+  min-width: 24px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--app-panel-raised);
+  color: var(--app-muted);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  text-align: center;
+}
+
+.scan-count.is-ready {
+  background: color-mix(in oklch, var(--color-success) 18%, transparent);
+  color: var(--color-success);
+}
+
+.scan-count.is-choose {
+  background: color-mix(in oklch, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+}
+
+.scan-count.is-blocked {
+  background: color-mix(in oklch, var(--color-error) 15%, transparent);
+  color: var(--color-error);
+}
+
+.scan-list {
+  display: grid;
+  gap: 8px;
+}
+
+/* ── one finding ──────────────────────────────────────────── */
+
+.scan-finding {
+  display: grid;
+  align-items: center;
+  gap: 12px 16px;
+  grid-template-columns: 92px minmax(0, 1fr) auto;
+  padding: 12px 14px;
+  border: 1px solid var(--app-border);
+  clip-path: var(--app-notch-sm);
+  background: var(--app-panel);
+}
+
+.scan-finding.is-unknown,
+.scan-finding.is-mixed,
+.scan-finding.is-incomplete {
+  border-style: dashed;
+}
+
+.scan-finding.is-added,
+.scan-finding.is-installed {
+  border-color: color-mix(in srgb, var(--color-success) 45%, transparent);
+}
+
+.scan-finding-art {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  width: 92px;
+  aspect-ratio: 4 / 3;
+  background: var(--app-panel-raised);
+}
+
+.scan-finding-glyph {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  color: var(--app-subtle);
+}
+
+.scan-finding-glyph svg {
+  width: 26px;
+  height: 26px;
+}
+
+.scan-finding-copy {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.scan-finding-title {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.scan-finding-title strong {
+  font-size: 0.95rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.scan-finding-title span {
+  color: var(--app-muted);
+  font-size: 0.8rem;
+}
+
+.scan-finding-title em {
+  padding: 1px 8px;
+  clip-path: var(--app-chip-sm);
+  background: var(--app-panel-raised);
+  color: var(--app-muted);
+  font-size: 0.7rem;
+  font-style: normal;
+  font-weight: 750;
+}
+
+.scan-finding-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.scan-finding-facts code {
+  color: var(--app-subtle);
+  font-size: 0.72rem;
+}
+
+.scan-finding-chip {
+  padding: 2px 9px;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-chip-sm);
+  color: var(--app-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.scan-finding-chip.is-match {
+  box-shadow: none;
+  background: color-mix(in oklch, var(--color-success) 16%, transparent);
+  color: var(--color-success);
+}
+
+.scan-finding-path {
+  overflow: hidden;
+  color: var(--app-subtle);
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scan-finding-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px 10px;
+}
+
+.scan-finding-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--app-muted);
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
+.scan-finding-status svg {
+  width: 16px;
+  height: 16px;
+}
+
+.scan-finding-status.is-done {
+  color: var(--color-success);
+}
+
+.scan-finding-status.is-attention {
+  color: var(--color-warning);
+}
+
+.scan-finding-status.is-problem {
+  color: var(--color-error);
+}
+
+.scan-finding-progress {
+  display: grid;
+  width: 200px;
+  gap: 5px;
+  color: var(--app-muted);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.scan-finding-progress span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.scan-finding-progress svg {
+  width: 14px;
+  height: 14px;
+}
+
+.scan-finding-progress progress {
+  width: 100%;
+  height: 5px;
+  accent-color: var(--color-primary);
+}
+
+.scan-finding-note {
+  margin: 0;
+  color: var(--app-muted);
+  font-size: 0.8rem;
+  grid-column: 2 / -1;
+}
+
+.scan-finding-note.is-problem {
+  color: var(--color-error);
+}
+
+.scan-finding-choose {
+  display: grid;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--app-border);
+  grid-column: 1 / -1;
+}
+
+.scan-finding-choose > p {
+  margin: 0;
+  color: var(--app-muted);
+  font-size: 0.82rem;
+}
+
+.scan-finding-candidates {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+
+.scan-candidate {
+  position: relative;
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  grid-template-columns: 64px minmax(0, 1fr);
+  padding: 8px 30px 8px 8px;
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-notch-sm);
+  background: var(--app-panel-raised);
+  color: var(--color-base-content);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+span.scan-candidate {
+  cursor: default;
+  grid-template-columns: minmax(0, 1fr);
+  padding-left: 12px;
+}
+
+.scan-candidate:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.scan-candidate.is-selected {
+  box-shadow: inset 0 0 0 2px var(--color-primary);
+  background: color-mix(in oklch, var(--color-primary) 10%, var(--app-panel-raised));
+}
+
+.scan-candidate-cover {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  width: 64px;
+  aspect-ratio: 4 / 3;
+  background: var(--app-panel);
+}
+
+.scan-candidate-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.scan-candidate-copy strong {
+  font-size: 0.82rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.scan-candidate-copy small {
+  color: var(--app-muted);
+  font-size: 0.72rem;
+}
+
+.scan-candidate-check {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 16px;
+  height: 16px;
+  color: var(--color-primary);
+}
+
+.scan-finding-search > summary {
+  color: var(--app-muted);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.scan-finding-search[open] > summary {
+  margin-bottom: 8px;
+}
+
+.scan-finding-choose-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── buttons ──────────────────────────────────────────────── */
+
+.scan-button {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 16px;
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-chip);
+  background: var(--app-panel-raised);
+  color: var(--color-base-content);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.scan-button.is-primary {
+  min-width: 96px;
+  box-shadow: none;
+  background: var(--color-primary);
+  color: var(--color-primary-content);
+}
+
+.scan-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.scan-text-button {
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--app-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.scan-text-button.is-link {
+  color: var(--color-primary);
+}
+
+.scan-text-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.scan-spin {
+  animation: scanner-spin 0.8s linear infinite;
+}
+
+/* ── files that could not be read ─────────────────────────── */
+
+.scan-issues {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.scan-issues li {
+  display: grid;
+  gap: 2px;
+  padding: 8px 12px;
+  background: var(--app-panel);
+  font-size: 0.8rem;
+}
+
+.scan-issues code {
+  color: var(--color-base-content);
+  overflow-wrap: anywhere;
+}
+
+.scan-issues span {
+  color: var(--app-muted);
+}
+
+/* ── sidebar activity ─────────────────────────────────────── */
+
+.scan-activity {
+  display: grid;
+  width: 100%;
+  gap: 6px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  padding: 10px;
+  border: 0;
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent);
+  background: color-mix(in oklch, var(--color-primary) 10%, var(--app-panel-raised));
+  color: var(--color-base-content);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.scan-activity-icon {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--color-primary);
+}
+
+.scan-activity-text {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.scan-activity-text strong {
+  overflow: hidden;
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scan-activity-text span {
+  color: var(--app-muted);
+}
+
+.scan-activity-progress {
+  width: 100%;
+  height: 5px;
+  accent-color: var(--color-primary);
+  grid-column: 1 / -1;
+}
+
+.app-sidebar[data-collapsed="true"] .scan-activity {
+  justify-items: center;
+  grid-template-columns: 1fr;
+  padding: 8px 6px;
+}
+
+.app-sidebar[data-collapsed="true"] .scan-activity-text {
+  display: none;
+}
+
+/* ── catalog work picker ──────────────────────────────────── */
+
+.catalog-work-picker {
+  display: grid;
+  gap: 8px;
+}
+
+.catalog-work-picker-field {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  background: var(--app-backdrop);
+}
+
+.catalog-work-picker-field:focus-within {
+  box-shadow: inset 0 0 0 1px var(--color-primary);
+}
+
+.catalog-work-picker-field svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  color: var(--app-muted);
+}
+
+.catalog-work-picker-field input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-base-content);
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.catalog-work-picker-spin {
+  animation: scanner-spin 0.8s linear infinite;
+}
+
+.catalog-work-picker-results {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.catalog-work-picker-results button {
+  display: grid;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  grid-template-columns: 56px minmax(0, 1fr);
+  padding: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--color-base-content);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.catalog-work-picker-results button:hover,
+.catalog-work-picker-results button:focus-visible {
+  background: color-mix(in oklch, var(--color-base-content) 7%, transparent);
+}
+
+.catalog-work-picker-cover {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  width: 56px;
+  aspect-ratio: 4 / 3;
+  background: var(--app-panel-raised);
+}
+
+.catalog-work-picker-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.catalog-work-picker-copy strong {
+  overflow: hidden;
+  font-size: 0.8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.catalog-work-picker-copy small {
+  color: var(--app-muted);
+  font-size: 0.72rem;
+}
+
+.catalog-work-picker-empty {
+  margin: 0;
+  color: var(--app-muted);
+  font-size: 0.8rem;
+}
+
+@media (max-width: 680px) {
+  .scan-finding {
+    grid-template-columns: 72px minmax(0, 1fr);
+  }
+
+  .scan-finding-art {
+    width: 72px;
+  }
+
+  .scan-finding-actions {
+    justify-content: flex-start;
+    grid-column: 1 / -1;
+  }
+
+  .scan-finding-note {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scan-progress-bar::after,
+  .scan-spin,
+  .catalog-work-picker-spin {
+    animation: none;
+  }
+}

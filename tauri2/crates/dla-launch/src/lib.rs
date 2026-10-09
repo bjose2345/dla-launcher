@@ -317,7 +317,15 @@ mod tests {
             Some(&sha256_file(&directory.path().join("game/Game.exe")).expect("hash")),
         )
         .expect("resolved target");
-        assert_eq!(resolved, directory.path().join("game/Game.exe"));
+        assert_eq!(
+            resolved,
+            directory
+                .path()
+                .join("game")
+                .join("Game.exe")
+                .canonicalize()
+                .expect("canonical target")
+        );
     }
 
     #[cfg(unix)]

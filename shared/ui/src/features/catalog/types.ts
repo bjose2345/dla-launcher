@@ -7,7 +7,8 @@ export type CatalogSort =
   | "code_asc"
   | "code_desc";
 
-export type CatalogTimeline = "added" | "release" | "updated";
+/** "activity" is Added + Updated: each work at its latest archive event. */
+export type CatalogTimeline = "activity" | "added" | "release" | "updated";
 
 export const catalogFacetGroups = [
   "ages",
@@ -40,6 +41,8 @@ export interface CatalogRouteState extends CatalogFilters {
   timeline: CatalogTimeline;
   month: string;
   page: number;
+  /** The day the listing is locked to (YYYY-MM-DD), or "" for the whole month. */
+  day: string;
 }
 
 export interface CatalogBrowseRequest extends CatalogFilters {
@@ -78,6 +81,15 @@ export interface CatalogWork {
   categories: CatalogCategory[];
   tags: CatalogNamedRef[];
   synthetic: boolean;
+  /** The publisher's newest update of the work's archives, when cataloged. */
+  latestUpdate?: CatalogWorkUpdate | null;
+}
+
+export interface CatalogWorkUpdate {
+  /** YYYY-MM-DD. */
+  date: string;
+  /** A dotted version such as "1.3.1", without a "v" prefix. */
+  version: string | null;
 }
 
 export interface CatalogRom {

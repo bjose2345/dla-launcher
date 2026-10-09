@@ -2,6 +2,7 @@ mod android_app;
 mod catalog;
 mod catalog_generation;
 mod database;
+mod delivery;
 mod import;
 mod installation;
 mod launch;

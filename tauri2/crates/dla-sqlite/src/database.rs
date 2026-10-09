@@ -25,6 +25,19 @@ pub fn open(path: &Path, migrations: &Migrations<'_>) -> rusqlite::Result<Connec
     Ok(connection)
 }
 
+/// A further connection to a database another connection already opened and
+/// migrated; it can only read, so WAL readers never wait on each other.
+pub fn open_reader(path: &Path) -> rusqlite::Result<Connection> {
+    let connection = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    connection.busy_timeout(Duration::from_secs(5))?;
+    connection.pragma_update(None, "foreign_keys", true)?;
+    connection.pragma_update(None, "query_only", true)?;
+    Ok(connection)
+}
+
 pub fn enable_wal(connection: &Connection) -> rusqlite::Result<String> {
     let journal_mode = connection.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))?;
     connection.pragma_update(None, "synchronous", "NORMAL")?;

@@ -1,11 +1,12 @@
 import {
+  loadLocaleCatalog,
   localeIds,
   translate,
   type LocaleId,
   type MessageKey,
 } from "../i18n/catalogs";
 
-export { localeIds, translate };
+export { loadLocaleCatalog, localeIds, translate };
 export type { LocaleId, MessageKey };
 
 export const themeIds = [

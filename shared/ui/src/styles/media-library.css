@@ -761,28 +761,19 @@
   opacity: 0.6;
 }
 
-.library-collection-manage,
-.library-collection-details {
+.library-collection-card footer .library-collection-menu {
   width: 31px;
+  height: 31px;
   padding: 0;
+  box-shadow: none;
   background: color-mix(in oklch, var(--color-base-content) 7%, transparent);
   color: var(--app-muted);
 }
 
-.library-collection-manage:hover,
-.library-collection-details:hover {
+.library-collection-card footer .library-collection-menu:hover,
+.library-collection-card footer .library-collection-menu[aria-expanded="true"] {
   background: color-mix(in oklch, var(--color-base-content) 12%, transparent);
   color: var(--color-base-content);
-}
-
-.library-collection-manage span,
-.library-collection-details span {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
 }
 
 .library-collection-empty {
@@ -2073,7 +2064,7 @@
   }
 
   .library-collection-action {
-    min-width: calc(100% - 72px);
+    min-width: calc(100% - 36px);
   }
 
   .library-shelves {

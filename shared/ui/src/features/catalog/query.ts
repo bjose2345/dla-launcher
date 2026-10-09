@@ -18,9 +18,10 @@ export const defaultCatalogFilters: CatalogFilters = {
 
 export const defaultCatalogRouteState: CatalogRouteState = {
   ...defaultCatalogFilters,
-  timeline: "added",
+  timeline: "activity",
   month: "",
   page: 1,
+  day: "",
 };
 
 const validCatalogSorts = new Set<CatalogSort>([
@@ -37,9 +38,10 @@ export function parseCatalogSearch(search: Record<string, unknown>): CatalogRout
     category: stringValue(search.category),
     tag: stringValue(search.tag),
     sort: isCatalogSort(search.sort) ? search.sort : defaultCatalogFilters.sort,
-    timeline: isCatalogTimeline(search.timeline) ? search.timeline : "added",
+    timeline: isCatalogTimeline(search.timeline) ? search.timeline : defaultCatalogRouteState.timeline,
     month: isCatalogMonth(search.month) ? search.month : "",
     page: positiveInteger(search.page),
+    day: isCatalogDay(search.day) ? search.day : "",
   };
 }
 
@@ -96,7 +98,7 @@ export function isCatalogSort(value: unknown): value is CatalogSort {
 }
 
 export function isCatalogTimeline(value: unknown): value is CatalogTimeline {
-  return value === "added" || value === "release" || value === "updated";
+  return value === "activity" || value === "added" || value === "release" || value === "updated";
 }
 
 export function isCatalogMonth(value: unknown): value is string {
@@ -104,6 +106,12 @@ export function isCatalogMonth(value: unknown): value is string {
   const year = Number(value.slice(0, 4));
   const month = Number(value.slice(5));
   return year >= 1 && year < 9999 && month >= 1 && month <= 12;
+}
+
+export function isCatalogDay(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const day = Number(value.slice(8));
+  return isCatalogMonth(value.slice(0, 7)) && day >= 1 && day <= 31;
 }
 
 function positiveInteger(value: unknown): number {
