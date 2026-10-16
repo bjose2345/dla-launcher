@@ -2,6 +2,13 @@ name: Desktop builds and releases
 
 on:
   push:
+    # Documentation alone builds nothing. GitHub never applies path filters
+    # to tag pushes, so a release tag always builds.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
+      - "NOTICE"
   workflow_dispatch:
 
 permissions:
