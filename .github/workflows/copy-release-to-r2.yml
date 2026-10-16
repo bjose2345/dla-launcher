@@ -1,0 +1,95 @@
+name: Copy a release to R2
+
+# Copies a published GitHub Release, as it is, to the download site
+# (https://downloads.dlsitearchive.com, served from the bucket's launcher/
+# folder). Nothing is rebuilt: the files in R2 are byte for byte the files on
+# the GitHub Release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to copy, for example v0.1.0-alpha.3
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  copy:
+    name: Copy ${{ inputs.tag }} to R2
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    environment: r2-production
+    # Shared with the tag build's publish-r2 job, so two publications never
+    # overlap.
+    concurrency:
+      group: dla-launcher-r2-production
+      cancel-in-progress: false
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Download and check the GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Unsafe release tag: $TAG" >&2
+            exit 1
+          fi
+          if [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" != false ]]; then
+            echo "$TAG is not a published GitHub Release." >&2
+            exit 1
+          fi
+
+          gh release download "$TAG" --dir release-assets
+          (cd release-assets && sha256sum --check --strict SHA256SUMS.txt)
+
+          commit="$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)"
+          mkdir r2-metadata
+          # The site serves the launcher's folder at its root, where the
+          # website links.
+          node .github/scripts/create-release-manifest.mjs \
+            release-assets \
+            r2-metadata/latest.json \
+            "$TAG" \
+            "https://downloads.dlsitearchive.com" \
+            "$commit"
+
+      - name: Install the pinned AWS CLI
+        shell: bash
+        run: |
+          python3 -m pip install \
+            --disable-pip-version-check \
+            --no-input \
+            --user \
+            awscli==1.46.0
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Upload, verify, and promote the release
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_RELEASES_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_RELEASES_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_EC2_METADATA_DISABLED: true
+          AWS_MAX_ATTEMPTS: 5
+          AWS_RETRY_MODE: standard
+          R2_ENDPOINT: ${{ secrets.R2_RELEASES_ENDPOINT }}
+          R2_BUCKET: dla-releases
+          # This app's folder in the shared releases bucket.
+          R2_PREFIX: launcher
+          TAG: ${{ inputs.tag }}
+        run: |
+          bash .github/scripts/publish-to-r2.sh \
+            release-assets \
+            r2-metadata/latest.json \
+            "$TAG"
