@@ -54,6 +54,7 @@ jobs:
           (cd release-assets && sha256sum --check --strict SHA256SUMS.txt)
 
           commit="$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)"
+          published_at="$(gh release view "$TAG" --json publishedAt --jq .publishedAt)"
           mkdir r2-metadata
           # The site serves the launcher's folder at its root, where the
           # website links.
@@ -62,7 +63,8 @@ jobs:
             r2-metadata/latest.json \
             "$TAG" \
             "https://downloads.dlsitearchive.com" \
-            "$commit"
+            "$commit" \
+            "$published_at"
 
       - name: Install the pinned AWS CLI
         shell: bash

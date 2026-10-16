@@ -2,12 +2,12 @@ import { createHash } from "node:crypto";
 import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-const [assetsDirectory, outputPath, tag, publicBaseUrl, sourceCommit] =
+const [assetsDirectory, outputPath, tag, publicBaseUrl, sourceCommit, publishedAtArgument] =
   process.argv.slice(2);
 
 if (!assetsDirectory || !outputPath || !tag || !publicBaseUrl || !sourceCommit) {
   throw new Error(
-    "Usage: create-release-manifest.mjs <assets-dir> <output> <tag> <public-base-url> <source-commit>",
+    "Usage: create-release-manifest.mjs <assets-dir> <output> <tag> <public-base-url> <source-commit> [published-at]",
   );
 }
 
@@ -17,6 +17,12 @@ const tagMatch = semverTag.exec(tag);
 if (!tagMatch) throw new Error(`Invalid release tag: ${tag}`);
 if (!/^[0-9a-f]{40}$/i.test(sourceCommit)) {
   throw new Error(`Invalid source commit: ${sourceCommit}`);
+}
+
+// A release copied later keeps the date it was published on GitHub.
+const publishedAt = publishedAtArgument ? new Date(publishedAtArgument) : new Date();
+if (!Number.isFinite(publishedAt.getTime())) {
+  throw new Error(`Invalid publication date: ${publishedAtArgument}`);
 }
 
 const baseUrl = new URL(publicBaseUrl);
@@ -159,7 +165,7 @@ const manifest = {
   version: tag.slice(1),
   tag,
   prerelease: Boolean(tagMatch[4]),
-  publishedAt: new Date().toISOString(),
+  publishedAt: publishedAt.toISOString(),
   sourceCommit: sourceCommit.toLowerCase(),
   assets,
 };
