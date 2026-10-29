@@ -25,7 +25,7 @@ import { usePresentation } from "../../preferences/PresentationProvider";
 import { useCatalogFacetFilters } from "./CatalogFacetFiltersProvider";
 import { setCatalogFacetState } from "./catalogFilters";
 import { useHeroBackdropParallax, WorkHeroAmbient } from "./WorkHeroAmbient";
-import { readWorkLibraryAction, type WorkLibraryAction } from "./workLibraryAction";
+import { readInstallationLibraryAction, readWorkLibraryAction, type WorkLibraryAction } from "./workLibraryAction";
 import { LaunchActivityList, formatDuration } from "../library/LaunchHistory";
 import { isMediaLaunchAction, mediaActionMessageKey } from "../library/mediaSession";
 import { useMediaPlayback } from "../library/MediaPlaybackProvider";
@@ -385,8 +385,10 @@ function WorkDetail({
   );
 }
 
-function WorkLocalActionButton({
+/** Play, read, install or review: what the Library can do for a work, found by its code or its Library entry. */
+export function WorkLocalActionButton({
   workCode,
+  installationId: libraryEntry,
   gateway,
   deliveryGateway,
   onOpenScanner,
@@ -394,7 +396,8 @@ function WorkLocalActionButton({
   onOpenMedia,
   onOpenExternal,
 }: {
-  workCode: string;
+  workCode?: string;
+  installationId?: string;
   gateway: LibraryGateway;
   deliveryGateway?: DeliveryGateway;
   onOpenScanner: () => void;
@@ -406,8 +409,10 @@ function WorkLocalActionButton({
   const playback = useMediaPlayback();
   const queryClient = useQueryClient();
   const query = useQuery({
-    queryKey: ["library", "work-action", workCode],
-    queryFn: () => readWorkLibraryAction(gateway, workCode),
+    queryKey: ["library", "work-action", workCode ?? `installation:${libraryEntry}`],
+    queryFn: () => (workCode
+      ? readWorkLibraryAction(gateway, workCode)
+      : readInstallationLibraryAction(gateway, libraryEntry!)),
   });
   const action: WorkLibraryAction | null = query.data ?? null;
   const mediaAction = action?.kind === "play" && isMediaLaunchAction(action.action)
@@ -523,7 +528,7 @@ function WorkLocalActionButton({
       >
         {t(buttonKey)} <span aria-hidden="true">→</span>
       </button>
-      {deliveryGateway && action && (
+      {deliveryGateway && action && workCode && (
         <WorkInstall
           workCode={workCode}
           gateway={deliveryGateway}
@@ -599,22 +604,25 @@ function AgeMetadataRow({ age, label, onSelect }: { age: string; label: string; 
   );
 }
 
-function MetadataRow({
+export function MetadataRow({
   label,
   values,
   onSelect,
   tone = "neutral",
   muted = false,
+  emptyLabel,
 }: {
   label: string;
   values: Array<{ key: string; label: string }>;
-  onSelect: (key: string) => void;
+  /** Filters the catalog by a chip; without it the chips are plain labels. */
+  onSelect?: (key: string) => void;
   tone?: string;
   muted?: boolean;
+  emptyLabel?: string;
 }) {
   const { t } = usePresentation();
   const [expanded, setExpanded] = useState(false);
-  const shown = values.length ? values : [{ key: "", label: t("detail.notCataloged") }];
+  const shown = values.length ? values : [{ key: "", label: emptyLabel ?? t("detail.notCataloged") }];
   // A long row shows its first chips and "+N more"; a row never folds just to
   // hide a single chip.
   const collapsible = shown.length > METADATA_VISIBLE + 1;
@@ -623,7 +631,9 @@ function MetadataRow({
     <div className={`work-metadata-row tone-${tone}`}>
       <span className="work-metadata-label"><i aria-hidden="true" />{label}</span>
       <span className="work-metadata-values">
-        {visible.map((value, index) => value.key
+        {visible.map((value, index) => value.key && !onSelect
+          ? <span className="work-metadata-chip is-static" key={`${value.key}:${index}`}>{value.label}</span>
+          : value.key && onSelect
           ? (
             <button
               className={`work-metadata-filter work-metadata-chip${index >= METADATA_VISIBLE ? " revealed" : ""}`}
@@ -658,7 +668,7 @@ function MetadataRow({
 
 /** The work code, copied with one click; the icon turns into a check for a
  *  moment and screen readers hear that it was copied. */
-function WorkCodeCopy({ code }: { code: string }) {
+export function WorkCodeCopy({ code }: { code: string }) {
   const { t } = usePresentation();
   const [copied, setCopied] = useState(false);
   useEffect(() => {
@@ -686,7 +696,7 @@ function WorkCodeCopy({ code }: { code: string }) {
   );
 }
 
-function DataRow({ label, value }: { label: string; value: string }) {
+export function DataRow({ label, value }: { label: string; value: string }) {
   return <div><dt>{label}</dt><dd>{value}</dd></div>;
 }
 

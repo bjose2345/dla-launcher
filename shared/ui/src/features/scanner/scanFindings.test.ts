@@ -20,6 +20,7 @@ function finding(overrides: Partial<ScanFinding>): ScanFinding {
     fileCount: 3,
     sizeBytes: 300,
     volumeCount: 0,
+    incompleteSet: null,
     inLibrary: null,
     ignored: false,
     ...overrides,

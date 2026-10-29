@@ -227,7 +227,7 @@
   left: 18px;
   display: grid;
   min-height: 66px;
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 12px;
   padding: 9px 10px;
@@ -242,7 +242,6 @@
 }
 
 .video-player-back,
-.video-player-finish,
 .video-player-icon-button,
 .video-player-error button,
 .video-player-drawer button {
@@ -253,7 +252,6 @@
 }
 
 .video-player-back,
-.video-player-finish,
 .video-player-icon-button {
   display: inline-flex;
   min-height: 44px;
@@ -274,7 +272,6 @@
 }
 
 .video-player-back:hover:not(:disabled),
-.video-player-finish:hover:not(:disabled),
 .video-player-icon-button:hover:not(:disabled) {
   border-color: color-mix(in oklch, var(--color-primary) 70%, var(--app-border));
   background: color-mix(in oklch, var(--color-primary) 18%, var(--color-base-300));
@@ -282,14 +279,12 @@
 }
 
 .video-player-back:disabled,
-.video-player-finish:disabled,
 .video-player-icon-button:disabled {
   cursor: default;
   opacity: 0.42;
 }
 
 .video-player-back svg,
-.video-player-finish svg,
 .video-player-icon-button svg {
   width: 17px;
   height: 17px;
@@ -352,11 +347,6 @@
 .video-player-position strong {
   color: var(--color-base-content);
   font-size: 1rem;
-}
-
-.video-player-finish {
-  border-color: color-mix(in oklch, var(--color-primary) 46%, var(--app-border));
-  color: var(--color-primary);
 }
 
 .video-player-icon-button {
@@ -649,20 +639,18 @@
 
 @media (max-width: 980px) {
   .video-player-topbar {
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-columns: auto minmax(0, 1fr) auto;
   }
 
   .video-player-position {
     display: none;
   }
 
-  .video-player-finish span,
   .video-player-back span {
     display: none;
   }
 
-  .video-player-back,
-  .video-player-finish {
+  .video-player-back {
     width: 44px;
     padding: 0;
   }
@@ -690,7 +678,6 @@
   }
 
   .video-player-back,
-  .video-player-finish,
   .video-player-icon-button {
     width: 40px;
     min-height: 40px;
@@ -713,13 +700,11 @@
 
   .video-player-title > span,
   .video-player-title small,
-  .video-player-finish span,
   .video-player-back span {
     display: none;
   }
 
   .video-player-back,
-  .video-player-finish,
   .video-player-icon-button {
     width: 38px;
     min-height: 38px;

@@ -1,9 +1,19 @@
 export { ActiveLaunchPill } from "./ActiveLaunchPill";
 export { MediaDock } from "./MediaDock";
-export { ImageReaderProvider, useImageReader } from "./ImageReaderProvider";
+export { ReaderProvider, useReader } from "./ReaderProvider";
 export { ReaderOverlay } from "./ReaderOverlay";
 export { MediaPlaybackProvider, useMediaPlayback } from "./MediaPlaybackProvider";
 export { LibraryPage } from "./LibraryPage";
+export type {
+  ConfirmLibraryAddRequest,
+  LibraryAddFinding,
+  LibraryAddGateway,
+  LibraryAddItem,
+  LibraryAddJob,
+  LibraryAddSource,
+  LibraryAddSourceView,
+  LibraryAddView,
+} from "./libraryAdd";
 export { LibraryManageDrawer } from "./LibraryManageDrawer";
 export { manageTabs, type ManageTab } from "./types";
 export { MediaSessionPage } from "./MediaSessionPage";
@@ -16,6 +26,7 @@ export type {
   InstallationHealthIssueKind,
   InstallationHealthReport,
   InstallationHealthState,
+  InstallationImage,
   InstallationReviewRequest,
   LaunchAdapter,
   LaunchActivity,
@@ -39,6 +50,8 @@ export type {
   NativeVideoViewport,
   OpenNativeVideoRequest,
   OpenNativeVideoResponse,
+  OwnWorkDetails,
+  OwnWorkKind,
   PersonalizationAnchor,
   PersonalizedRecommendationItem,
   PackageDestinationConflictPolicy,
@@ -46,6 +59,7 @@ export type {
   PackageDestinationState,
   PackagePreparationProgress,
   PreparedPackageInstallation,
+  SaveOwnWorkDetailsRequest,
   SelectedInstallationDestination,
   UpdateMediaProgressRequest,
   UpdateMediaQueueSettingsRequest,

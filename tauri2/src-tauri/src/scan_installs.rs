@@ -89,6 +89,7 @@ pub struct ScanAddResponse {
 struct Queued {
     installation_id: InstallationId,
     identity: Option<ManualCatalogIdentity>,
+    retention: ArchiveRetentionPolicy,
 }
 
 #[derive(Default)]
@@ -100,7 +101,7 @@ struct State {
 
 /// Installs the archives a scan found, one after another, into the install
 /// folder Install from DLA also uses, and confirms each into the Library.
-/// The user's archives are kept.
+/// The user's archives are kept unless "+ Add" was asked to delete them.
 pub struct ScanInstallController {
     findings: Arc<ScanFindingService>,
     preparation: Arc<PackagePreparationController>,
@@ -226,6 +227,7 @@ impl ScanInstallController {
                             detail: None,
                         },
                         identity,
+                        ArchiveRetentionPolicy::Keep,
                     );
                     ScanAddResult {
                         key,
@@ -247,7 +249,41 @@ impl ScanInstallController {
         })
     }
 
-    fn enqueue(&self, install: ScanInstall, identity: Option<ManualCatalogIdentity>) -> bool {
+    /// Queues an archive "+ Add" chose, keeping or deleting its volumes once
+    /// it is installed and checked. False when it is already queued.
+    pub fn queue(
+        self: &Arc<Self>,
+        install: ScanInstall,
+        identity: Option<ManualCatalogIdentity>,
+        retention: ArchiveRetentionPolicy,
+    ) -> bool {
+        let queued = self.enqueue(install, identity, retention);
+        if queued {
+            self.kick();
+            self.changed();
+        }
+        queued
+    }
+
+    /// Where an install stands, with the reason it failed.
+    pub fn status(
+        &self,
+        installation_id: &InstallationId,
+    ) -> Option<(ScanInstallStatus, Option<String>)> {
+        let state = self.state.lock().ok()?;
+        state
+            .installs
+            .iter()
+            .find(|install| &install.installation_id == installation_id)
+            .map(|install| (install.status, install.detail.clone()))
+    }
+
+    fn enqueue(
+        &self,
+        install: ScanInstall,
+        identity: Option<ManualCatalogIdentity>,
+        retention: ArchiveRetentionPolicy,
+    ) -> bool {
         let Ok(mut state) = self.state.lock() else {
             return false;
         };
@@ -267,6 +303,7 @@ impl ScanInstallController {
         state.queue.push_back(Queued {
             installation_id: install.installation_id.clone(),
             identity,
+            retention,
         });
         state.installs.push(install);
         true
@@ -295,7 +332,7 @@ impl ScanInstallController {
             status: ScanInstallStatus::Queued,
             detail: None,
         };
-        if self.enqueue(install, None) {
+        if self.enqueue(install, None, ArchiveRetentionPolicy::Keep) {
             self.kick();
             self.changed();
         }
@@ -423,7 +460,7 @@ impl ScanInstallController {
             queued.installation_id.clone(),
             folder,
             PackageDestinationConflictPolicy::Refuse,
-            ArchiveRetentionPolicy::Keep,
+            queued.retention,
             &cancelled,
             &|_| {},
         ) {

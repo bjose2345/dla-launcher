@@ -15,11 +15,21 @@ export function LibraryArtwork({
   kind,
   title,
   work,
+  cover,
 }: {
   kind: LibraryContentKind;
   title: string;
   work?: CatalogWork;
+  /** The cover the user chose for a work outside the catalog. */
+  cover?: string | null;
 }) {
+  if (!work && cover) {
+    return (
+      <span className="library-artwork" data-library-kind={kind}>
+        <WorkCardImage code={cover} title={title} mainImageUrls={[cover]} thumbnailUrls={[]} />
+      </span>
+    );
+  }
   if (work) {
     return (
       <span className="library-artwork" data-library-kind={kind}>

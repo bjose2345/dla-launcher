@@ -1,7 +1,6 @@
 import {
   AlertTriangle,
   ArrowLeft,
-  CheckCircle2,
   ChevronRight,
   Film,
   LoaderCircle,
@@ -83,7 +82,6 @@ interface VideoPlayerProps {
   ) => void;
   onPlaybackState: (itemOrdinal: number, status: "active" | "paused") => void;
   onEnded: (itemOrdinal: number) => void;
-  onComplete: () => void;
   onRepeatMode: (mode: MediaRepeatMode) => void;
   onShuffle: (shuffle: boolean) => void;
   onBack: () => void;
@@ -108,7 +106,6 @@ export function VideoPlayer({
   onProgress,
   onPlaybackState,
   onEnded,
-  onComplete,
   onRepeatMode,
   onShuffle,
   onBack,
@@ -368,19 +365,6 @@ export function VideoPlayer({
     }
   }, [controlNativeVideo, fullscreen, nativeGateway]);
 
-  const finish = useCallback(() => {
-    const element = videoRef.current;
-    shouldPlayRef.current = false;
-    if (nativeGateway) void controlNativeVideo({ command: "pause" });
-    else {
-      if (element && !element.paused) ignoreNextPauseRef.current = true;
-      element?.pause();
-    }
-    setPlaying(false);
-    setHasStarted(false);
-    onComplete();
-  }, [controlNativeVideo, nativeGateway, onComplete]);
-
   const retry = useCallback(() => {
     setPlaybackFailure(null);
     setPlayError("");
@@ -627,10 +611,6 @@ export function VideoPlayer({
       onBack();
       return;
     }
-    if (state.kind === "finish") {
-      if (!completed) onComplete();
-      return;
-    }
     if (state.kind === "choose") {
       if (state.actionOrdinal !== null) onChoose(state.actionOrdinal, true);
       return;
@@ -736,8 +716,6 @@ export function VideoPlayer({
       back: t("common.back"),
       player: t("media.player.video"),
       play: t("media.play"),
-      markFinished: t("media.markFinished"),
-      completed: t("media.completed"),
       playlist: t("media.video.playlist"),
       openPlaylist: t("media.video.openPlaylist"),
       closePlaylist: t("media.video.closePlaylist"),
@@ -778,9 +756,6 @@ export function VideoPlayer({
         <div className="video-player-position" aria-live="polite">
           <strong>{items.length > 0 ? currentIndex + 1 : 0}</strong><span>/ {items.length}</span>
         </div>
-        <button className="video-player-finish" type="button" disabled={completed} onClick={finish}>
-          <CheckCircle2 aria-hidden="true" /><span>{t(completed ? "media.completed" : "media.markFinished")}</span>
-        </button>
         <button
           className="video-player-icon-button"
           type="button"

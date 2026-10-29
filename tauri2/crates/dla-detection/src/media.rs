@@ -10,6 +10,8 @@ use dla_domain::{
 };
 use thiserror::Error;
 
+const IMAGE_SET_MINIMUM: usize = 10;
+const PDF_SHARE_DIVISOR: u64 = 4;
 const PORTABLE_PLATFORMS: [dla_domain::installation::InstallationPlatform; 5] = [
     dla_domain::installation::InstallationPlatform::Windows,
     dla_domain::installation::InstallationPlatform::Linux,
@@ -277,8 +279,15 @@ fn generate_candidates(items: &[ClassifiedItem]) -> Vec<LaunchCandidate> {
     let mut ids = CandidateIds::default();
     add_executable_candidates(items, &mut candidates, &mut ids);
     add_audio_candidates(items, &mut candidates, &mut ids);
-    add_pdf_candidates(items, &mut candidates, &mut ids);
-    add_image_candidates(items, &mut candidates, &mut ids);
+    let images = typed_items(items, MediaType::Image);
+    let pdfs = typed_items(items, MediaType::Pdf);
+    if images_outweigh_pdfs(images.len(), total_size(&images), total_size(&pdfs)) {
+        add_image_candidates(items, &mut candidates, &mut ids);
+        add_pdf_candidates(items, &mut candidates, &mut ids, true);
+    } else {
+        add_pdf_candidates(items, &mut candidates, &mut ids, false);
+        add_image_candidates(items, &mut candidates, &mut ids);
+    }
     add_video_candidates(items, &mut candidates, &mut ids);
     add_android_candidates(items, &mut candidates, &mut ids);
     if candidates.is_empty() {
@@ -368,6 +377,7 @@ fn add_pdf_candidates(
     items: &[ClassifiedItem],
     candidates: &mut Vec<LaunchCandidate>,
     ids: &mut CandidateIds,
+    beside_image_set: bool,
 ) {
     let pdfs = typed_items(items, MediaType::Pdf);
     for pdf in &pdfs {
@@ -377,22 +387,27 @@ fn add_pdf_candidates(
         } else {
             format!("open-{}", slug(&pdf.filename_stem))
         };
+        let mut reason_codes = if single {
+            reasons(&["single_pdf"])
+        } else {
+            reasons(&["pdf_document"])
+        };
+        let confidence = if beside_image_set {
+            reason_codes.push("pdf_beside_image_set".to_owned());
+            InferenceConfidence::Low
+        } else if single {
+            InferenceConfidence::High
+        } else {
+            InferenceConfidence::Medium
+        };
         candidates.push(candidate(
             ids,
             &base_id,
             LaunchActionKind::OpenDocument,
             LaunchTarget::RelativePath(pdf.item.relative_path.clone()),
             PORTABLE_PLATFORMS.to_vec(),
-            if single {
-                InferenceConfidence::High
-            } else {
-                InferenceConfidence::Medium
-            },
-            if single {
-                reasons(&["single_pdf"])
-            } else {
-                reasons(&["pdf_document"])
-            },
+            confidence,
+            reason_codes,
         ));
     }
 }
@@ -514,6 +529,23 @@ fn typed_items(items: &[ClassifiedItem], media_type: MediaType) -> Vec<&Classifi
         .iter()
         .filter(|item| item.item.media_type == media_type)
         .collect()
+}
+
+fn total_size(items: &[&ClassifiedItem]) -> u64 {
+    items
+        .iter()
+        .filter_map(|item| item.item.size_bytes)
+        .fold(0, u64::saturating_add)
+}
+
+/// Whether a set of images is the work rather than extras around its PDFs.
+///
+/// A CG set often ships a small PDF manual beside hundreds of images, while
+/// a comic ships its pages as a PDF, sometimes with the same pages or a few
+/// bonus pictures as image files. The images win only when there are enough
+/// of them and the PDFs are a small share of their size.
+pub(crate) fn images_outweigh_pdfs(image_count: usize, image_bytes: u64, pdf_bytes: u64) -> bool {
+    image_count >= IMAGE_SET_MINIMUM && pdf_bytes.saturating_mul(PDF_SHARE_DIVISOR) < image_bytes
 }
 
 fn candidate(

@@ -238,6 +238,18 @@ export function ScanFindingRow({
           {t(finding.state === "mixed" ? "scanner.mixedHelp" : "scanner.incompleteHelp")}
         </p>
       ) : null}
+      {status === "open" && finding.state === "incomplete" && finding.incompleteSet ? (
+        <ul className="scan-finding-volumes">
+          {finding.incompleteSet.renames.map((rename) => (
+            <li key={rename.from}>{t("scanner.incompleteRename", { from: rename.from, to: rename.to })}</li>
+          ))}
+          {finding.incompleteSet.missingParts.length ? (
+            <li>{t("scanner.incompleteMissing", {
+              parts: finding.incompleteSet.missingParts.map((part) => part.toLocaleString(locale)).join(", "),
+            })}</li>
+          ) : null}
+        </ul>
+      ) : null}
 
       {choosing ? (
         <div className="scan-finding-choose">

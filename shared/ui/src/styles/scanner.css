@@ -389,6 +389,17 @@
   color: var(--color-error);
 }
 
+.scan-finding-volumes {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--color-base-content);
+  font-size: 0.8rem;
+  grid-column: 2 / -1;
+  overflow-wrap: anywhere;
+}
+
 .scan-finding-choose {
   display: grid;
   gap: 10px;

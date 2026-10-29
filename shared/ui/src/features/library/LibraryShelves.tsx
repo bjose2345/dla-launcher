@@ -16,13 +16,15 @@ import { LibraryArtwork } from "./LibraryArtwork";
 import type { ManageTab } from "./LibraryManageDrawer";
 import { LibraryWorkMenu } from "./LibraryWorkMenu";
 import { ContentCarousel } from "../../carousel/ContentCarousel";
+import { isReaderAction } from "./ReaderProvider";
 import {
   libraryContentKind,
   libraryDisplayCreator,
   libraryDisplayTitle,
+  resumePlaceLabel,
 } from "./libraryHome";
-import { displayPath } from "../../displayPath";
-import { effectiveIdentity, installationFolder } from "./libraryPresentation";
+import { effectiveIdentity } from "./libraryPresentation";
+import { useOwnWork } from "./ownWorkDetails";
 import {
   installationPrimaryAction,
   mediaActionMessageKey,
@@ -42,6 +44,9 @@ interface LibraryShelvesProps {
   preparedByInstallation: Map<string, PreparedPackageInstallation | null>;
   inLens: (installationId: string) => boolean;
   blockedExecutableInstallations: ReadonlySet<string>;
+  /** The work shown in the featured spot, marked on its card. */
+  selectedId?: string | null;
+  onSelect: (installationId: string) => void;
   onActivate: (installationId: string, action: LaunchActionKind | null) => void;
   onManage: (installationId: string, tab: ManageTab) => void;
   onOpenWork: (code: string) => void | Promise<void>;
@@ -62,21 +67,46 @@ export function LibraryShelves({
   preparedByInstallation,
   inLens,
   blockedExecutableInstallations,
+  selectedId,
+  onSelect,
   onActivate,
   onManage,
   onOpenWork,
   onBrowse,
 }: LibraryShelvesProps) {
   const { locale, t } = usePresentation();
-  const withMenu = (installation: Installation, key: string, card: ReactNode) => {
+  const own = useOwnWork();
+  const withMenu = (
+    installation: Installation,
+    key: string,
+    card: ReactNode,
+    launch: { action: LaunchActionKind | null; disabled: boolean },
+  ) => {
     const work = workForInstallation(installation, workByCode);
+    const label = t("library.launchFor", {
+      action: t(launchLabelKey(launch.action)),
+      title: libraryDisplayTitle(installation, work, locale !== "ja-JP"),
+    });
     return (
       <div className="library-shelf-item" key={key}>
         {card}
+        <button
+          className="library-shelf-card-launch"
+          type="button"
+          aria-label={label}
+          title={label}
+          disabled={launch.disabled}
+          onClick={() => onActivate(installation.id, launch.action)}
+        >
+          <ArrowRight aria-hidden="true" />
+        </button>
         <LibraryWorkMenu
           className="library-shelf-item-menu"
           title={libraryDisplayTitle(installation, work, locale !== "ja-JP")}
-          onOpenWork={work ? () => void onOpenWork(work.code) : undefined}
+          onOpenWork={work
+            ? () => void onOpenWork(work.code)
+            : own.openPage ? () => own.openPage!(installation.id) : undefined}
+          ownWork={!work}
           onManage={(tab) => onManage(installation.id, tab)}
           onBrowse={onBrowse ? () => onBrowse(installation.id) : undefined}
         />
@@ -107,10 +137,14 @@ export function LibraryShelves({
           installation={installation}
           work={workForInstallation(installation, workByCode)}
           locale={locale}
-          disabled={blockedExecutableInstallations.has(installation.id)}
-          onOpen={() => onActivate(installation.id, activity.action)}
+          selected={selectedId === installation.id}
+          onSelect={() => onSelect(installation.id)}
         />
-      ))),
+      ), {
+        action: activity.action,
+        disabled: blockedExecutableInstallations.has(installation.id)
+          || (activity.kind === "executable_launch" && activity.active),
+      })),
     },
     {
       key: "never-launched",
@@ -127,10 +161,10 @@ export function LibraryShelves({
             installation={installation}
             action={action}
             work={workForInstallation(installation, workByCode)}
-            disabled={blockedExecutableInstallations.has(installation.id)}
-            onOpen={() => onActivate(installation.id, action)}
+            selected={selectedId === installation.id}
+            onSelect={() => onSelect(installation.id)}
           />
-        ));
+        ), { action, disabled: blockedExecutableInstallations.has(installation.id) });
       }),
     },
     {
@@ -143,9 +177,10 @@ export function LibraryShelves({
           installation={installation}
           resume={resume}
           work={workForInstallation(installation, workByCode)}
-          onOpen={() => onActivate(installation.id, resume.action)}
+          selected={selectedId === installation.id}
+          onSelect={() => onSelect(installation.id)}
         />
-      ))),
+      ), { action: resume.action, disabled: false })),
     },
   ];
 
@@ -180,32 +215,28 @@ function RecentShelfCard({
   installation,
   work,
   locale,
-  disabled,
-  onOpen,
+  selected,
+  onSelect,
 }: {
   activity: LibraryRecentActivity;
   installation: Installation;
   work?: CatalogWork;
   locale: string;
-  disabled: boolean;
-  onOpen: () => void;
+  selected: boolean;
+  onSelect: () => void;
 }) {
   const { t } = usePresentation();
   const label = activity.kind === "media_session" && activity.action
     ? t(mediaActionMessageKey(activity.action))
     : t("library.shelf.launched");
+  const own = useOwnWork();
   const kind = libraryContentKind(installation, activity.action);
   const title = libraryDisplayTitle(installation, work, locale !== "ja-JP");
-  const creator = libraryDisplayCreator(installation, work, locale !== "ja-JP");
+  const creator = libraryDisplayCreator(work, locale !== "ja-JP", own.details(installation.id));
   return (
-    <button
-      className="library-shelf-card"
-      type="button"
-      disabled={disabled || (activity.kind === "executable_launch" && activity.active)}
-      onClick={onOpen}
-    >
+    <button className="library-shelf-card" type="button" aria-current={selected || undefined} onClick={onSelect}>
       <span className="library-shelf-card-art">
-        <LibraryArtwork kind={kind} title={title} work={work} />
+        <LibraryArtwork kind={kind} title={title} work={work} cover={own.coverUrl(installation.id)} />
         <span className="library-shelf-card-overlay" aria-hidden="true" />
         <span className="library-shelf-card-kicker">
           {label}
@@ -216,7 +247,6 @@ function RecentShelfCard({
       <code>{creator}</code>
       <span className="library-shelf-card-footer">
         <time dateTime={activity.occurredAt}>{formatDateTime(activity.occurredAt, locale)}</time>
-        <ArrowRight aria-hidden="true" />
       </span>
     </button>
   );
@@ -226,27 +256,30 @@ function ResumeShelfCard({
   installation,
   resume,
   work,
-  onOpen,
+  selected,
+  onSelect,
 }: {
   installation: Installation;
   resume: MediaResume;
   work?: CatalogWork;
-  onOpen: () => void;
+  selected: boolean;
+  onSelect: () => void;
 }) {
   const { locale, t } = usePresentation();
+  const own = useOwnWork();
   const percent = shelfResumePercent(resume);
   const kind = libraryContentKind(installation, resume.action);
   const title = libraryDisplayTitle(installation, work, locale !== "ja-JP");
-  const creator = libraryDisplayCreator(installation, work, locale !== "ja-JP");
+  const creator = libraryDisplayCreator(work, locale !== "ja-JP", own.details(installation.id));
   return (
-    <button className="library-shelf-card" type="button" onClick={onOpen}>
+    <button className="library-shelf-card" type="button" aria-current={selected || undefined} onClick={onSelect}>
       <span className="library-shelf-card-art">
-        <LibraryArtwork kind={kind} title={title} work={work} />
+        <LibraryArtwork kind={kind} title={title} work={work} cover={own.coverUrl(installation.id)} />
         <span className="library-shelf-card-overlay" aria-hidden="true" />
         <span className="library-shelf-card-kicker">{t(mediaActionMessageKey(resume.action))}</span>
       </span>
       <strong>{title}</strong>
-      <code title={resume.relativePath}>{creator} · {resume.relativePath}</code>
+      <code>{creator}</code>
       {percent === null ? null : (
         <span className="library-shelf-progress" aria-label={t("library.shelf.progress", { percent })}>
           <i style={{ width: `${percent}%` }} />
@@ -254,7 +287,6 @@ function ResumeShelfCard({
       )}
       <span className="library-shelf-card-footer">
         <span>{formatResumePosition(resume, t)}</span>
-        <ArrowRight aria-hidden="true" />
       </span>
     </button>
   );
@@ -264,38 +296,39 @@ function NeverLaunchedShelfCard({
   installation,
   action,
   work,
-  disabled,
-  onOpen,
+  selected,
+  onSelect,
 }: {
   installation: Installation;
   action: LaunchActionKind | null;
   work?: CatalogWork;
-  disabled: boolean;
-  onOpen: () => void;
+  selected: boolean;
+  onSelect: () => void;
 }) {
   const { locale, t } = usePresentation();
+  const own = useOwnWork();
   const kind = libraryContentKind(installation, action);
   const title = libraryDisplayTitle(installation, work, locale !== "ja-JP");
-  const creator = libraryDisplayCreator(installation, work, locale !== "ja-JP");
+  const creator = libraryDisplayCreator(work, locale !== "ja-JP", own.details(installation.id));
   return (
-    <button className="library-shelf-card" type="button" disabled={disabled} onClick={onOpen}>
+    <button className="library-shelf-card" type="button" aria-current={selected || undefined} onClick={onSelect}>
       <span className="library-shelf-card-art">
-        <LibraryArtwork kind={kind} title={title} work={work} />
+        <LibraryArtwork kind={kind} title={title} work={work} cover={own.coverUrl(installation.id)} />
         <span className="library-shelf-card-overlay" aria-hidden="true" />
         <span className="library-shelf-card-kicker">{t("library.shelf.ready")}</span>
       </span>
       <strong>{title}</strong>
-      <code title={displayPath(installationFolder(installation))}>{creator}</code>
+      <code>{creator}</code>
       <span className="library-shelf-card-footer">
-        <span>{t(action === "launch_executable"
-          ? "detail.play"
-          : action
-            ? mediaActionMessageKey(action)
-            : "library.setUp")}</span>
-        <ArrowRight aria-hidden="true" />
+        <span>{t(launchLabelKey(action))}</span>
       </span>
     </button>
   );
+}
+
+function launchLabelKey(action: LaunchActionKind | null): MessageKey {
+  if (action === "launch_executable") return "detail.play";
+  return action ? mediaActionMessageKey(action) : "library.setUp";
 }
 
 function workForInstallation(
@@ -327,6 +360,9 @@ function formatResumePosition(
 ): string {
   if (resume.durationMs === null || resume.durationMs <= 0) {
     return t(launchActionMessageKey(resume.action));
+  }
+  if (isReaderAction(resume.action)) {
+    return resumePlaceLabel(resume.action, resume.relativePath, resume.positionMs, resume.durationMs, t);
   }
   return `${formatMilliseconds(resume.positionMs)} / ${formatMilliseconds(resume.durationMs)}`;
 }

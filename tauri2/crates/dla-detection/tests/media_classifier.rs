@@ -3,7 +3,8 @@ use std::{fs, path::Path};
 use dla_detection::{MediaClassificationError, MediaClassificationRequest, classify_media};
 use dla_domain::{
     installation::{
-        CatalogIdentity, InstallationDetection, InstallationStatus, MediaType, RelativePathError,
+        CatalogIdentity, InferenceConfidence, InstallationDetection, InstallationStatus,
+        LaunchActionKind, LaunchTarget, MediaType, RelativePath, RelativePathError,
     },
     scanner::{
         ScanEntry, ScanEntryId, ScanEntryKind, ScanEntryPresence, ScanRootId, ScanSessionId,
@@ -167,6 +168,83 @@ fn repeated_candidate_names_receive_stable_unique_ids() {
             .map(|candidate| candidate.id.0.as_str())
             .collect::<Vec<_>>(),
         vec!["play-movie", "play-movie-2"]
+    );
+}
+
+fn sized_entry(relative_path: &str, size: u64) -> ScanEntry {
+    let mut entry = file_entry(relative_path);
+    entry.size = Some(size.to_string());
+    entry
+}
+
+fn recommended_action(entries: &[ScanEntry]) -> (LaunchActionKind, LaunchTarget) {
+    let detection = classify_media(MediaClassificationRequest {
+        source_scan_session_id: None,
+        catalog_identity: None,
+        entries,
+    })
+    .expect("classification");
+    let selection = detection.recommended_launch().expect("recommended action");
+    (selection.action, selection.target)
+}
+
+#[test]
+fn a_cg_folder_with_a_small_manual_recommends_its_images() {
+    let mut entries = (1..=30)
+        .map(|index| sized_entry(&format!("CG/{index:03}.png"), 3_000_000))
+        .collect::<Vec<_>>();
+    entries.push(sized_entry("manual.pdf", 1_500_000));
+
+    let detection = classify_media(MediaClassificationRequest {
+        source_scan_session_id: None,
+        catalog_identity: None,
+        entries: &entries,
+    })
+    .expect("classification");
+
+    assert_eq!(
+        recommended_action(&entries),
+        (LaunchActionKind::ReadImages, LaunchTarget::InstallationRoot)
+    );
+    let pdf = detection
+        .launch_candidates
+        .iter()
+        .find(|candidate| candidate.action == LaunchActionKind::OpenDocument)
+        .expect("the manual stays openable");
+    assert_eq!(pdf.confidence, InferenceConfidence::Low);
+    assert!(
+        pdf.reason_codes
+            .iter()
+            .any(|code| code == "pdf_beside_image_set")
+    );
+}
+
+#[test]
+fn a_comic_pdf_with_its_pages_as_images_recommends_the_pdf() {
+    let mut entries = (1..=26)
+        .map(|index| sized_entry(&format!("C107/{index:02}.png"), 3_347_372))
+        .collect::<Vec<_>>();
+    entries.push(sized_entry("C107/book.pdf", 73_636_176));
+
+    let (action, target) = recommended_action(&entries);
+
+    assert_eq!(action, LaunchActionKind::OpenDocument);
+    assert_eq!(
+        target,
+        LaunchTarget::RelativePath(RelativePath::parse("C107/book.pdf").expect("pdf path"))
+    );
+}
+
+#[test]
+fn a_comic_pdf_with_a_few_bonus_pictures_recommends_the_pdf() {
+    let mut entries = (1..=4)
+        .map(|index| sized_entry(&format!("bonus/{index:02}.jpg"), 10_000_000))
+        .collect::<Vec<_>>();
+    entries.push(sized_entry("book.pdf", 1_000_000));
+
+    assert_eq!(
+        recommended_action(&entries).0,
+        LaunchActionKind::OpenDocument
     );
 }
 

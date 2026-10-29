@@ -4,9 +4,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use dla_application::media::MediaError;
-use dla_domain::{installation::MediaType, media::MediaSessionId};
-use dla_media::{SidecarSubtitle, find_sidecar_subtitles, subtitle_to_web_vtt};
+use dla_application::{
+    media::MediaError,
+    own_work::{OwnWorkError, is_artwork_id},
+};
+use dla_domain::{
+    installation::{InstallationId, MediaType, RelativePath},
+    media::MediaSessionId,
+};
+use dla_media::{SidecarSubtitle, ThumbnailCache, find_sidecar_subtitles, subtitle_to_web_vtt};
 use percent_encoding::percent_decode_str;
 use serde::Serialize;
 use tauri::{
@@ -25,6 +31,7 @@ use crate::commands::AppState;
 const MAX_RANGE_BYTES: u64 = 1024 * 1024;
 const MAX_SUBTITLE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_MATERIALIZED_MEDIA_BYTES: u64 = 256 * 1024 * 1024;
+const THUMBNAIL_QUERY: &str = "thumbnail";
 
 pub fn respond(app: &AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
     match response(app, &request) {
@@ -80,8 +87,17 @@ fn response(
     if !matches!(*request.method(), Method::GET | Method::HEAD) {
         return Err(ProtocolError::MethodNotAllowed);
     }
+    if let Some(locator) = own_work_locator(request.uri().path())? {
+        return own_work_response(app, request, locator);
+    }
     let (session_id, ordinal) = parse_locator(request.uri().path())?;
     let asset = resolve_asset(app, &session_id, ordinal)?;
+    if asset.media_type == MediaType::Image
+        && request.uri().query() == Some(THUMBNAIL_QUERY)
+        && let Some(response) = thumbnail_response(app, request, &asset)
+    {
+        return response;
+    }
     let mut file =
         File::open(&asset.path).map_err(|error| map_asset_io_error(error, &asset.path))?;
     let length = file
@@ -133,6 +149,143 @@ fn response(
             }
         })?;
     builder.body(bytes).map_err(ProtocolError::response)
+}
+
+/// A gallery tile asks for `?thumbnail`; an image the decoder cannot read
+/// falls back to the original file, which the page can still show.
+fn thumbnail_response(
+    app: &AppHandle,
+    request: &Request<Vec<u8>>,
+    asset: &ResolvedAsset,
+) -> Option<Result<Response<Vec<u8>>, ProtocolError>> {
+    let cache = app.try_state::<ThumbnailCache>()?;
+    let bytes = match cache.thumbnail(&asset.path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            log::warn!("media thumbnail could not be drawn: {error}");
+            return None;
+        }
+    };
+    let builder = Response::builder()
+        .header(CONTENT_TYPE, "image/jpeg")
+        .header(CONTENT_LENGTH, bytes.len())
+        .header(ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .header(CACHE_CONTROL, "private, max-age=3600")
+        .header("X-Content-Type-Options", "nosniff");
+    let body = if request.method() == Method::HEAD {
+        Vec::new()
+    } else {
+        bytes
+    };
+    Some(builder.body(body).map_err(ProtocolError::response))
+}
+
+/// Pictures of the user's own works, outside any media session.
+#[derive(Debug, Eq, PartialEq)]
+enum OwnWorkLocator {
+    /// `artwork/<installation>/<artwork>`: a stored cover or sample.
+    Artwork {
+        installation_id: InstallationId,
+        artwork_id: String,
+    },
+    /// `installation/<installation>/<relative path>?thumbnail`: one of the
+    /// work's own images, offered as a cover or sample.
+    Image {
+        installation_id: InstallationId,
+        relative_path: RelativePath,
+    },
+}
+
+fn own_work_locator(path: &str) -> Result<Option<OwnWorkLocator>, ProtocolError> {
+    let decoded = percent_decode_str(path)
+        .decode_utf8()
+        .map_err(|_| ProtocolError::BadRequest)?;
+    let decoded = decoded.trim_start_matches('/');
+    let (route, rest) = match decoded.split_once('/') {
+        Some((route @ ("artwork" | "installation"), rest)) => (route, rest),
+        _ => return Ok(None),
+    };
+    let (installation_id, target) = rest
+        .split_once('/')
+        .filter(|(installation_id, _)| !installation_id.is_empty())
+        .ok_or(ProtocolError::BadRequest)?;
+    let installation_id = InstallationId(installation_id.to_owned());
+    if route == "artwork" {
+        if !is_artwork_id(target) {
+            return Err(ProtocolError::BadRequest);
+        }
+        return Ok(Some(OwnWorkLocator::Artwork {
+            installation_id,
+            artwork_id: target.to_owned(),
+        }));
+    }
+    let relative_path = RelativePath::parse(target).map_err(|_| ProtocolError::BadRequest)?;
+    Ok(Some(OwnWorkLocator::Image {
+        installation_id,
+        relative_path,
+    }))
+}
+
+fn own_work_response(
+    app: &AppHandle,
+    request: &Request<Vec<u8>>,
+    locator: OwnWorkLocator,
+) -> Result<Response<Vec<u8>>, ProtocolError> {
+    let state = app.state::<AppState>();
+    let bytes = match locator {
+        OwnWorkLocator::Artwork {
+            installation_id,
+            artwork_id,
+        } => state
+            .own_works
+            .read_artwork(&installation_id, &artwork_id)
+            .map_err(map_own_work_error)?,
+        OwnWorkLocator::Image {
+            installation_id,
+            relative_path,
+        } => {
+            if request.uri().query() != Some(THUMBNAIL_QUERY) {
+                return Err(ProtocolError::BadRequest);
+            }
+            let root = state
+                .own_works
+                .image_root(&installation_id, &relative_path)
+                .map_err(map_own_work_error)?;
+            let path = resolve_path(&root.to_string_lossy(), relative_path.as_str())?;
+            let cache = app
+                .try_state::<ThumbnailCache>()
+                .ok_or(ProtocolError::Internal)?;
+            cache.thumbnail(&path).map_err(|error| {
+                log::warn!("own work picture thumbnail could not be drawn: {error}");
+                ProtocolError::PictureUnreadable
+            })?
+        }
+    };
+    let builder = Response::builder()
+        .header(CONTENT_TYPE, "image/jpeg")
+        .header(CONTENT_LENGTH, bytes.len())
+        .header(ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .header(CACHE_CONTROL, "private, max-age=3600")
+        .header("X-Content-Type-Options", "nosniff");
+    let body = if request.method() == Method::HEAD {
+        Vec::new()
+    } else {
+        bytes
+    };
+    builder.body(body).map_err(ProtocolError::response)
+}
+
+fn map_own_work_error(error: OwnWorkError) -> ProtocolError {
+    match error {
+        OwnWorkError::InstallationNotFound(_)
+        | OwnWorkError::UnknownImage
+        | OwnWorkError::UnknownArtwork(_) => ProtocolError::NotFound,
+        OwnWorkError::InvalidRequest(_) => ProtocolError::BadRequest,
+        OwnWorkError::Persistence(_) | OwnWorkError::Artwork(_) | OwnWorkError::Inventory(_) => {
+            log::warn!("own work picture could not be served: {error}");
+            ProtocolError::Internal
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -372,7 +525,7 @@ body{display:grid;place-items:center;cursor:default}video{display:block;width:10
 video::cue{color:#fff;background:rgba(5,5,8,.82);font-family:Inter,"Noto Sans JP",system-ui,sans-serif;font-size:clamp(16px,2.4vw,34px);line-height:1.35;text-shadow:0 2px 5px #000}
 #chromeShade{position:fixed;z-index:18;top:0;right:0;left:0;height:140px;background:linear-gradient(to bottom,rgba(0,0,0,.72),rgba(0,0,0,.34) 52%,transparent);opacity:1;pointer-events:none;transition:opacity .24s ease-out}
 #chrome{position:fixed;z-index:20;top:16px;right:16px;left:16px;min-height:66px;overflow:hidden;border:1px solid rgba(255,255,255,.16);border-radius:15px;background:rgba(20,18,27,.76);box-shadow:0 22px 58px rgba(0,0,0,.5);backdrop-filter:blur(22px) saturate(1.2);transition:opacity .2s ease-out,transform .28s cubic-bezier(.2,.8,.2,1),box-shadow .24s ease-out}
-#chromeMain{display:grid;min-height:66px;grid-template-columns:auto minmax(0,1fr) auto auto auto;align-items:center;gap:12px;padding:9px 10px;transition:opacity .16s ease-out,transform .22s ease-out}
+#chromeMain{display:grid;min-height:66px;grid-template-columns:auto minmax(0,1fr) auto auto;align-items:center;gap:12px;padding:9px 10px;transition:opacity .16s ease-out,transform .22s ease-out}
 #chrome button{display:inline-flex;min-height:44px;align-items:center;justify-content:center;gap:8px;padding:8px 13px;border:1px solid rgba(255,255,255,.16);border-radius:10px;background:rgba(62,57,70,.58);color:#f5f0ed;cursor:pointer;font:800 12px/1 Inter,"Noto Sans JP",system-ui,sans-serif;white-space:nowrap;transition:border-color .15s ease-out,background .15s ease-out,color .15s ease-out,transform .15s ease-out}
 #chrome button:hover:not(:disabled){border-color:rgba(241,80,121,.72);background:rgba(241,80,121,.18);color:#ff648b}
 #chrome button:active:not(:disabled){transform:scale(.97)}#chrome button:disabled{cursor:default;opacity:.5}
@@ -380,7 +533,7 @@ video::cue{color:#fff;background:rgba(5,5,8,.82);font-family:Inter,"Noto Sans JP
 #videoIdentity{min-width:0}#playerLabel{display:flex;align-items:center;gap:6px;color:#ff5c84;font-size:10px;font-weight:900;letter-spacing:.15em;text-transform:uppercase}
 #videoTitle,#videoItem{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#videoTitle{margin-top:4px;font-size:16px}#videoItem{margin-top:3px;color:#aaa4ad;font-size:11px}
 #position{display:flex;min-width:70px;align-items:baseline;justify-content:center;gap:4px;padding:8px 12px;border-right:1px solid rgba(255,255,255,.14);border-left:1px solid rgba(255,255,255,.14);color:#aaa4ad;font-size:12px;font-variant-numeric:tabular-nums}#position strong{color:#f5f0ed;font-size:20px}
-#finish{border-color:rgba(241,80,121,.5)!important;color:#ff648b!important}#playlistToggle{width:44px;padding:0!important}
+#playlistToggle{width:44px;padding:0!important}
 #playlistPanel{position:absolute;inset:0;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;background:rgba(20,18,27,.97);opacity:0;pointer-events:none;transform:translateX(32px);transition:opacity .18s ease-out,transform .24s cubic-bezier(.2,.8,.2,1)}
 #playlistPanel header{display:flex;height:100%;align-items:center;gap:10px;padding:8px 10px;border-right:1px solid rgba(255,255,255,.14)}#playlistPanel header strong{font-size:14px}#playlistCount{display:grid;min-width:24px;height:22px;place-items:center;padding:0 6px;border-radius:999px;background:rgba(241,80,121,.14);color:#ff648b;font-size:10px}#playlistClose{width:44px;min-height:44px!important;margin-right:10px;padding:0!important;border-color:rgba(241,80,121,.42)!important;color:#ff648b!important}
 #playlist{display:flex;min-width:0;align-items:center;gap:6px;margin:0;padding:7px 10px;overflow-x:auto;overflow-y:hidden;list-style:none;scrollbar-width:thin}#playlist li{min-width:min(300px,32vw)}#playlist button{display:grid;width:100%;min-height:48px;grid-template-columns:26px minmax(0,1fr) auto;gap:9px;padding:8px 10px;text-align:left}#playlist button.is-active{border-color:rgba(241,80,121,.5);background:rgba(241,80,121,.12)}#playlist button span{color:#88818c;font-size:10px;font-variant-numeric:tabular-nums}#playlist button strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}#playlist button i{color:#ff648b;font-size:10px;font-style:normal;text-transform:uppercase}
@@ -395,8 +548,8 @@ body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacit
 #error>div{display:grid;width:min(470px,90%);justify-items:center;gap:12px;padding:28px;border:1px solid rgba(255,255,255,.15);border-radius:18px;background:#15131e;text-align:center}
 #error strong{font-size:16px}#error small{color:#aaa2ad}#error button{padding:10px 16px;border:0;border-radius:10px;background:#f15079;color:#251018;font-weight:800;cursor:pointer}
 [hidden]{display:none!important}
-@media(max-width:980px){#chromeMain{grid-template-columns:auto minmax(0,1fr) auto auto}#position{display:none}#back span:last-child,#finish span:last-child{display:none}#back,#finish{width:44px;padding:0!important}}
-@media(max-width:680px){#chrome{top:8px;right:8px;left:8px;min-height:56px;border-radius:12px}#chromeMain{min-height:56px;gap:7px;padding:6px}#playerLabel,#videoItem{display:none}#videoTitle{margin:0;font-size:13px}#back,#finish,#playlistToggle{width:40px;min-height:40px}#playlistPanel header strong{display:none}#playlist li{min-width:min(260px,58vw)}}
+@media(max-width:980px){#chromeMain{grid-template-columns:auto minmax(0,1fr) auto}#position{display:none}#back span:last-child{display:none}#back{width:44px;padding:0!important}}
+@media(max-width:680px){#chrome{top:8px;right:8px;left:8px;min-height:56px;border-radius:12px}#chromeMain{min-height:56px;gap:7px;padding:6px}#playerLabel,#videoItem{display:none}#videoTitle{margin:0;font-size:13px}#back,#playlistToggle{width:40px;min-height:40px}#playlistPanel header strong{display:none}#playlist li{min-width:min(260px,58vw)}}
 @media(prefers-reduced-motion:reduce){#chrome,#chromeShade,#chromeMain,#playlistPanel{transition:none}}
 </style>
 </head>
@@ -408,7 +561,6 @@ body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacit
     <button id="back" type="button"><span class="glyph">←</span><span id="backLabel"></span></button>
     <div id="videoIdentity"><span id="playerLabel"></span><strong id="videoTitle"></strong><small id="videoItem"></small></div>
     <div id="position"><strong id="positionCurrent">0</strong><span>/ <span id="positionTotal">0</span></span></div>
-    <button id="finish" type="button"><span class="glyph">✓</span><span id="finishLabel"></span></button>
     <button id="playlistToggle" type="button"><span class="glyph">▤</span></button>
   </div>
   <div id="playlistPanel">
@@ -429,14 +581,12 @@ body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacit
   const error = document.querySelector("#error");
   const chrome = document.querySelector("#chrome");
   const playlist = document.querySelector("#playlist");
-  const finish = document.querySelector("#finish");
   let configured = false;
   let pendingPosition = 0;
   let autoPlay = false;
   let lastInteraction = 0;
   let chromeTimer = 0;
   let drawerOpen = false;
-  let finished = false;
   let labels = {};
   const trackElements = subtitles.map(track => {
     const element = document.createElement("track");
@@ -560,11 +710,6 @@ body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacit
         : -1;
       document.querySelector("#positionCurrent").textContent = String(currentIndex < 0 ? 0 : currentIndex + 1);
       document.querySelector("#positionTotal").textContent = String(Array.isArray(next.playlist) ? next.playlist.length : 0);
-      finished = Boolean(next.completed);
-      finish.disabled = finished;
-      document.querySelector("#finishLabel").textContent = finished
-        ? next.labels?.completed || ""
-        : next.labels?.markFinished || "";
       document.querySelector("#playlistLabel").textContent = next.labels?.playlist || "";
       document.querySelector("#playlistCount").textContent = String(Array.isArray(next.playlist) ? next.playlist.length : 0);
       document.querySelector("#playlistToggle").ariaLabel = next.labels?.openPlaylist || "";
@@ -608,13 +753,6 @@ body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacit
   video.addEventListener("click", () => { revealChrome(); toggle(); });
   document.querySelector("#retry").addEventListener("click", () => window.__dlaVideo.command({ command: "retry" }));
   document.querySelector("#back").addEventListener("click", () => snapshot("back"));
-  finish.addEventListener("click", () => {
-    if (finished) return;
-    finished = true;
-    finish.disabled = true;
-    finish.querySelector("#finishLabel").textContent = labels.completed || finish.querySelector("#finishLabel").textContent;
-    snapshot("finish");
-  });
   document.querySelector("#playlistToggle").addEventListener("click", () => setDrawerOpen(true));
   document.querySelector("#playlistClose").addEventListener("click", () => setDrawerOpen(false));
   chrome.addEventListener("pointermove", revealChrome);
@@ -851,7 +989,7 @@ fn map_asset_io_error(error: std::io::Error, path: &Path) -> ProtocolError {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 enum ProtocolError {
     BadRequest,
     Forbidden,
@@ -861,6 +999,7 @@ enum ProtocolError {
     RangeNotSatisfiable(u64),
     FileTooLarge,
     SubtitleInvalid,
+    PictureUnreadable,
     Internal,
 }
 
@@ -879,7 +1018,7 @@ impl ProtocolError {
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             Self::RangeNotSatisfiable(_) => StatusCode::RANGE_NOT_SATISFIABLE,
             Self::FileTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
-            Self::SubtitleInvalid => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::SubtitleInvalid | Self::PictureUnreadable => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -895,6 +1034,7 @@ fn protocol_error_message(error: ProtocolError) -> String {
         ProtocolError::RangeNotSatisfiable(_) => "the requested video range is invalid",
         ProtocolError::FileTooLarge => "the media item is too large to materialize",
         ProtocolError::SubtitleInvalid => "the subtitle could not be converted",
+        ProtocolError::PictureUnreadable => "the picture could not be read",
         ProtocolError::Internal => "the video could not be resolved",
     }
     .to_owned()
@@ -917,6 +1057,47 @@ fn error_response(error: ProtocolError) -> Response<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn own_work_pictures_have_their_own_routes_beside_session_assets() {
+        let artwork = "a".repeat(64);
+        assert_eq!(
+            own_work_locator(&format!("/artwork%2Finstallation-1%2F{artwork}")),
+            Ok(Some(OwnWorkLocator::Artwork {
+                installation_id: InstallationId("installation-1".to_owned()),
+                artwork_id: artwork.clone(),
+            }))
+        );
+        assert_eq!(
+            own_work_locator("/installation%2Finstallation-1%2FWork%2F%E6%9C%AC%E7%B7%A8%2F01.png"),
+            Ok(Some(OwnWorkLocator::Image {
+                installation_id: InstallationId("installation-1".to_owned()),
+                relative_path: RelativePath::parse("Work/本編/01.png").expect("path"),
+            }))
+        );
+        assert_eq!(own_work_locator("/media-123%2F4"), Ok(None));
+        assert_eq!(parse_locator("/media-123%2F4").expect("session asset").1, 4);
+    }
+
+    #[test]
+    fn own_work_routes_refuse_anything_but_a_digest_or_a_plain_relative_path() {
+        for path in [
+            "/artwork%2Finstallation-1%2F..%2F..%2Fsecret",
+            "/artwork%2Finstallation-1%2FAAAA",
+            "/artwork%2F%2Faaaa",
+            "/artwork%2Finstallation-1",
+            "/installation%2Finstallation-1%2F..%2Flibrary.sqlite",
+            "/installation%2Finstallation-1%2F%2Fetc%2Fpasswd",
+            "/installation%2Finstallation-1%2FWork%5C..%5Csecret.png",
+            "/installation%2Finstallation-1",
+        ] {
+            assert_eq!(
+                own_work_locator(path),
+                Err(ProtocolError::BadRequest),
+                "{path}"
+            );
+        }
+    }
 
     #[test]
     fn video_document_serves_its_own_subtitle_tracks() {

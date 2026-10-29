@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use dla_detection::classify_package_media_paths;
+use dla_detection::classify_package_media_files;
 use dla_domain::{
     installation::{
         ContentItem, Installation, InstallationId, InstallationStatus, LaunchActionKind,
@@ -28,6 +28,10 @@ use crate::{
 };
 
 const PERSONALIZED_VOICE_MINIMUM_WORKS: usize = 2;
+// The archive classifier's reasons for opening a PDF, and the mark a stored
+// PDF action gets once it has been weighed against the work's images.
+const CLASSIFIED_PDF_REASONS: [&str; 2] = ["single_pdf", "pdf_document"];
+const IMAGES_RULE_CHECKED: &str = "images_rule_checked";
 const PERSONALIZED_VOICE_QUEUE_LIMIT: usize = 200;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -248,18 +252,61 @@ impl MediaService {
     ) -> Result<PreparedPackageInstallation, MediaError> {
         if prepared.preferred_action.is_none() {
             let inventory = self.inventory.read_inventory(&prepared.destination_root)?;
-            let paths = inventory
+            let files = inventory
                 .into_iter()
-                .map(|item| item.relative_path)
+                .map(|item| (item.relative_path, item.size_bytes.unwrap_or(0)))
                 .collect::<Vec<_>>();
-            if let Some(classification) = classify_package_media_paths(&paths)
+            if let Some(classification) = classify_package_media_files(&files)
                 && let Some(action) = classification.launch_candidates.first()
             {
                 prepared.content_root = classification.content_root;
                 prepared.preferred_action = Some(action.clone());
             }
+        } else if awaits_images_check(&prepared) {
+            self.recheck_pdf_action(&mut prepared);
         }
         Ok(prepared)
+    }
+
+    /// Weighs a PDF picked before images could win against the installed
+    /// images once, so a CG set that opened its manual opens its images
+    /// without a reinstall. Archive actions only come from the classifier,
+    /// so no choice of the user's is replaced.
+    fn recheck_pdf_action(&self, prepared: &mut PreparedPackageInstallation) {
+        let inventory = match self.inventory.read_inventory(&prepared.destination_root) {
+            Ok(inventory) => inventory,
+            Err(error) => {
+                eprintln!(
+                    "could not recheck the start action of {}: {error}",
+                    prepared.installation_id.0
+                );
+                return;
+            }
+        };
+        let files = inventory
+            .into_iter()
+            .map(|item| (item.relative_path, item.size_bytes.unwrap_or(0)))
+            .collect::<Vec<_>>();
+        let mut checked = prepared.clone();
+        if let Some(classification) = classify_package_media_files(&files)
+            && let Some(action) = classification
+                .launch_candidates
+                .first()
+                .filter(|action| action.action == LaunchActionKind::ReadImages)
+        {
+            checked.content_root = classification.content_root;
+            checked.preferred_action = Some(action.clone());
+        }
+        if let Some(action) = checked.preferred_action.as_mut() {
+            action.reason_codes.push(IMAGES_RULE_CHECKED.to_owned());
+        }
+        match self.preparations.save_prepared_package(&checked) {
+            Ok(()) => *prepared = checked,
+            Err(error) => eprintln!(
+                "could not save the rechecked start action of {}: {error}",
+                prepared.installation_id.0
+            ),
+        }
     }
 
     pub fn read_prepared_packages(
@@ -417,7 +464,11 @@ impl MediaService {
             return Err(MediaError::InvalidProgressState);
         }
         let mut session = self.read(&request.session_id)?;
-        if !session.status.is_open() {
+        // A reader finishes a work at its last page but stays open on it;
+        // turning back keeps the session completed and its place saved.
+        let stays_completed = session.status == MediaSessionStatus::Completed
+            && request.status == MediaSessionStatus::Completed;
+        if !session.status.is_open() && !stays_completed {
             return Err(MediaError::SessionClosed);
         }
         if !session
@@ -497,10 +548,17 @@ impl MediaService {
     fn resolve_selection(&self, installation: &Installation) -> Result<MediaSelection, MediaError> {
         if let Some(prepared) = self.read_prepared_package(&installation.id)? {
             let action = prepared.preferred_action.ok_or(MediaError::MissingAction)?;
+            // An installed image set reads every folder it unpacked, not only
+            // the folder of the image it opens at.
+            let target = if action.action == LaunchActionKind::ReadImages {
+                LaunchTarget::InstallationRoot
+            } else {
+                LaunchTarget::RelativePath(action.relative_path)
+            };
             return Ok(MediaSelection {
                 root_path: prepared.destination_root,
                 action: action.action,
-                target: LaunchTarget::RelativePath(action.relative_path),
+                target,
                 prepared: true,
             });
         }
@@ -834,6 +892,20 @@ fn validate_installation(installation: &Installation) -> Result<(), MediaError> 
     Ok(())
 }
 
+fn awaits_images_check(prepared: &PreparedPackageInstallation) -> bool {
+    prepared.preferred_action.as_ref().is_some_and(|action| {
+        action.action == LaunchActionKind::OpenDocument
+            && action
+                .reason_codes
+                .iter()
+                .any(|reason| CLASSIFIED_PDF_REASONS.contains(&reason.as_str()))
+            && !action
+                .reason_codes
+                .iter()
+                .any(|reason| reason == IMAGES_RULE_CHECKED)
+    })
+}
+
 fn media_type_for_action(action: LaunchActionKind) -> Result<MediaType, MediaError> {
     match action {
         LaunchActionKind::PlayAudio => Ok(MediaType::Audio),
@@ -844,7 +916,7 @@ fn media_type_for_action(action: LaunchActionKind) -> Result<MediaType, MediaErr
     }
 }
 
-fn direct_inventory(installation: &Installation) -> Vec<MediaInventoryItem> {
+pub(crate) fn direct_inventory(installation: &Installation) -> Vec<MediaInventoryItem> {
     installation
         .detection
         .content_items
@@ -1066,7 +1138,7 @@ fn first_ascii_number(value: &str) -> Option<u32> {
     digits.parse().ok()
 }
 
-fn natural_cmp(left: &str, right: &str) -> Ordering {
+pub(crate) fn natural_cmp(left: &str, right: &str) -> Ordering {
     let left = left.to_lowercase();
     let right = right.to_lowercase();
     let mut left_index = 0;
@@ -1122,14 +1194,18 @@ fn checked_ordinal(value: usize) -> Result<u32, MediaError> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering as AtomicOrdering},
+    };
 
     use dla_domain::installation::{
         ContentItemOverride, InferenceConfidence, InstallationDetection, InstallationOverrides,
         InstallationPlatform, ManualCatalogIdentity, ManualLaunchSelection,
     };
     use dla_domain::package::{
-        ArchiveRetentionPolicy, PackageSourceSet, PackageSourceSetKind, PreparedPackageInstallation,
+        ArchiveRetentionPolicy, PackageLaunchCandidate, PackageSourceSet, PackageSourceSetKind,
+        PreparedPackageInstallation,
     };
 
     use super::*;
@@ -1545,6 +1621,291 @@ mod tests {
     }
 
     #[test]
+    fn an_installed_image_set_reads_every_folder_it_unpacked() {
+        let installation = installation_fixture();
+        let installation_id = installation.id.clone();
+        let prepared = PreparedPackageInstallation {
+            installation_id: installation_id.clone(),
+            destination_root: "/synthetic/prepared/RJ01393380".to_owned(),
+            content_root: Some(RelativePath::parse("Work/main").expect("content root")),
+            preferred_action: Some(PackageLaunchCandidate {
+                action: LaunchActionKind::ReadImages,
+                relative_path: RelativePath::parse("Work/main/cg_01.png").expect("first image"),
+                supported_platforms: vec![InstallationPlatform::Linux],
+                confidence: InferenceConfidence::High,
+                reason_codes: vec!["dominant_image_set".to_owned()],
+                expected_sha256: None,
+            }),
+            source_set: PackageSourceSet {
+                kind: PackageSourceSetKind::SingleArchive,
+                volumes: Vec::new(),
+            },
+            archive_retention: ArchiveRetentionPolicy::Keep,
+            sources_deleted: false,
+            source_cleanup_error: None,
+            installed_file_count: 5,
+            installed_bytes: 5,
+            prepared_at: "2026-10-28T00:00:00Z".to_owned(),
+        };
+        let inventory_item = |path: &str, media_type| MediaInventoryItem {
+            relative_path: RelativePath::parse(path).expect("inventory path"),
+            media_type,
+            size_bytes: Some(1),
+        };
+        let service = MediaService::new(
+            Arc::new(MemoryInstallationStore { installation }),
+            Arc::new(FixedPreparationStore { prepared }),
+            Arc::new(MemorySessionStore {
+                session: Mutex::new(None),
+                resume: None,
+            }),
+            Arc::new(MemoryAudioTrackStore),
+            Arc::new(FixedInventory {
+                items: vec![
+                    inventory_item("Work/main/cg_01.png", MediaType::Image),
+                    inventory_item("Work/main/cg_02.png", MediaType::Image),
+                    inventory_item("Work/no-text/cg_01.png", MediaType::Image),
+                    inventory_item("Work/bonus/omake.jpg", MediaType::Image),
+                    inventory_item("Work/manual.pdf", MediaType::Pdf),
+                ],
+            }),
+            Arc::new(UnusedWaveforms),
+        );
+
+        let session = service
+            .open(OpenMediaSessionRequest {
+                installation_id,
+                session_id: MediaSessionId("media-prepared-images".to_owned()),
+                opened_at: "2026-10-28T01:00:00Z".to_owned(),
+            })
+            .expect("open image session");
+
+        assert_eq!(
+            session
+                .items
+                .iter()
+                .map(|item| item.relative_path.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "Work/bonus/omake.jpg",
+                "Work/main/cg_01.png",
+                "Work/main/cg_02.png",
+                "Work/no-text/cg_01.png",
+            ]
+        );
+    }
+
+    struct SavingPreparationStore {
+        prepared: Mutex<PreparedPackageInstallation>,
+        saves: AtomicUsize,
+    }
+
+    impl SavingPreparationStore {
+        fn new(prepared: PreparedPackageInstallation) -> Self {
+            Self {
+                prepared: Mutex::new(prepared),
+                saves: AtomicUsize::new(0),
+            }
+        }
+
+        fn stored(&self) -> PreparedPackageInstallation {
+            self.prepared.lock().expect("prepared").clone()
+        }
+    }
+
+    impl PackagePreparationStore for SavingPreparationStore {
+        fn read_prepared_package(
+            &self,
+            installation_id: &InstallationId,
+        ) -> Result<Option<PreparedPackageInstallation>, PackagePreparationError> {
+            let prepared = self.stored();
+            Ok((prepared.installation_id == *installation_id).then_some(prepared))
+        }
+
+        fn save_prepared_package(
+            &self,
+            prepared: &PreparedPackageInstallation,
+        ) -> Result<(), PackagePreparationError> {
+            self.saves.fetch_add(1, AtomicOrdering::SeqCst);
+            *self.prepared.lock().expect("prepared") = prepared.clone();
+            Ok(())
+        }
+    }
+
+    struct CountingInventory {
+        items: Vec<MediaInventoryItem>,
+        reads: AtomicUsize,
+    }
+
+    impl MediaInventoryReader for CountingInventory {
+        fn read_inventory(&self, _root_path: &str) -> Result<Vec<MediaInventoryItem>, MediaError> {
+            self.reads.fetch_add(1, AtomicOrdering::SeqCst);
+            Ok(self.items.clone())
+        }
+    }
+
+    fn manual_pdf_package(reason_codes: &[&str]) -> PreparedPackageInstallation {
+        PreparedPackageInstallation {
+            installation_id: installation_fixture().id,
+            destination_root: "/synthetic/prepared/RJ01393380".to_owned(),
+            content_root: Some(RelativePath::parse("Work").expect("content root")),
+            preferred_action: Some(PackageLaunchCandidate {
+                action: LaunchActionKind::OpenDocument,
+                relative_path: RelativePath::parse("Work/manual.pdf").expect("manual"),
+                supported_platforms: vec![InstallationPlatform::Linux],
+                confidence: InferenceConfidence::High,
+                reason_codes: reason_codes
+                    .iter()
+                    .map(|reason| (*reason).to_owned())
+                    .collect(),
+                expected_sha256: None,
+            }),
+            source_set: PackageSourceSet {
+                kind: PackageSourceSetKind::SingleArchive,
+                volumes: Vec::new(),
+            },
+            archive_retention: ArchiveRetentionPolicy::Keep,
+            sources_deleted: false,
+            source_cleanup_error: None,
+            installed_file_count: 13,
+            installed_bytes: 1,
+            prepared_at: "2026-10-01T00:00:00Z".to_owned(),
+        }
+    }
+
+    fn sized_item(path: &str, media_type: MediaType, size_bytes: u64) -> MediaInventoryItem {
+        MediaInventoryItem {
+            relative_path: RelativePath::parse(path).expect("inventory path"),
+            media_type,
+            size_bytes: Some(size_bytes),
+        }
+    }
+
+    fn recheck_service(
+        preparations: Arc<SavingPreparationStore>,
+        inventory: Arc<CountingInventory>,
+    ) -> MediaService {
+        MediaService::new(
+            Arc::new(MemoryInstallationStore {
+                installation: installation_fixture(),
+            }),
+            preparations,
+            Arc::new(MemorySessionStore {
+                session: Mutex::new(None),
+                resume: None,
+            }),
+            Arc::new(MemoryAudioTrackStore),
+            inventory,
+            Arc::new(UnusedWaveforms),
+        )
+    }
+
+    #[test]
+    fn a_cg_set_that_opened_its_manual_switches_to_its_images_once() {
+        let mut items = (1..=12)
+            .map(|index| {
+                sized_item(
+                    &format!("Work/main/cg_{index:02}.png"),
+                    MediaType::Image,
+                    2_000_000,
+                )
+            })
+            .collect::<Vec<_>>();
+        items.push(sized_item("Work/manual.pdf", MediaType::Pdf, 900_000));
+        let preparations = Arc::new(SavingPreparationStore::new(manual_pdf_package(&[
+            "single_pdf",
+        ])));
+        let inventory = Arc::new(CountingInventory {
+            items,
+            reads: AtomicUsize::new(0),
+        });
+        let service = recheck_service(preparations.clone(), inventory.clone());
+        let installation_id = installation_fixture().id;
+
+        let projected = service
+            .read_prepared_package(&installation_id)
+            .expect("read prepared package")
+            .expect("prepared package");
+
+        let action = projected.preferred_action.expect("rechecked action");
+        assert_eq!(action.action, LaunchActionKind::ReadImages);
+        assert_eq!(action.relative_path.as_str(), "Work/main/cg_01.png");
+        assert!(
+            action
+                .reason_codes
+                .iter()
+                .any(|reason| reason == "images_rule_checked")
+        );
+        assert_eq!(preparations.stored().preferred_action, Some(action));
+        assert_eq!(preparations.saves.load(AtomicOrdering::SeqCst), 1);
+
+        service
+            .read_prepared_packages(&[installation_id])
+            .expect("read again");
+        assert_eq!(inventory.reads.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(preparations.saves.load(AtomicOrdering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_comic_that_ships_its_pages_twice_stays_a_pdf_and_is_not_rechecked_again() {
+        let mut items = (1..=26)
+            .map(|index| sized_item(&format!("Work/{index:02}.png"), MediaType::Image, 3_347_372))
+            .collect::<Vec<_>>();
+        items.push(sized_item("Work/manual.pdf", MediaType::Pdf, 73_636_176));
+        let preparations = Arc::new(SavingPreparationStore::new(manual_pdf_package(&[
+            "single_pdf",
+        ])));
+        let inventory = Arc::new(CountingInventory {
+            items,
+            reads: AtomicUsize::new(0),
+        });
+        let service = recheck_service(preparations.clone(), inventory.clone());
+        let installation_id = installation_fixture().id;
+
+        let projected = service
+            .read_prepared_package(&installation_id)
+            .expect("read prepared package")
+            .expect("prepared package");
+        service
+            .read_prepared_package(&installation_id)
+            .expect("read again");
+
+        let action = projected.preferred_action.expect("kept action");
+        assert_eq!(action.action, LaunchActionKind::OpenDocument);
+        assert_eq!(
+            action.reason_codes,
+            vec!["single_pdf", "images_rule_checked"]
+        );
+        assert_eq!(inventory.reads.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(preparations.saves.load(AtomicOrdering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_pdf_already_weighed_against_its_images_is_not_read_again() {
+        let preparations = Arc::new(SavingPreparationStore::new(manual_pdf_package(&[
+            "single_pdf",
+            "images_rule_checked",
+        ])));
+        let inventory = Arc::new(CountingInventory {
+            items: Vec::new(),
+            reads: AtomicUsize::new(0),
+        });
+        let service = recheck_service(preparations.clone(), inventory.clone());
+
+        let projected = service
+            .read_prepared_package(&installation_fixture().id)
+            .expect("read prepared package")
+            .expect("prepared package");
+
+        assert_eq!(
+            projected.preferred_action.map(|action| action.action),
+            Some(LaunchActionKind::OpenDocument)
+        );
+        assert_eq!(inventory.reads.load(AtomicOrdering::SeqCst), 0);
+        assert_eq!(preparations.saves.load(AtomicOrdering::SeqCst), 0);
+    }
+
+    #[test]
     fn orders_disc_tracks_naturally_and_places_bonus_content_last() {
         let installation = installation_fixture();
         let items = vec![
@@ -1666,5 +2027,41 @@ mod tests {
             .expect_err("inconsistent progress must fail");
 
         assert!(matches!(error, MediaError::InvalidProgressState));
+    }
+
+    #[test]
+    fn a_finished_reading_keeps_saving_its_place_while_it_stays_completed() {
+        let installation = installation_fixture();
+        let service = service_with_resume(None);
+        let session = service
+            .open(OpenMediaSessionRequest {
+                installation_id: installation.id,
+                session_id: MediaSessionId("media-finished".to_owned()),
+                opened_at: "2026-08-09T12:00:00Z".to_owned(),
+            })
+            .expect("open media session");
+        let progress = |position_ms, status| UpdateMediaProgressRequest {
+            session_id: session.id.clone(),
+            item_ordinal: 0,
+            position_ms,
+            duration_ms: Some(26),
+            completed: status == MediaSessionStatus::Completed,
+            status,
+            updated_at: "2026-08-09T12:02:00Z".to_owned(),
+        };
+
+        let finished = service
+            .update_progress(progress(26, MediaSessionStatus::Completed))
+            .expect("finish at the last page");
+        assert_eq!(finished.status, MediaSessionStatus::Completed);
+
+        let turned_back = service
+            .update_progress(progress(3, MediaSessionStatus::Completed))
+            .expect("turning back after finishing");
+        assert_eq!(turned_back.progress.position_ms, 3);
+        assert!(turned_back.progress.completed);
+
+        let reopened = service.update_progress(progress(4, MediaSessionStatus::Active));
+        assert!(matches!(reopened, Err(MediaError::SessionClosed)));
     }
 }

@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
-import { installReadOnlyDeepLinkNavigation } from "@dla-launcher/shared-ui/app";
-import { ImageReaderProvider, MediaPlaybackProvider } from "@dla-launcher/shared-ui/library/shell";
+import { installReadOnlyDeepLinkNavigation, installRenderWatchdog } from "@dla-launcher/shared-ui/app";
+import { ReaderProvider, MediaPlaybackProvider } from "@dla-launcher/shared-ui/library/shell";
+import { tauriCatalogGateway } from "./gateways/tauriCatalogGateway";
 import { tauriLibraryGateway } from "./gateways/tauriLibraryGateway";
 import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
@@ -17,10 +18,12 @@ import { ApplicationErrorBoundary, installGlobalFaultCapture } from "@dla-launch
 
 import { navigateReadOnlyDeepLink, router } from "./router";
 import { tauriDeepLinkGateway } from "./gateways/tauriDeepLinkGateway";
+import { recoverWebviewRendering } from "./gateways/tauriRenderGateway";
 import { tauriSupportGateway } from "./gateways/tauriSupportGateway";
 
 const presentation = initializePresentationPreferences();
 installGlobalFaultCapture(tauriSupportGateway);
+installRenderWatchdog(recoverWebviewRendering);
 await loadLocaleCatalog(presentation.locale);
 
 const queryClient = new QueryClient({
@@ -58,10 +61,10 @@ createRoot(root).render(
         <KeyBindingsProvider>
           <QueryClientProvider client={queryClient}>
             <MediaPlaybackProvider gateway={tauriLibraryGateway}>
-              <ImageReaderProvider gateway={tauriLibraryGateway}>
+              <ReaderProvider gateway={tauriLibraryGateway} catalog={tauriCatalogGateway}>
                 <RouterProvider router={router} />
                 <RouterReady />
-              </ImageReaderProvider>
+              </ReaderProvider>
             </MediaPlaybackProvider>
           </QueryClientProvider>
         </KeyBindingsProvider>

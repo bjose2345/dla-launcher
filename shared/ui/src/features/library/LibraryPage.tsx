@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type Ref } from "react";
 import {
   AlertTriangle,
   AudioLines,
@@ -38,21 +38,27 @@ import { LibraryLensRail } from "./LibraryLensRail";
 import { LibraryManageDrawer, type ManageTab } from "./LibraryManageDrawer";
 import { LibraryWorkMenu } from "./LibraryWorkMenu";
 import { useMediaPlayback } from "./MediaPlaybackProvider";
-import { isReaderAction, useImageReader } from "./ImageReaderProvider";
+import { isReaderAction, useReader } from "./ReaderProvider";
 import { mediaItemName } from "./mediaSession";
 import { NowPlayingBars } from "./NowPlayingBars";
 import { playTimeLabel } from "./LibraryPlayTime";
 import { TrackWaveform } from "./TrackWaveform";
+import { OwnWorkDetailsProvider, useOwnWork } from "./ownWorkDetails";
+import type { LibraryAddGateway } from "./libraryAdd";
+import { LibraryAddButton, LibraryAddSheet, useLibraryAdd } from "./LibraryAddSheet";
 import {
   featuredInstallationId,
   libraryContentKind,
   libraryContentKindLabel,
+  libraryDisplayCode,
   libraryDisplayCreator,
   libraryDisplayTitle,
+  libraryReleaseDate,
   launchTotalsByInstallation,
   libraryLensCounts,
   matchesLibraryLens,
   resumeForInstallation,
+  resumePlaceLabel,
   type LibraryLens,
   type LibraryView,
 } from "./libraryHome";
@@ -93,12 +99,14 @@ export function LibraryPage({
   catalogGateway,
   searchGateway,
   installs,
+  addGateway,
   manage,
   spotlight,
   onManage,
   onCloseManage,
   onOpenMedia,
   onOpenWork,
+  onOpenOwnWork,
   androidAppGateway,
   onReinstallAndroidApp,
 }: {
@@ -107,6 +115,8 @@ export function LibraryPage({
   catalogGateway: CatalogDetailGateway;
   searchGateway?: Pick<SearchGateway, "search">;
   installs?: ScanInstallGateway;
+  /** Adds work folders and archives into the install folder; absent where that can't be done. */
+  addGateway?: LibraryAddGateway;
   /** The work whose Manage panel is open over the Library. */
   manage?: { installationId: string; tab?: ManageTab };
   /** A work to show in the featured spot, such as one just added. */
@@ -115,16 +125,23 @@ export function LibraryPage({
   onCloseManage?: () => void;
   onOpenMedia: (installationId: string) => void | Promise<void>;
   onOpenWork: (code: string) => void | Promise<void>;
+  /** Opens the page of a work outside the catalog. */
+  onOpenOwnWork?: (installationId: string) => void;
   onReinstallAndroidApp?: (workCode: string) => void | Promise<void>;
 }) {
   const { includeUnreviewed, locale, t } = usePresentation();
   const playback = useMediaPlayback();
-  const reader = useImageReader();
+  const reader = useReader();
   const queryClient = useQueryClient();
   const [lens, setLens] = useState<LibraryLens>("all");
   const [view, setView] = useState<LibraryView>("shelves");
+  const [adding, setAdding] = useLibraryAdd(addGateway);
+  const [addOpen, setAddOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [confirmRemoveAndroidApp, setConfirmRemoveAndroidApp] = useState<string | null>(null);
+  // A new object on every click, so choosing the same card again scrolls back to it.
+  const [selection, setSelection] = useState<{ installationId: string } | null>(null);
+  const featureRef = useRef<HTMLElement>(null);
   const previousActiveLaunches = useRef<Set<string>>(new Set());
   const shelves = useQuery({
     queryKey: ["library", "shelves"],
@@ -257,7 +274,11 @@ export function LibraryPage({
   const featuredId = shelves.data
     ? featuredInstallationId(shelves.data, lensInstallationIds)
     : null;
-  const featured = (spotlight ? collectionEntries.find((entry) => entry.installation.id === spotlight) : undefined)
+  const selected = selection && inLens(selection.installationId)
+    ? entryByInstallation.get(selection.installationId)
+    : undefined;
+  const featured = selected
+    ?? (spotlight ? collectionEntries.find((entry) => entry.installation.id === spotlight) : undefined)
     ?? lensEntries.find((entry) => entry.installation.id === featuredId)
     ?? lensEntries[0]
     ?? null;
@@ -276,6 +297,16 @@ export function LibraryPage({
   ]);
   const readyCount = readyWorkKeys.size;
   const activeCount = shelves.data?.unfinished.length ?? 0;
+
+  useEffect(() => {
+    setSelection(null);
+  }, [spotlight]);
+  useEffect(() => {
+    if (!selection) return;
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    featureRef.current?.scrollIntoView?.({ behavior: reduceMotion ? "auto" : "smooth", block: "nearest" });
+  }, [selection]);
+  const select = (installationId: string) => setSelection({ installationId });
 
   const refresh = async () => {
     if (refreshing) return;
@@ -373,178 +404,214 @@ export function LibraryPage({
   }
 
   return (
-    <main className="library-page">
-      <section className="library-home-heading">
-        <div>
-          <span className="library-eyebrow"><LibraryIcon aria-hidden="true" />{t("library.home.eyebrow")}</span>
-          <h1>{t("library.title")}</h1>
-          <p>{t("library.home.description")}</p>
-        </div>
-        <div className="library-home-summary">
-          <span><strong>{libraryWorkKeys.size}</strong>{t("library.home.works")}</span>
-          <span><strong>{readyCount}</strong>{t("library.home.ready")}</span>
-          <span><strong>{activeCount}</strong>{t("library.home.inProgress")}</span>
-          <div className="library-view-switch" role="group" aria-label={t("library.view.label")}>
-            <button
-              type="button"
-              aria-pressed={view === "shelves"}
-              onClick={() => setView("shelves")}
-            >
-              <Rows3 aria-hidden="true" />{t("library.view.shelves")}
-            </button>
-            <button
-              type="button"
-              aria-pressed={view === "grid"}
-              onClick={() => setView("grid")}
-            >
-              <Grid3X3 aria-hidden="true" />{t("library.view.grid")}
-            </button>
-            <button
-              type="button"
-              aria-pressed={view === "list"}
-              onClick={() => setView("list")}
-            >
-              <List aria-hidden="true" />{t("library.view.list")}
-            </button>
+    <OwnWorkDetailsProvider gateway={gateway} onOpenPage={onOpenOwnWork}>
+      <main className="library-page">
+        <section className="library-home-heading">
+          <div>
+            <span className="library-eyebrow"><LibraryIcon aria-hidden="true" />{t("library.home.eyebrow")}</span>
+            <h1>{t("library.title")}</h1>
+            <p>{t("library.home.description")}</p>
           </div>
-          <button
-            className="library-home-refresh"
-            type="button"
-            title={t("library.refresh")}
-            aria-label={t("library.refresh")}
-            disabled={refreshing}
-            onClick={() => { void refresh(); }}
-          >
-            {refreshing
-              ? <LoaderCircle className="library-spin" aria-hidden="true" />
-              : <RefreshCw aria-hidden="true" />}
-          </button>
-        </div>
-      </section>
+          <div className="library-home-actions">
+            <div className="library-home-summary">
+              <span><strong>{libraryWorkKeys.size}</strong>{t("library.home.works")}</span>
+              <span><strong>{readyCount}</strong>{t("library.home.ready")}</span>
+              <span><strong>{activeCount}</strong>{t("library.home.inProgress")}</span>
+              <div className="library-view-switch" role="group" aria-label={t("library.view.label")}>
+                <button
+                  type="button"
+                  aria-pressed={view === "shelves"}
+                  onClick={() => setView("shelves")}
+                >
+                  <Rows3 aria-hidden="true" />{t("library.view.shelves")}
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={view === "grid"}
+                  onClick={() => setView("grid")}
+                >
+                  <Grid3X3 aria-hidden="true" />{t("library.view.grid")}
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={view === "list"}
+                  onClick={() => setView("list")}
+                >
+                  <List aria-hidden="true" />{t("library.view.list")}
+                </button>
+              </div>
+              <button
+                className="library-home-refresh"
+                type="button"
+                title={t("library.refresh")}
+                aria-label={t("library.refresh")}
+                disabled={refreshing}
+                onClick={() => { void refresh(); }}
+              >
+                {refreshing
+                  ? <LoaderCircle className="library-spin" aria-hidden="true" />
+                  : <RefreshCw aria-hidden="true" />}
+              </button>
+            </div>
+            {addGateway ? (
+              <LibraryAddButton
+                gateway={addGateway}
+                installs={installs}
+                view={adding}
+                onView={setAdding}
+                onOpen={() => setAddOpen(true)}
+              />
+            ) : null}
+          </div>
+        </section>
 
-      {shelves.isPending ? <LibraryLoading /> : null}
-      <LibraryErrors
-        errors={[
-          shelves.error,
-          launches.error,
-          launch.error,
-          personalization.error,
-          androidApps.error,
-          launchAndroidApp.error,
-          removeAndroidApp.error,
-          ...metadataErrors,
-        ]}
-      />
-
-      {androidAppViews.length ? (
-        <AndroidAppLibrary
-          items={androidAppViews}
-          workByCode={workByCode}
-          launchingId={launchAndroidApp.isPending ? launchAndroidApp.variables ?? null : null}
-          removingId={removeAndroidApp.isPending ? removeAndroidApp.variables ?? null : null}
-          confirmRemoveId={confirmRemoveAndroidApp}
-          onLaunch={(associationId) => launchAndroidApp.mutate(associationId)}
-          onConfirmRemove={setConfirmRemoveAndroidApp}
-          onRemove={(associationId) => removeAndroidApp.mutate(associationId)}
-          onOpenWork={onOpenWork}
-          onReinstall={onReinstallAndroidApp}
+        {shelves.isPending ? <LibraryLoading /> : null}
+        <LibraryErrors
+          errors={[
+            shelves.error,
+            launches.error,
+            launch.error,
+            personalization.error,
+            androidApps.error,
+            launchAndroidApp.error,
+            removeAndroidApp.error,
+            ...metadataErrors,
+          ]}
         />
-      ) : null}
 
-      <div className="library-home-body">
-        {installations.length ? (
-          <LibraryLensRail
-            lens={lens}
-            counts={lensCounts}
-            needsReview={needsReviewLenses}
-            onSelect={setLens}
+        {androidAppViews.length ? (
+          <AndroidAppLibrary
+            items={androidAppViews}
+            workByCode={workByCode}
+            launchingId={launchAndroidApp.isPending ? launchAndroidApp.variables ?? null : null}
+            removingId={removeAndroidApp.isPending ? removeAndroidApp.variables ?? null : null}
+            confirmRemoveId={confirmRemoveAndroidApp}
+            onLaunch={(associationId) => launchAndroidApp.mutate(associationId)}
+            onConfirmRemove={setConfirmRemoveAndroidApp}
+            onRemove={(associationId) => removeAndroidApp.mutate(associationId)}
+            onOpenWork={onOpenWork}
+            onReinstall={onReinstallAndroidApp}
           />
         ) : null}
 
-        <div className="library-home-content" data-library-kind={lens}>
-          {featured ? (
-            <LibraryFeature
-              entry={featured}
-              gateway={gateway}
-              preferEnglish={locale !== "ja-JP"}
-              busy={launch.isPending && launch.variables === featured.installation.id}
-              onActivate={() => activate(featured)}
-              onManage={(tab) => void onManage(featured.installation.id, tab)}
-              onOpenWork={featured.work ? () => void onOpenWork(featured.work!.code) : undefined}
-              onBrowse={browse ? () => browse(featured.installation.id) : undefined}
+        <div className="library-home-body">
+          {installations.length ? (
+            <LibraryLensRail
+              lens={lens}
+              counts={lensCounts}
+              needsReview={needsReviewLenses}
+              onSelect={setLens}
             />
           ) : null}
 
-          {view === "list" ? (
-            <LibraryTable
-              entries={lensEntries}
-              onActivate={activate}
-              onManage={onManage}
-              onOpenWork={onOpenWork}
-              onBrowse={browse}
-            />
-          ) : view === "grid" ? (
-            <LibraryCollection
-              entries={lensEntries}
-              activatingInstallationId={launch.isPending ? launch.variables ?? null : null}
-              onActivate={activate}
-              onManage={onManage}
-              onOpenWork={onOpenWork}
-              onBrowse={browse}
-            />
-          ) : (
-            <>
-              {shelves.data?.installations.length ? (
-                <LibraryShelves
-                  shelves={shelves.data}
-                  workByCode={workByCode}
-                  preparedByInstallation={preparedByInstallation}
-                  inLens={inLens}
-                  blockedExecutableInstallations={blockedExecutableInstallations}
-                  onActivate={(installationId, action) => {
-                    const entry = entryByInstallation.get(installationId);
-                    if (entry) activate(entry, action);
-                  }}
-                  onManage={(installationId, tab) => void onManage(installationId, tab)}
-                  onOpenWork={onOpenWork}
-                  onBrowse={browse}
-                />
-              ) : null}
+          <div className="library-home-content" data-library-kind={lens}>
+            {featured ? (
+              <LibraryFeature
+                ref={featureRef}
+                entry={featured}
+                gateway={gateway}
+                preferEnglish={locale !== "ja-JP"}
+                busy={launch.isPending && launch.variables === featured.installation.id}
+                onActivate={() => activate(featured)}
+                onManage={(tab) => void onManage(featured.installation.id, tab)}
+                onOpenWork={featured.work
+                  ? () => void onOpenWork(featured.work!.code)
+                  : onOpenOwnWork ? () => onOpenOwnWork(featured.installation.id) : undefined}
+                onBrowse={browse ? () => browse(featured.installation.id) : undefined}
+              />
+            ) : null}
 
-              {personalization.data && personalizationHasContent(personalization.data) ? (
-                <LibraryPersonalization
-                  gateway={gateway}
-                  personalization={personalization.data}
-                  onOpenWork={onOpenWork}
-                  onOpenVoiceQueue={() => { void playback.openVoiceQueue(); }}
-                />
-              ) : null}
-            </>
-          )}
+            {view === "list" ? (
+              <LibraryTable
+                entries={lensEntries}
+                selectedId={featured?.installation.id ?? null}
+                onSelect={select}
+                onActivate={activate}
+                onManage={onManage}
+                onOpenWork={onOpenWork}
+                onBrowse={browse}
+              />
+            ) : view === "grid" ? (
+              <LibraryCollection
+                entries={lensEntries}
+                activatingInstallationId={launch.isPending ? launch.variables ?? null : null}
+                selectedId={featured?.installation.id ?? null}
+                onSelect={select}
+                onActivate={activate}
+                onManage={onManage}
+                onOpenWork={onOpenWork}
+                onBrowse={browse}
+              />
+            ) : (
+              <>
+                {shelves.data?.installations.length ? (
+                  <LibraryShelves
+                    shelves={shelves.data}
+                    workByCode={workByCode}
+                    preparedByInstallation={preparedByInstallation}
+                    inLens={inLens}
+                    blockedExecutableInstallations={blockedExecutableInstallations}
+                    selectedId={featured?.installation.id ?? null}
+                    onSelect={select}
+                    onActivate={(installationId, action) => {
+                      const entry = entryByInstallation.get(installationId);
+                      if (entry) activate(entry, action);
+                    }}
+                    onManage={(installationId, tab) => void onManage(installationId, tab)}
+                    onOpenWork={onOpenWork}
+                    onBrowse={browse}
+                  />
+                ) : null}
+
+                {personalization.data && personalizationHasContent(personalization.data) ? (
+                  <LibraryPersonalization
+                    gateway={gateway}
+                    personalization={personalization.data}
+                    onOpenWork={onOpenWork}
+                    onOpenVoiceQueue={() => { void playback.openVoiceQueue(); }}
+                  />
+                ) : null}
+              </>
+            )}
+          </div>
         </div>
-      </div>
 
-      {shelves.data?.installations.length === 0 && androidAppViews.length === 0 ? (
-        <section className="library-empty">
-          <LibraryIcon aria-hidden="true" />
-          <h2>{t("library.emptyTitle")}</h2>
-          <p>{t("library.emptyHelp")}</p>
-        </section>
-      ) : null}
+        {shelves.data?.installations.length === 0 && androidAppViews.length === 0 ? (
+          <section className="library-empty">
+            <LibraryIcon aria-hidden="true" />
+            <h2>{t("library.emptyTitle")}</h2>
+            <p>{t("library.emptyHelp")}</p>
+          </section>
+        ) : null}
 
-      {manage ? (
-        <LibraryManageDrawer
-          installationId={manage.installationId}
-          initialTab={manage.tab}
-          gateway={gateway}
+        {manage ? (
+          <LibraryManageDrawer
+            installationId={manage.installationId}
+            initialTab={manage.tab}
+            gateway={gateway}
+            catalogGateway={catalogGateway}
+            searchGateway={searchGateway}
+            installs={installs}
+            onClose={() => onCloseManage?.()}
+            onOpenWork={(code) => void onOpenWork(code)}
+          />
+        ) : null}
+      </main>
+      {addGateway && adding && addOpen ? (
+        <LibraryAddSheet
+          view={adding}
+          gateway={addGateway}
+          installs={installs}
           catalogGateway={catalogGateway}
           searchGateway={searchGateway}
-          installs={installs}
-          onClose={() => onCloseManage?.()}
-          onOpenWork={(code) => void onOpenWork(code)}
+          onHide={() => setAddOpen(false)}
+          onManage={(installationId) => {
+            setAddOpen(false);
+            void onManage(installationId, "general");
+          }}
         />
       ) : null}
-    </main>
+    </OwnWorkDetailsProvider>
   );
 }
 
@@ -689,6 +756,7 @@ function personalizationHasContent(
 }
 
 function LibraryFeature({
+  ref,
   entry,
   gateway,
   preferEnglish,
@@ -698,6 +766,7 @@ function LibraryFeature({
   onOpenWork,
   onBrowse,
 }: {
+  ref?: Ref<HTMLElement>;
   entry: LibraryCollectionEntry;
   gateway: LibraryGateway;
   preferEnglish: boolean;
@@ -731,8 +800,12 @@ function LibraryFeature({
     if (opened) playback.selectOrdinal(ordinal, positionSeconds);
   };
   const { installation, work, action, resume } = entry;
+  const own = useOwnWork();
+  const details = own.details(installation.id);
   const title = libraryDisplayTitle(installation, work, preferEnglish);
-  const creator = libraryDisplayCreator(installation, work, preferEnglish);
+  const creator = libraryDisplayCreator(work, preferEnglish, details);
+  const code = libraryDisplayCode(installation, details);
+  const releaseDate = libraryReleaseDate(work, details);
   const kind = libraryContentKind(installation, action);
   const actionLabel = resume
     ? t("library.home.resume")
@@ -786,9 +859,9 @@ function LibraryFeature({
   };
 
   return (
-    <section className="library-feature" aria-label={t("library.home.featured")}>
+    <section ref={ref} className="library-feature" aria-label={t("library.home.featured")}>
       <div className="library-feature-art cover-hover-frame">
-        <LibraryArtwork kind={kind} title={title} work={work} />
+        <LibraryArtwork kind={kind} title={title} work={work} cover={own.coverUrl(installation.id)} />
         <span className="library-feature-art-shade" aria-hidden="true" />
         {kind === "audio" ? (
           <div className="library-feature-visualizer-toggle">
@@ -854,15 +927,16 @@ function LibraryFeature({
           {t(resume ? "library.home.continue" : "library.home.featured")}
         </span>
         <h2>{title}</h2>
-        <p>{creator}</p>
+        {creator ? <p>{creator}</p> : null}
         <div className="library-feature-meta">
+          {code ? <span className="library-feature-code"><code>{code}</code></span> : null}
           <span>{libraryContentKindLabel(kind, t)}</span>
           <span>
             {entry.fileCount === 1
               ? t("library.home.filesOne")
               : t("library.home.files", { count: entry.fileCount.toLocaleString(locale) })}
           </span>
-          {work?.releaseDate ? <span>{work.releaseDate.slice(0, 4)}</span> : null}
+          {releaseDate ? <span>{releaseDate.slice(0, 4)}</span> : null}
           {showPlayTime && entry.launchTotals ? (
             <span>{playTimeLabel(entry.launchTotals.totalDurationMs, t)}</span>
           ) : null}
@@ -874,9 +948,11 @@ function LibraryFeature({
         />
         {resume || currentHere || (kind === "audio" && timelineDuration) ? (
           <div className="library-feature-resume">
-            <span>{currentHere
-              ? playback.item?.relativePath
-              : resume?.relativePath ?? waveformItem?.relativePath}</span>
+            <span>{currentHere && playback.item
+              ? resumePlaceLabel(action, playback.item.relativePath, 0, null, t)
+              : resume
+                ? resumePlaceLabel(resume.action, resume.relativePath, resume.positionMs, resume.durationMs, t)
+                : waveformItem ? resumePlaceLabel(action, waveformItem.relativePath, 0, null, t) : null}</span>
             {progress !== null && timelineDuration ? (
               <input
                 className="library-feature-progress"
@@ -925,6 +1001,7 @@ function LibraryFeature({
             className="library-feature-menu"
             title={title}
             onOpenWork={onOpenWork}
+            ownWork={!work}
             onManage={onManage}
             onBrowse={onBrowse}
           />

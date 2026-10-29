@@ -433,8 +433,6 @@ export interface OpenNativeVideoRequest {
     back: string;
     player: string;
     play: string;
-    markFinished: string;
-    completed: string;
     playlist: string;
     openPlaylist: string;
     closePlaylist: string;
@@ -458,7 +456,7 @@ export interface NativeVideoState {
   surfaceId: string;
   sessionId: string;
   ordinal: number;
-  kind: "loading" | "metadata" | "ready" | "playing" | "paused" | "time" | "waiting" | "ended" | "error" | "interaction" | "fullscreen" | "subtitle" | "subtitle_error" | "back" | "finish" | "choose";
+  kind: "loading" | "metadata" | "ready" | "playing" | "paused" | "time" | "waiting" | "ended" | "error" | "interaction" | "fullscreen" | "subtitle" | "subtitle_error" | "back" | "choose";
   positionSeconds: number;
   durationSeconds: number | null;
   paused: boolean;
@@ -572,6 +570,19 @@ export interface LibraryGateway {
   updateMediaQueueSettings(request: UpdateMediaQueueSettingsRequest): Promise<MediaSession>;
   closeMediaSession(sessionId: string): Promise<MediaSession>;
   mediaAssetUrl(sessionId: string, ordinal: number): string;
+  listOwnWorkDetails(): Promise<OwnWorkDetails[]>;
+  readOwnWorkDetails(installationId: string): Promise<OwnWorkDetails | null>;
+  saveOwnWorkDetails(request: SaveOwnWorkDetailsRequest): Promise<OwnWorkDetails>;
+  listInstallationImages(installationId: string): Promise<InstallationImage[]>;
+  /** Copies one of the work's images into the Library's own artwork; returns its id. */
+  importOwnWorkArtwork(installationId: string, relativePath: string): Promise<string>;
+  /** Asks for a picture file and copies it into the Library's own artwork; null when cancelled. */
+  importOwnWorkArtworkFile(installationId: string): Promise<string | null>;
+  ownWorkArtworkUrl(installationId: string, artworkId: string): string;
+  /** A small copy of one of the work's images. */
+  installationImageUrl(installationId: string, relativePath: string): string;
+  /** A small copy of an image item, made once and kept by the app. */
+  mediaThumbnailUrl(sessionId: string, ordinal: number): string;
   openNativeVideo?(request: OpenNativeVideoRequest): Promise<OpenNativeVideoResponse>;
   updateNativeVideoViewport?(sessionId: string, surfaceId: string, viewport: NativeVideoViewport): Promise<void>;
   controlNativeVideo?(request: NativeVideoControlRequest): Promise<void>;
@@ -659,3 +670,31 @@ export function packagePreparationNeedsPreparedRefresh(
 
 export const manageTabs = ["general", "files"] as const;
 export type ManageTab = (typeof manageTabs)[number];
+
+export type OwnWorkKind = "images" | "manga" | "game" | "voice" | "video" | "document";
+
+/**
+ * What the user says about a work the catalog doesn't know, shown where a
+ * catalog work shows the catalog's details.
+ */
+export interface OwnWorkDetails {
+  installationId: string;
+  circle: string | null;
+  code: string | null;
+  releaseDate: string | null;
+  kind: OwnWorkKind | null;
+  tags: string[];
+  description: string | null;
+  /** Artwork ids in the Library's own artwork. */
+  cover: string | null;
+  samples: string[];
+  updatedAt: string;
+}
+
+export type SaveOwnWorkDetailsRequest = Omit<OwnWorkDetails, "updatedAt">;
+
+export interface InstallationImage {
+  relativePath: string;
+  sizeBytes: number | null;
+}
+

@@ -102,6 +102,8 @@ export interface ScanFinding {
   fileCount: number;
   sizeBytes: number;
   volumeCount: number;
+  /** Why an archive set is incomplete: parts no file holds, and files to rename so 7-Zip finds them. */
+  incompleteSet: { missingParts: number[]; renames: Array<{ from: string; to: string }> } | null;
   /** The Library entry for this work, and the catalog work it is matched to now. */
   inLibrary: { installationId: string; sameFiles: boolean; workCode: string | null } | null;
   ignored: boolean;

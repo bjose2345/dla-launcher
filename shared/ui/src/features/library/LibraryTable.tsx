@@ -11,8 +11,7 @@ import {
 import { ChevronDown, ChevronUp, ChevronsUpDown, ListChecks, Play } from "lucide-react";
 
 import { usePresentation } from "../../preferences/PresentationProvider";
-import { displayPath } from "../../displayPath";
-import { installationFolder } from "./libraryPresentation";
+import { useOwnWork } from "./ownWorkDetails";
 import { LibraryArtwork } from "./LibraryArtwork";
 import { collectionState, type LibraryCollectionEntry } from "./LibraryCollection";
 import type { ManageTab } from "./LibraryManageDrawer";
@@ -20,6 +19,7 @@ import { LibraryWorkMenu } from "./LibraryWorkMenu";
 import {
   libraryContentKind,
   libraryContentKindLabel,
+  libraryDisplayCode,
   libraryDisplayCreator,
   libraryDisplayTitle,
   type LibraryContentKind,
@@ -30,6 +30,8 @@ interface LibraryRow {
   entry: LibraryCollectionEntry;
   title: string;
   creator: string;
+  code: string;
+  cover: string | null;
   kind: LibraryContentKind;
   files: number;
   progress: number | null;
@@ -43,12 +45,17 @@ const columnHelper = createColumnHelper<typeof features, LibraryRow>();
 
 export function LibraryTable({
   entries,
+  selectedId,
+  onSelect,
   onActivate,
   onManage,
   onOpenWork,
   onBrowse,
 }: {
   entries: LibraryCollectionEntry[];
+  /** The work shown in the featured spot, marked on its row. */
+  selectedId: string | null;
+  onSelect: (installationId: string) => void;
   onActivate: (entry: LibraryCollectionEntry) => void;
   onManage: (installationId: string, tab: ManageTab) => void | Promise<void>;
   onOpenWork: (code: string) => void | Promise<void>;
@@ -57,43 +64,60 @@ export function LibraryTable({
   const { locale, t } = usePresentation();
   const [sorting, setSorting] = useState<SortingState>([{ id: "title", desc: false }]);
   const preferEnglish = locale !== "ja-JP";
+  const own = useOwnWork();
 
   const rows = useMemo<LibraryRow[]>(() => entries.map((entry) => {
     const resume = entry.resume;
+    const details = own.details(entry.installation.id);
     return {
       entry,
       title: libraryDisplayTitle(entry.installation, entry.work, preferEnglish),
-      creator: libraryDisplayCreator(entry.installation, entry.work, preferEnglish),
+      creator: libraryDisplayCreator(entry.work, preferEnglish, details),
+      code: libraryDisplayCode(entry.installation, details) ?? "",
+      cover: own.coverUrl(entry.installation.id),
       kind: libraryContentKind(entry.installation, entry.action),
       files: entry.fileCount,
       progress: resume && resume.durationMs !== null && resume.durationMs > 0
         ? Math.round(Math.max(0, Math.min(100, (resume.positionMs / resume.durationMs) * 100)))
         : null,
     };
-  }), [entries, preferEnglish]);
+  }), [entries, own, preferEnglish]);
 
   const columns = useMemo(() => columnHelper.columns([
     columnHelper.accessor("title", {
       header: () => t("library.table.work"),
       cell: (context) => (
-        <div className="library-table-work">
+        <button
+          className="library-table-work"
+          type="button"
+          aria-current={selectedId === context.row.original.entry.installation.id || undefined}
+          onClick={() => onSelect(context.row.original.entry.installation.id)}
+        >
           <span className="library-table-thumb" data-library-kind={context.row.original.kind}>
             <LibraryArtwork
               kind={context.row.original.kind}
               title={context.getValue()}
               work={context.row.original.entry.work}
+              cover={context.row.original.cover}
             />
           </span>
           <span className="library-table-name">
             <strong title={context.getValue()}>{context.getValue()}</strong>
-            <small><code className="app-path">{displayPath(installationFolder(context.row.original.entry.installation))}</code></small>
           </span>
-        </div>
+        </button>
       ),
     }),
     columnHelper.accessor("creator", {
       header: () => t("library.table.creator"),
       cell: (context) => <span title={context.getValue()}>{context.getValue()}</span>,
+    }),
+    columnHelper.accessor("code", {
+      header: () => t("library.table.code"),
+      cell: (context) => (
+        context.getValue()
+          ? <code className="library-table-code">{context.getValue()}</code>
+          : <span className="library-table-number">—</span>
+      ),
     }),
     columnHelper.accessor("kind", {
       header: () => t("library.table.kind"),
@@ -157,7 +181,10 @@ export function LibraryTable({
             <LibraryWorkMenu
               className="library-table-menu"
               title={title}
-              onOpenWork={work ? () => void onOpenWork(work.code) : undefined}
+              onOpenWork={work
+                ? () => void onOpenWork(work.code)
+                : own.openPage ? () => own.openPage!(entry.installation.id) : undefined}
+              ownWork={!work}
               onManage={(tab) => void onManage(entry.installation.id, tab)}
               onBrowse={onBrowse ? () => onBrowse(entry.installation.id) : undefined}
             />
@@ -165,7 +192,7 @@ export function LibraryTable({
         );
       },
     }),
-  ]), [t, onActivate, onManage, onOpenWork, onBrowse]);
+  ]), [t, selectedId, onSelect, onActivate, onManage, onOpenWork, onBrowse, own]);
 
   const table = useTable({
     features,

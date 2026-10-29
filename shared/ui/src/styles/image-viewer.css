@@ -1,0 +1,522 @@
+/* ── CG viewer: image sets, their gallery and slideshows ──── */
+
+.image-viewer[data-background="ambient"] {
+  --reader-ground: #0b0a0e;
+}
+
+.image-viewer-ambient {
+  position: absolute;
+  inset: -12%;
+  background-position: center;
+  background-size: cover;
+  filter: blur(56px) brightness(0.42) saturate(1.3);
+  pointer-events: none;
+}
+
+.image-viewer-canvas {
+  display: flex;
+  width: max-content;
+  min-width: 100%;
+  min-height: 100%;
+}
+
+.image-viewer-image {
+  display: flex;
+  flex: none;
+  margin: auto;
+}
+
+.image-viewer-image .reader-page {
+  box-shadow: 0 30px 80px -30px rgb(0 0 0 / 95%);
+}
+
+.image-viewer-zones {
+  grid-template-columns: 30% 40% 30%;
+}
+
+.image-viewer-progress {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 3px;
+  background: color-mix(in oklch, var(--color-base-content) 12%, transparent);
+  pointer-events: none;
+}
+
+.image-viewer-progress i {
+  display: block;
+  height: 100%;
+  background: var(--color-primary);
+  transform-origin: left;
+  animation: image-viewer-progress linear forwards;
+}
+
+@keyframes image-viewer-progress {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+.reader-icon-button.is-playing {
+  background: var(--color-primary);
+  color: var(--color-primary-content);
+}
+
+.image-viewer-scope {
+  max-width: 240px;
+}
+
+.image-viewer-scope > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.image-viewer-scope.is-open {
+  background: color-mix(in oklch, var(--app-panel-raised) 70%, var(--color-base-content));
+}
+
+.image-viewer-strip {
+  display: flex;
+  height: 48px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.image-viewer-thumb {
+  display: grid;
+  height: 44px;
+  flex: none;
+  place-items: center;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  box-shadow: inset 0 0 0 2px transparent;
+  background: var(--app-panel-raised);
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 140ms ease;
+}
+
+.image-viewer-thumb img {
+  display: block;
+  width: auto;
+  min-width: 28px;
+  max-width: 88px;
+  height: 44px;
+  object-fit: cover;
+}
+
+.image-viewer-thumb:hover {
+  opacity: 0.9;
+}
+
+.image-viewer-thumb.is-current {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+  opacity: 1;
+}
+
+.image-viewer-thumb:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.image-viewer-strip-folder {
+  display: inline-flex;
+  height: 44px;
+  flex: none;
+  align-items: center;
+  margin: 0 4px;
+  padding-left: 10px;
+  box-shadow: inset 1px 0 0 color-mix(in oklch, var(--color-base-content) 30%, transparent);
+  color: var(--app-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.image-viewer-details {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2.2fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+}
+
+.image-viewer-file {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  font-size: 0.76rem;
+}
+
+.image-viewer-file > span {
+  display: flex;
+  min-width: 0;
+  gap: 6px;
+}
+
+.image-viewer-file > span > span {
+  flex: none;
+  color: var(--app-muted);
+}
+
+.image-viewer-file code,
+.image-viewer-file small {
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-viewer-file small {
+  color: var(--app-muted);
+  font-size: 0.68rem;
+}
+
+.image-viewer-zoom {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.image-viewer-zoom .reader-chip-button {
+  min-width: 92px;
+  min-height: 32px;
+  justify-content: center;
+  padding: 0 12px;
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.image-viewer-zoom .reader-icon-button {
+  width: 34px;
+  height: 32px;
+}
+
+.image-viewer-zoom .reader-icon-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.image-viewer-minimap {
+  position: absolute;
+  z-index: 2;
+  right: 18px;
+  bottom: 18px;
+  padding: 6px;
+  background: color-mix(in oklch, var(--app-panel) 82%, transparent);
+  box-shadow: inset 0 0 0 1px var(--app-border), 0 12px 30px -10px rgb(0 0 0 / 90%);
+  backdrop-filter: blur(12px);
+  clip-path: var(--app-notch-sm);
+}
+
+.reader.has-chrome .image-viewer-minimap {
+  bottom: 150px;
+}
+
+.image-viewer-minimap > div {
+  position: relative;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+}
+
+.image-viewer-minimap > div:active {
+  cursor: grabbing;
+}
+
+.image-viewer-minimap img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  user-select: none;
+}
+
+.image-viewer-minimap span {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--color-primary);
+  box-shadow: 0 0 0 999px rgb(0 0 0 / 50%);
+  pointer-events: none;
+}
+
+.image-viewer-scope-anchor {
+  position: relative;
+  flex: none;
+}
+
+.image-viewer-folders {
+  top: calc(100% + 12px);
+  right: 0;
+  display: grid;
+  width: 300px;
+  max-height: 60vh;
+  gap: 8px;
+  padding: 16px 12px 20px;
+}
+
+.image-viewer-folders > span,
+.image-gallery-side-title {
+  padding: 0 6px;
+  color: var(--app-muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.image-folder-choices {
+  display: grid;
+  gap: 4px;
+}
+
+.image-folder-choice {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  color: var(--color-base-content);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-align: left;
+  clip-path: var(--app-chip-sm);
+}
+
+.image-folder-choice span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-folder-choice small {
+  color: var(--app-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+}
+
+.image-folder-choice:hover {
+  background: var(--app-panel-raised);
+}
+
+.image-folder-choice.is-active {
+  background: var(--color-primary);
+  color: var(--color-primary-content);
+}
+
+.image-folder-choice.is-active small {
+  color: inherit;
+}
+
+.image-folder-choice:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+/* ── Gallery ──────────────────────────────────────────────── */
+
+.image-gallery-view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in oklch, var(--color-base-100) 70%, black);
+}
+
+.image-gallery-top {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  background: var(--reader-bar);
+  box-shadow: inset 0 -1px 0 var(--app-border);
+}
+
+.image-gallery-sizes {
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+
+.image-gallery-sizes .reader-choice {
+  min-width: 36px;
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.image-gallery {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+
+.image-gallery-side {
+  display: flex;
+  width: 250px;
+  flex: none;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+  padding: 18px 14px;
+  overflow-y: auto;
+  box-shadow: inset -1px 0 0 var(--app-border);
+}
+
+.image-gallery-last {
+  display: grid;
+  gap: 10px;
+  margin-top: auto;
+  padding: 12px 12px 16px;
+  background: var(--app-panel);
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  font-size: 0.76rem;
+  clip-path: var(--app-notch);
+}
+
+.image-gallery-last .image-gallery-side-title {
+  padding: 0;
+}
+
+.image-gallery-last img {
+  display: block;
+  width: 100%;
+  height: 112px;
+  object-fit: cover;
+}
+
+.image-gallery-last .reader-chip-button {
+  justify-content: center;
+}
+
+.image-gallery-scroll {
+  min-width: 0;
+  flex: 1;
+  padding: 0 22px 28px;
+  overflow-y: auto;
+}
+
+.image-gallery-section h2 {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0;
+  padding: 16px 0 10px;
+  background: color-mix(in oklch, var(--color-base-100) 70%, black);
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.image-gallery-section h2 small {
+  color: var(--app-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.image-gallery-section:first-child:not(:has(h2)) {
+  padding-top: 18px;
+}
+
+.image-gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--image-tile-width, 200px), 1fr));
+  gap: 10px;
+}
+
+.image-gallery-tile {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: color-mix(in oklch, var(--app-panel-raised) 70%, black);
+  cursor: pointer;
+}
+
+.image-gallery-tile img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.image-gallery-tile:hover img {
+  transform: scale(1.03);
+}
+
+.image-gallery-tile:hover,
+.image-gallery-tile:focus-visible {
+  outline: 2px solid color-mix(in oklch, var(--color-primary) 85%, transparent);
+  outline-offset: 2px;
+}
+
+.image-gallery-tile.is-current {
+  outline: 3px solid var(--color-primary);
+  outline-offset: -3px;
+}
+
+.image-gallery-tile small {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  color: rgb(255 255 255 / 78%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.66rem;
+  text-shadow: 0 1px 3px rgb(0 0 0 / 80%);
+}
+
+.image-gallery-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 3px 9px;
+  background: var(--color-primary);
+  color: var(--color-primary-content);
+  font-size: 0.66rem;
+  font-weight: 800;
+  clip-path: var(--app-chip-sm);
+}
+
+@media (max-width: 720px) {
+  .image-gallery-side {
+    display: none;
+  }
+
+  .image-gallery-top {
+    flex-wrap: wrap;
+  }
+
+  .image-viewer-details {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .image-viewer-details .reader-slider {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .image-viewer-thumb,
+  .image-gallery-tile img {
+    transition: none;
+  }
+
+  .image-viewer-progress i {
+    animation: none;
+  }
+}

@@ -734,7 +734,7 @@ fn destination_is_available(path: &Path) -> Result<bool, PackagePreparationError
 }
 
 #[cfg(target_os = "linux")]
-fn rename_directory_noreplace(source: &Path, destination: &Path) -> std::io::Result<()> {
+pub(crate) fn rename_directory_noreplace(source: &Path, destination: &Path) -> std::io::Result<()> {
     use std::{ffi::CString, os::unix::ffi::OsStrExt};
 
     let source = CString::new(source.as_os_str().as_bytes()).map_err(|_| {
@@ -763,7 +763,7 @@ fn rename_directory_noreplace(source: &Path, destination: &Path) -> std::io::Res
 }
 
 #[cfg(target_os = "macos")]
-fn rename_directory_noreplace(source: &Path, destination: &Path) -> std::io::Result<()> {
+pub(crate) fn rename_directory_noreplace(source: &Path, destination: &Path) -> std::io::Result<()> {
     use std::{ffi::CString, os::unix::ffi::OsStrExt};
 
     let source = CString::new(source.as_os_str().as_bytes()).map_err(|_| {
@@ -784,7 +784,7 @@ fn rename_directory_noreplace(source: &Path, destination: &Path) -> std::io::Res
 }
 
 #[cfg(target_os = "windows")]
-fn rename_directory_noreplace(source: &Path, destination: &Path) -> std::io::Result<()> {
+pub(crate) fn rename_directory_noreplace(source: &Path, destination: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
 
     use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
@@ -807,7 +807,10 @@ fn rename_directory_noreplace(source: &Path, destination: &Path) -> std::io::Res
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-fn rename_directory_noreplace(_source: &Path, _destination: &Path) -> std::io::Result<()> {
+pub(crate) fn rename_directory_noreplace(
+    _source: &Path,
+    _destination: &Path,
+) -> std::io::Result<()> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         "atomic no-replace package activation is not available on this platform",

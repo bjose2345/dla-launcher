@@ -12,8 +12,8 @@ mod package_set;
 pub use media::{
     MediaClassificationError, MediaClassificationRequest, classify_media, classify_media_type,
 };
-pub use package::{classify_package, classify_package_media_paths};
-pub use package_set::{PackageSourceSetError, discover_package_source_set};
+pub use package::{classify_package, classify_package_media_files};
+pub use package_set::{MultipartVolumeName, PackageSourceSetError, discover_package_source_set};
 
 const MINIMUM_PRODUCT_DIGITS: usize = 5;
 const MAXIMUM_PRODUCT_DIGITS: usize = 10;

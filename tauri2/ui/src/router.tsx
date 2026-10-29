@@ -41,6 +41,7 @@ import { tauriDeliveryGateway } from "./gateways/tauriDeliveryGateway";
 import { tauriCatalogImportGateway } from "./gateways/tauriCatalogImportGateway";
 import { tauriSearchGateway } from "./gateways/tauriSearchGateway";
 import { tauriScannerGateway } from "./gateways/tauriScannerGateway";
+import { tauriLibraryAddGateway } from "./gateways/tauriLibraryAddGateway";
 import { tauriLibraryGateway } from "./gateways/tauriLibraryGateway";
 import { tauriSupportGateway } from "./gateways/tauriSupportGateway";
 import { tauriSystemGateway } from "./gateways/tauriSystemGateway";
@@ -68,6 +69,9 @@ const LibraryPage = lazy(() =>
 );
 const MediaSessionPage = lazy(() =>
   import("@dla-launcher/shared-ui/library/media").then((module) => ({ default: module.MediaSessionPage })),
+);
+const OwnWorkPage = lazy(() =>
+  import("@dla-launcher/shared-ui/library/own-work").then((module) => ({ default: module.OwnWorkPage })),
 );
 const ScannerPage = lazy(() =>
   import("@dla-launcher/shared-ui/scanner").then((module) => ({ default: module.ScannerPage })),
@@ -178,6 +182,12 @@ const libraryMediaRoute = createRoute({
   component: LibraryMediaRoute,
 });
 
+const ownWorkRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/library/$installationId/work",
+  component: OwnWorkRoute,
+});
+
 const importRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/import",
@@ -230,6 +240,7 @@ const routeTree = rootRoute.addChildren([
   scannerRoute,
   libraryRoute.addChildren([libraryManageRoute]),
   libraryMediaRoute,
+  ownWorkRoute,
   importRoute,
   androidPackageRoute,
   ...(deliveryGateway ? [downloadsRoute] : []),
@@ -370,6 +381,7 @@ function LibraryRoute() {
         catalogGateway={tauriCatalogGateway}
         searchGateway={tauriSearchGateway}
         installs={__DLA_TARGET_PLATFORM__ === "android" ? undefined : tauriScannerGateway}
+        addGateway={__DLA_TARGET_PLATFORM__ === "android" ? undefined : tauriLibraryAddGateway}
         manage={manage
           ? {
             installationId: manage.params.installationId,
@@ -392,6 +404,7 @@ function LibraryRoute() {
           })
         }
         onOpenWork={(code) => navigate({ to: "/works/$code", params: { code } })}
+        onOpenOwnWork={(installationId) => navigate({ to: "/library/$installationId/work", params: { installationId } })}
         onReinstallAndroidApp={(work) => navigate({
           to: "/android-packages",
           search: { work },
@@ -438,6 +451,36 @@ function LibraryMediaRoute() {
         gateway={tauriLibraryGateway}
         catalogGateway={tauriCatalogGateway}
         onBack={() => navigate({ to: "/library" })}
+      />
+    </LazyRoute>
+  );
+}
+
+function OwnWorkRoute() {
+  const { installationId } = ownWorkRoute.useParams();
+  const navigate = ownWorkRoute.useNavigate();
+  return (
+    <LazyRoute>
+      <OwnWorkPage
+        installationId={installationId}
+        gateway={tauriLibraryGateway}
+        onBack={() => {
+          if (window.history.length > 1) window.history.back();
+          else void navigate({ to: "/library" });
+        }}
+        onEditMetadata={() => navigate({
+          to: "/library/$installationId",
+          params: { installationId },
+          search: { tab: "general" },
+        })}
+        onOpenScanner={() => navigate({ to: "/scanner" })}
+        onOpenInstallation={(target, intent) => navigate({
+          to: "/library/$installationId",
+          params: { installationId: target },
+          search: { intent: intent === "install" ? "install" : undefined },
+        })}
+        onOpenMedia={(target) => navigate({ to: "/library/$installationId/media", params: { installationId: target } })}
+        onOpenExternal={openUrl}
       />
     </LazyRoute>
   );

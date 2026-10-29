@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isReaderAction } from "./ImageReaderProvider";
+import { isReaderAction } from "./ReaderProvider";
 
 describe("isReaderAction", () => {
   it("claims image sets for the in-place reader overlay", () => {

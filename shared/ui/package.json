@@ -15,6 +15,7 @@
     "./importer": "./src/features/importer/index.ts",
     "./library": "./src/features/library/index.ts",
     "./library/media": "./src/features/library/MediaSessionPage.tsx",
+    "./library/own-work": "./src/features/library/OwnWorkPage.tsx",
     "./library/page": "./src/features/library/LibraryPage.tsx",
     "./library/shell": "./src/features/library/shell.ts",
     "./preferences": "./src/preferences/index.ts",
@@ -38,6 +39,7 @@
     "dompurify": "catalog:",
     "lucide-react": "catalog:",
     "motion": "catalog:",
+    "pdfjs-dist": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:"
   },

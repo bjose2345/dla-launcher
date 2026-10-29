@@ -3,8 +3,6 @@ import {
   ArrowLeft,
   BookOpen,
   CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
   FileText,
   Headphones,
   Image as ImageIcon,
@@ -20,7 +18,7 @@ import type { CatalogDetailGateway } from "../catalog";
 import { visualImageUrls } from "../catalog/workImages";
 import { effectiveIdentity, installationTitle } from "./libraryPresentation";
 import { useMediaPlayback } from "./MediaPlaybackProvider";
-import { isReaderAction, useImageReader } from "./ImageReaderProvider";
+import { isReaderAction, useReader } from "./ReaderProvider";
 import {
   mediaItemName,
   mediaProgressPercent,
@@ -55,7 +53,7 @@ export function MediaSessionPage({
 }: MediaSessionPageProps) {
   const { t } = usePresentation();
   const playback = useMediaPlayback();
-  const reader = useImageReader();
+  const reader = useReader();
   const installation = useQuery({
     queryKey: ["library", "installation", installationId],
     queryFn: () => gateway.readInstallation(installationId),
@@ -362,7 +360,6 @@ function MediaSessionView({
           updatePlaybackState(itemOrdinal, status);
         }}
         onEnded={finishTimedItem}
-        onComplete={complete}
         onRepeatMode={(repeatMode) => {
           void updateQueueSettings({
             sessionId: initialSession.id,
@@ -422,17 +419,6 @@ function MediaSessionView({
               item={currentItem}
             />
           ) : <strong>{t("media.noItems")}</strong>}
-          {initialSession.action === "open_document" && (
-            <ReaderControls
-              gateway={gateway}
-              session={initialSession}
-              items={orderedItems}
-              currentOrdinal={progress.itemOrdinal}
-              completed={progress.completed}
-              onChoose={chooseItem}
-              onComplete={complete}
-            />
-          )}
         </div>
 
         <aside className="media-session-queue" aria-label={t("media.queue")}>
@@ -505,79 +491,6 @@ function MediaSurface({
 }) {
   const source = gateway.mediaAssetUrl(session.id, item.ordinal);
   return <iframe className="media-document-surface" src={source} title={mediaItemName(item)} />;
-}
-
-function ReaderControls({
-  gateway,
-  session,
-  items,
-  currentOrdinal,
-  completed,
-  onChoose,
-  onComplete,
-}: {
-  gateway: LibraryGateway;
-  session: MediaSession;
-  items: MediaSessionItem[];
-  currentOrdinal: number;
-  completed: boolean;
-  onChoose: (ordinal: number) => void;
-  onComplete: () => void;
-}) {
-  const { t } = usePresentation();
-  const stripRef = useRef<HTMLDivElement>(null);
-  const index = items.findIndex((item) => item.ordinal === currentOrdinal);
-  const previous = items[index - 1];
-  const next = items[index + 1];
-  const showThumbnails = session.action === "read_images";
-
-  useEffect(() => {
-    const strip = stripRef.current;
-    const active = strip?.querySelector<HTMLElement>("[data-active='true']");
-    active?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
-  }, [currentOrdinal]);
-
-  return (
-    <div className="media-reader-strip">
-      <nav className="media-reader-controls" aria-label={t("media.readerControls")}>
-        <button type="button" disabled={!previous} onClick={() => previous && onChoose(previous.ordinal)}>
-          <ChevronLeft aria-hidden="true" />{t("media.previous")}
-        </button>
-        <button type="button" disabled={completed} onClick={onComplete}>
-          <CheckCircle2 aria-hidden="true" />{t(completed ? "media.completed" : "media.markFinished")}
-        </button>
-        <button type="button" disabled={!next} onClick={() => next && onChoose(next.ordinal)}>
-          {t("media.next")}<ChevronRight aria-hidden="true" />
-        </button>
-      </nav>
-      <div className="media-reader-filmstrip" ref={stripRef} role="group" aria-label={t("media.filmstrip")}>
-        {items.map((item, position) => (
-          <button
-            className={item.ordinal === currentOrdinal ? "media-reader-thumb active" : "media-reader-thumb"}
-            data-active={item.ordinal === currentOrdinal}
-            type="button"
-            key={item.ordinal}
-            title={mediaItemName(item)}
-            aria-label={t("media.goToItem", { number: position + 1 })}
-            aria-current={item.ordinal === currentOrdinal ? "true" : undefined}
-            onClick={() => onChoose(item.ordinal)}
-          >
-            {showThumbnails ? (
-              <img
-                src={gateway.mediaAssetUrl(session.id, item.ordinal)}
-                alt=""
-                loading="lazy"
-                decoding="async"
-              />
-            ) : (
-              <FileText aria-hidden="true" />
-            )}
-            <b>{position + 1}</b>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
 }
 
 function writableProgress(session: MediaSession): WritableMediaProgress {

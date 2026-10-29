@@ -15,12 +15,14 @@ use dla_domain::{
 };
 use zip::ZipArchive;
 
+mod folder_transfer;
 mod installer;
 mod maintenance;
 mod rar;
 mod rar_tool;
 mod source;
 
+pub use folder_transfer::{FolderTransfer, FolderTransferError, TransferMode, TransferOutcome};
 pub use installer::DesktopPackageInstaller;
 pub use maintenance::DesktopLibraryMaintenance;
 

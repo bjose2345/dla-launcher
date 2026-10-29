@@ -15,7 +15,7 @@ use dla_domain::{
     },
 };
 
-use crate::media::classify_media_type;
+use crate::media::{classify_media_type, images_outweigh_pdfs};
 
 const PORTABLE_PLATFORMS: [InstallationPlatform; 5] = [
     InstallationPlatform::Windows,
@@ -201,12 +201,18 @@ fn classify_safe_manifest(
         };
     }
 
-    if let Some(classification) = classify_package_media_paths(
-        &paths
-            .values()
-            .map(|path| (*path).clone())
-            .collect::<Vec<_>>(),
-    ) {
+    let media_files = manifest
+        .entries
+        .iter()
+        .filter(|entry| !entry.is_directory)
+        .filter_map(|entry| {
+            entry
+                .relative_path
+                .clone()
+                .map(|path| (path, entry.uncompressed_size))
+        })
+        .collect::<Vec<_>>();
+    if let Some(classification) = classify_package_media_files(&media_files) {
         return classification;
     }
 
@@ -221,17 +227,29 @@ fn classify_safe_manifest(
     }
 }
 
-pub fn classify_package_media_paths(paths: &[RelativePath]) -> Option<PackageClassification> {
+/// Picks the media action for installed files, given each file's path and
+/// size in bytes.
+pub fn classify_package_media_files(
+    files: &[(RelativePath, u64)],
+) -> Option<PackageClassification> {
     let mut audio = Vec::new();
     let mut images = Vec::new();
     let mut videos = Vec::new();
     let mut documents = Vec::new();
-    for path in paths {
+    let mut image_bytes = 0_u64;
+    let mut document_bytes = 0_u64;
+    for (path, size) in files {
         match classify_media_type(path) {
             MediaType::Audio => audio.push(path.clone()),
-            MediaType::Image => images.push(path.clone()),
+            MediaType::Image => {
+                images.push(path.clone());
+                image_bytes = image_bytes.saturating_add(*size);
+            }
             MediaType::Video => videos.push(path.clone()),
-            MediaType::Pdf => documents.push(path.clone()),
+            MediaType::Pdf => {
+                documents.push(path.clone());
+                document_bytes = document_bytes.saturating_add(*size);
+            }
             _ => {}
         }
     }
@@ -262,7 +280,7 @@ pub fn classify_package_media_paths(paths: &[RelativePath]) -> Option<PackageCla
         Some(MediaType::Audio) => Some(media_collection_classification(
             PackageContentKind::AudioCollection,
             LaunchActionKind::PlayAudio,
-            preferred_collection_entry(&audio, true),
+            preferred_audio_entry(&audio),
             InferenceConfidence::High,
             "dominant_audio_set",
         )),
@@ -281,6 +299,12 @@ pub fn classify_package_media_paths(paths: &[RelativePath]) -> Option<PackageCla
                 "video_file"
             },
         )),
+        Some(MediaType::Pdf) if images_outweigh_pdfs(images.len(), image_bytes, document_bytes) => {
+            Some(image_collection_classification(
+                &images,
+                "images_outweigh_pdf",
+            ))
+        }
         Some(MediaType::Pdf) => Some(media_collection_classification(
             PackageContentKind::MixedMedia,
             LaunchActionKind::OpenDocument,
@@ -297,15 +321,8 @@ pub fn classify_package_media_paths(paths: &[RelativePath]) -> Option<PackageCla
             },
         )),
         Some(_) => None,
-        None if !images.is_empty() => Some(media_collection_classification(
-            PackageContentKind::ImageCollection,
-            LaunchActionKind::ReadImages,
-            preferred_collection_entry(&images, false),
-            if images.len() > 1 {
-                InferenceConfidence::High
-            } else {
-                InferenceConfidence::Medium
-            },
+        None if !images.is_empty() => Some(image_collection_classification(
+            &images,
             "dominant_image_set",
         )),
         None => None,
@@ -343,6 +360,44 @@ fn media_collection_classification(
     }
 }
 
+/// An image set opens at its first image and covers every folder holding
+/// images, so chapters and variant folders all stay in the session.
+fn image_collection_classification(images: &[RelativePath], reason: &str) -> PackageClassification {
+    let mut classification = media_collection_classification(
+        PackageContentKind::ImageCollection,
+        LaunchActionKind::ReadImages,
+        images.first().cloned(),
+        if images.len() > 1 {
+            InferenceConfidence::High
+        } else {
+            InferenceConfidence::Medium
+        },
+        reason,
+    );
+    classification.content_root = common_parent(images);
+    classification
+}
+
+fn common_parent(paths: &[RelativePath]) -> Option<RelativePath> {
+    let mut common: Option<Vec<&str>> = None;
+    for path in paths {
+        let mut folders = path.as_str().split('/').collect::<Vec<_>>();
+        folders.pop();
+        common = Some(match common {
+            None => folders,
+            Some(current) => current
+                .into_iter()
+                .zip(folders)
+                .take_while(|(left, right)| left == right)
+                .map(|(folder, _)| folder)
+                .collect(),
+        });
+    }
+    common
+        .filter(|folders| !folders.is_empty())
+        .and_then(|folders| RelativePath::parse(folders.join("/")).ok())
+}
+
 fn mixed_media_classification() -> PackageClassification {
     PackageClassification {
         content_kind: PackageContentKind::MixedMedia,
@@ -355,10 +410,7 @@ fn mixed_media_classification() -> PackageClassification {
     }
 }
 
-fn preferred_collection_entry(
-    paths: &[RelativePath],
-    prefer_compressed_audio: bool,
-) -> Option<RelativePath> {
+fn preferred_audio_entry(paths: &[RelativePath]) -> Option<RelativePath> {
     let mut groups = BTreeMap::<String, Vec<&RelativePath>>::new();
     for path in paths {
         groups
@@ -369,15 +421,11 @@ fn preferred_collection_entry(
     groups
         .into_iter()
         .min_by_key(|(parent, entries)| {
-            let format_rank = if prefer_compressed_audio {
-                entries
-                    .iter()
-                    .map(|path| audio_format_rank(path))
-                    .min()
-                    .unwrap_or(0)
-            } else {
-                0
-            };
+            let format_rank = entries
+                .iter()
+                .map(|path| audio_format_rank(path))
+                .min()
+                .unwrap_or(0);
             (Reverse(entries.len()), format_rank, parent.clone())
         })
         .and_then(|(_, entries)| entries.first().map(|path| (*path).clone()))
@@ -594,13 +642,96 @@ mod tests {
 
     #[test]
     fn leaves_equally_weighted_media_families_without_an_automatic_action() {
-        let classification = classify_package_media_paths(&[
-            RelativePath::parse("audio/track.mp3").expect("audio"),
-            RelativePath::parse("video/scene.mp4").expect("video"),
+        let classification = classify_package_media_files(&[
+            (RelativePath::parse("audio/track.mp3").expect("audio"), 10),
+            (RelativePath::parse("video/scene.mp4").expect("video"), 10),
         ])
         .expect("media classification");
 
         assert_eq!(classification.content_kind, PackageContentKind::MixedMedia);
         assert!(classification.launch_candidates.is_empty());
+    }
+
+    fn file(path: &str, size: u64) -> (RelativePath, u64) {
+        (RelativePath::parse(path).expect("fixture path"), size)
+    }
+
+    fn cg_set(folder: &str, count: usize, size: u64) -> Vec<(RelativePath, u64)> {
+        (1..=count)
+            .map(|index| file(&format!("{folder}/cg_{index:03}.png"), size))
+            .collect()
+    }
+
+    #[test]
+    fn opens_the_images_of_a_cg_set_that_ships_a_small_manual() {
+        let mut files = cg_set("Work/main", 24, 3_000_000);
+        files.extend(cg_set("Work/no-text", 24, 3_000_000));
+        files.push(file("Work/manual.pdf", 2_000_000));
+
+        let classification = classify_package_media_files(&files).expect("classification");
+
+        assert_eq!(
+            classification.content_kind,
+            PackageContentKind::ImageCollection
+        );
+        let action = &classification.launch_candidates[0];
+        assert_eq!(action.action, LaunchActionKind::ReadImages);
+        assert_eq!(action.relative_path.as_str(), "Work/main/cg_001.png");
+        assert_eq!(action.reason_codes, vec!["images_outweigh_pdf"]);
+        assert_eq!(
+            classification
+                .content_root
+                .as_ref()
+                .map(RelativePath::as_str),
+            Some("Work")
+        );
+    }
+
+    #[test]
+    fn keeps_a_comic_pdf_that_also_ships_its_pages_as_images() {
+        let mut files = cg_set("C107", 26, 3_347_372);
+        files.push(file("C107/book.pdf", 73_636_176));
+
+        let classification = classify_package_media_files(&files).expect("classification");
+
+        let action = &classification.launch_candidates[0];
+        assert_eq!(action.action, LaunchActionKind::OpenDocument);
+        assert_eq!(action.relative_path.as_str(), "C107/book.pdf");
+    }
+
+    #[test]
+    fn keeps_a_comic_pdf_beside_a_few_bonus_pictures() {
+        let mut files = cg_set("bonus", 4, 10_000_000);
+        files.push(file("book.pdf", 1_000_000));
+
+        let classification = classify_package_media_files(&files).expect("classification");
+
+        assert_eq!(
+            classification.launch_candidates[0].action,
+            LaunchActionKind::OpenDocument
+        );
+    }
+
+    #[test]
+    fn an_image_set_covers_every_folder_that_holds_images() {
+        let mut files = cg_set("Work/main", 3, 1);
+        files.extend(cg_set("Work/variants/no-text", 30, 1));
+        let classification = classify_package_media_files(&files).expect("classification");
+        assert_eq!(
+            classification
+                .content_root
+                .as_ref()
+                .map(RelativePath::as_str),
+            Some("Work")
+        );
+        assert_eq!(
+            classification.launch_candidates[0].relative_path.as_str(),
+            "Work/main/cg_001.png"
+        );
+
+        let mut files = cg_set("main", 3, 1);
+        files.extend(cg_set("bonus", 3, 1));
+        let classification = classify_package_media_files(&files).expect("classification");
+        assert_eq!(classification.content_root, None);
     }
 }

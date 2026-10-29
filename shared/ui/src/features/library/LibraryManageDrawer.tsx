@@ -27,6 +27,8 @@ import { scanInstallIsActive } from "../scanner/types";
 import { acceptScanInstallView, useScanInstalls } from "../scanner/useScanInstalls";
 import type { SearchGateway } from "../search/types";
 import { libraryDisplayCreator, libraryDisplayTitle } from "./libraryHome";
+import { OwnWorkDetailsEditor, ownWorkDetailsKey, type OwnWorkSaveState } from "./OwnWorkDetailsEditor";
+import { useOwnWork } from "./ownWorkDetails";
 import {
   effectiveIdentity,
   installationFolder,
@@ -49,6 +51,7 @@ import type {
   LibraryGateway,
   MediaType,
   PreparedPackageInstallation,
+  OwnWorkDetails,
 } from "./types";
 import { packagePreparationPercent, usePackagePreparationProgress } from "./usePackagePreparationProgress";
 
@@ -118,6 +121,14 @@ export function LibraryManageDrawer({
     select: (works) => works.find((item) => item.code === code),
   });
   const autosave = useReviewAutosave(installationId, gateway);
+  const own = useQuery({
+    queryKey: ownWorkDetailsKey(installationId),
+    queryFn: () => gateway.readOwnWorkDetails(installationId),
+  });
+  const [ownSave, setOwnSave] = useState<{ state: OwnWorkSaveState; error?: unknown } | null>(null);
+  // Your details save on their own; the line under the heading shows whichever saved last.
+  const saveState = ownSave?.state ?? autosave.state;
+  const saveError = ownSave?.state === "failed" ? ownSave.error : autosave.error;
 
   useDocumentScrollLock(true);
   useEffect(() => {
@@ -156,6 +167,13 @@ export function LibraryManageDrawer({
                 mainImageUrls={work.data.mainImageUrls}
                 thumbnailUrls={work.data.thumbnailUrls}
               />
+            ) : own.data?.cover ? (
+              <WorkCardImage
+                code={own.data.cover}
+                title={title}
+                mainImageUrls={[gateway.ownWorkArtworkUrl(installationId, own.data.cover)]}
+                thumbnailUrls={[]}
+              />
             ) : <CircleHelp />}
           </span>
           <div className="library-manage-heading">
@@ -163,7 +181,9 @@ export function LibraryManageDrawer({
             <h2 id={headingId}>{title || t("library.loading")}</h2>
             {current ? (
               <span>
-                {work.data ? `${libraryDisplayCreator(current, work.data, preferEnglish)} · ${work.data.code}` : t("library.manage.unknownWork")}
+                {work.data
+                  ? `${libraryDisplayCreator(work.data, preferEnglish)} · ${work.data.code}`
+                  : [own.data?.circle, own.data?.code].filter(Boolean).join(" · ") || t("library.own.yourWork")}
               </span>
             ) : null}
           </div>
@@ -172,15 +192,15 @@ export function LibraryManageDrawer({
           </button>
         </header>
 
-        <p className={`library-manage-saved is-${autosave.state}`} role="status">
-          {autosave.state === "saving" ? <LoaderCircle className="library-spin" aria-hidden="true" /> : null}
-          {autosave.state === "saved" ? <Check aria-hidden="true" /> : null}
-          {autosave.state === "failed" ? <AlertTriangle aria-hidden="true" /> : null}
-          {t(autosave.state === "saving"
+        <p className={`library-manage-saved is-${saveState}`} role="status">
+          {saveState === "saving" ? <LoaderCircle className="library-spin" aria-hidden="true" /> : null}
+          {saveState === "saved" ? <Check aria-hidden="true" /> : null}
+          {saveState === "failed" ? <AlertTriangle aria-hidden="true" /> : null}
+          {t(saveState === "saving"
             ? "library.manage.saving"
-            : autosave.state === "saved"
+            : saveState === "saved"
               ? "library.manage.saved"
-              : autosave.state === "failed"
+              : saveState === "failed"
                 ? "library.manage.saveFailed"
                 : "library.manage.autosave")}
         </p>
@@ -201,9 +221,9 @@ export function LibraryManageDrawer({
         </div>
 
         <div className="library-manage-body" role="tabpanel">
-          {autosave.error ? (
+          {saveError ? (
             <div className="library-callout library-callout-error" role="alert">
-              <AlertTriangle aria-hidden="true" />{t("common.requestFailed", { error: String(autosave.error) })}
+              <AlertTriangle aria-hidden="true" />{t("common.requestFailed", { error: String(saveError) })}
             </div>
           ) : null}
           {installation.isPending ? (
@@ -218,9 +238,20 @@ export function LibraryManageDrawer({
             <GeneralTab
               installation={current}
               work={work.data}
+              own={own.data ?? undefined}
+              ownEditor={!work.data && work.fetchStatus !== "fetching" ? (
+                <OwnWorkDetailsEditor
+                  installationId={installationId}
+                  gateway={gateway}
+                  onSaveState={(state, error) => setOwnSave({ state, error })}
+                />
+              ) : null}
               catalogGateway={catalogGateway}
               searchGateway={searchGateway}
-              onSave={autosave.save}
+              onSave={(change) => {
+                setOwnSave(null);
+                autosave.save(change);
+              }}
               onOpenWork={onOpenWork}
             />
           ) : null}
@@ -286,6 +317,8 @@ type Save = ReturnType<typeof useReviewAutosave>["save"];
 function GeneralTab({
   installation,
   work,
+  own,
+  ownEditor,
   catalogGateway,
   searchGateway,
   onSave,
@@ -293,6 +326,9 @@ function GeneralTab({
 }: {
   installation: Installation;
   work: CatalogWork | undefined;
+  own: OwnWorkDetails | undefined;
+  /** Shown for a work outside the catalog, after its catalog section. */
+  ownEditor: ReactNode;
   catalogGateway: Pick<CatalogDetailGateway, "readWorks">;
   searchGateway?: Pick<SearchGateway, "search">;
   onSave: Save;
@@ -300,6 +336,7 @@ function GeneralTab({
 }) {
   const { locale, t } = usePresentation();
   const preferEnglish = locale !== "ja-JP";
+  const ownWork = useOwnWork();
   const [matching, setMatching] = useState(false);
   const nameId = useId();
   const startId = useId();
@@ -351,17 +388,17 @@ function GeneralTab({
               </span>
               <span className="library-manage-work-copy">
                 <strong>{preferEnglish && work.titleEnglish.trim() ? work.titleEnglish : work.title}</strong>
-                <small>{libraryDisplayCreator(installation, work, preferEnglish)} · {work.code}</small>
+                <small>{libraryDisplayCreator(work, preferEnglish)} · {work.code}</small>
               </span>
             </>
           ) : (
             <>
               <span className="library-manage-work-cover" aria-hidden="true"><CircleHelp /></span>
               <span className="library-manage-work-copy">
-                <strong>{code ?? t("library.manage.unknownWork")}</strong>
+                <strong>{t(own ? "library.own.yourWork" : "library.manage.unknownWork")}</strong>
                 <dl className="library-manage-unknown">
-                  <div><dt>{t("library.manage.circle")}</dt><dd>?</dd></div>
-                  <div><dt>{t("library.manage.code")}</dt><dd>{code ?? "?"}</dd></div>
+                  <div><dt>{t("library.manage.circle")}</dt><dd>{own?.circle ?? "?"}</dd></div>
+                  <div><dt>{t("library.manage.code")}</dt><dd>{code ?? own?.code ?? "?"}</dd></div>
                 </dl>
               </span>
             </>
@@ -373,6 +410,11 @@ function GeneralTab({
             {work && onOpenWork ? (
               <button className="library-manage-link" type="button" onClick={() => onOpenWork(work.code)}>
                 <ExternalLink aria-hidden="true" />{t("workMenu.catalogPage")}
+              </button>
+            ) : null}
+            {!work && ownWork.openPage ? (
+              <button className="library-manage-link" type="button" onClick={() => ownWork.openPage!(installation.id)}>
+                <ExternalLink aria-hidden="true" />{t("workMenu.workPage")}
               </button>
             ) : null}
           </span>
@@ -418,6 +460,8 @@ function GeneralTab({
           </div>
         ) : null}
       </section>
+
+      {ownEditor}
 
       {selections.length > 1 ? (
         <section className="library-manage-field">

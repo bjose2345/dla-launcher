@@ -427,7 +427,7 @@ fn destination_name(installation: &Installation, inspection: &PackageInspection)
     sanitize_directory_name(&format!("{base} ({label})"))
 }
 
-fn sanitize_directory_name(value: &str) -> String {
+pub(crate) fn sanitize_directory_name(value: &str) -> String {
     let sanitized = value
         .chars()
         .map(|character| match character {

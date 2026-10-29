@@ -87,8 +87,6 @@ pub struct NativeVideoLabels {
     pub back: String,
     pub player: String,
     pub play: String,
-    pub mark_finished: String,
-    pub completed: String,
     pub playlist: String,
     pub open_playlist: String,
     pub close_playlist: String,
@@ -556,7 +554,6 @@ fn video_state_kind_is_valid(kind: &str) -> bool {
             | "subtitle"
             | "subtitle_error"
             | "back"
-            | "finish"
             | "choose"
     )
 }
@@ -625,7 +622,7 @@ mod tests {
         assert!(video_state_kind_is_valid("playing"));
         assert!(video_state_kind_is_valid("fullscreen"));
         assert!(video_state_kind_is_valid("back"));
-        assert!(video_state_kind_is_valid("finish"));
+        assert!(!video_state_kind_is_valid("finish"));
         assert!(video_state_kind_is_valid("choose"));
         assert!(!video_state_kind_is_valid("navigate"));
     }

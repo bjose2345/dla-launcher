@@ -63,6 +63,28 @@ describe("ScannerPage", () => {
     expect(within(library).getByText("Voice Drama")).toBeTruthy();
   });
 
+  it("says which part of an incomplete archive set to rename or find", async () => {
+    renderScanner(scannerGateway({
+      findings: [
+        finding({
+          key: "package:entry:9",
+          relativePath: "RJ01000009.part1.exe",
+          kind: "archive",
+          state: "incomplete",
+          workCode: "RJ01000009",
+          volumeCount: 2,
+          incompleteSet: {
+            missingParts: [3],
+            renames: [{ from: "RJ01000009part2.rar", to: "RJ01000009.part2.rar" }],
+          },
+        }),
+      ],
+    }));
+
+    expect(await screen.findByText("Rename RJ01000009part2.rar to RJ01000009.part2.rar.")).toBeTruthy();
+    expect(screen.getByText("Missing: part 3.")).toBeTruthy();
+  });
+
   it("adds a folder in one click, confirms it, and undoes it", async () => {
     const gateway = scannerGateway({
       findings: [finding({ key: "directory:game", relativePath: "KUNOICHI RED", workCode: "RJ01000002" })],
@@ -353,6 +375,7 @@ function finding(overrides: Partial<ScanFinding>): ScanFinding {
     fileCount: 3,
     sizeBytes: 300,
     volumeCount: overrides.kind === "archive" ? 1 : 0,
+    incompleteSet: null,
     inLibrary: null,
     ignored: false,
     ...overrides,

@@ -8,6 +8,7 @@ pub mod launch;
 pub mod library;
 pub mod maintenance;
 pub mod media;
+pub mod own_work;
 pub mod package;
 pub mod scanner;
 

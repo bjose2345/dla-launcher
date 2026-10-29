@@ -128,8 +128,9 @@ impl ScanController {
     }
 
     /// Scans one folder and waits for the result, taking the single scan slot
-    /// as soon as no library scan holds it. Install from DLA scans its
-    /// downloaded archives this way.
+    /// as soon as no library scan holds it. Install from DLA and "+ Add" scan
+    /// this way; these scans never become the Scanner page's latest scan.
+    /// The caller's cancellation and `cancel` both stop it.
     #[cfg(desktop)]
     pub fn scan_folder_now(
         &self,
@@ -137,6 +138,7 @@ impl ScanController {
         cancellation: &dyn ScanCancellation,
     ) -> Result<ScanSessionView, ScannerError> {
         let approved = self.access.approve(path)?;
+        let registered = Arc::new(AtomicScanCancellation::default());
         let prepared = loop {
             if cancellation.is_cancelled() {
                 return Err(ScannerError::InvalidRequest(
@@ -158,17 +160,20 @@ impl ScanController {
                         ..ScanOptions::default()
                     },
                 })?;
-                active.insert(
-                    prepared.session.id.clone(),
-                    Arc::new(AtomicScanCancellation::default()),
-                );
+                active.insert(prepared.session.id.clone(), Arc::clone(&registered));
                 break prepared;
             }
             drop(active);
             std::thread::sleep(std::time::Duration::from_millis(500));
         };
         let session_id = prepared.session.id.clone();
-        let result = self.service.execute(prepared, cancellation);
+        let result = self.service.execute(
+            prepared,
+            &EitherCancellation {
+                caller: cancellation,
+                registered: registered.as_ref(),
+            },
+        );
         if let Ok(mut active) = self.active.lock() {
             active.remove(&session_id);
         }
@@ -241,5 +246,18 @@ impl AtomicScanCancellation {
 impl ScanCancellation for AtomicScanCancellation {
     fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
+    }
+}
+
+#[cfg(desktop)]
+struct EitherCancellation<'a> {
+    caller: &'a dyn ScanCancellation,
+    registered: &'a AtomicScanCancellation,
+}
+
+#[cfg(desktop)]
+impl ScanCancellation for EitherCancellation<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.caller.is_cancelled() || self.registered.is_cancelled()
     }
 }

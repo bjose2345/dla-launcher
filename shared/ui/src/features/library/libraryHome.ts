@@ -7,6 +7,7 @@ import type {
   LibraryLaunchTotals,
   LibraryShelves,
   MediaResume,
+  OwnWorkDetails,
 } from "./types";
 
 export type LibraryContentKind = "audio" | "images" | "video" | "documents" | "apps" | "other";
@@ -160,12 +161,37 @@ export function libraryDisplayTitle(
   return preferEnglish && work.titleEnglish.trim() ? work.titleEnglish : work.title;
 }
 
+/** The circle the catalog, or else the user, gives the work; nothing when neither does. */
 export function libraryDisplayCreator(
-  installation: Installation,
   work: CatalogWork | undefined,
   preferEnglish: boolean,
+  own?: OwnWorkDetails,
 ): string {
   const circle = work?.circles[0];
   if (circle) return preferEnglish && circle.nameEnglish.trim() ? circle.nameEnglish : circle.name;
-  return effectiveIdentity(installation) ?? installation.rootPath;
+  return work ? "" : own?.circle ?? "";
+}
+
+/** The code the work is known by: its catalog code, or the one the user gave it. */
+export function libraryDisplayCode(installation: Installation, own?: OwnWorkDetails): string | null {
+  return effectiveIdentity(installation) ?? own?.code ?? null;
+}
+
+export function libraryReleaseDate(work: CatalogWork | undefined, own?: OwnWorkDetails): string | null {
+  return work ? work.releaseDate ?? null : own?.releaseDate ?? null;
+}
+
+/** Where a reading or playback stands, without the folders the file sits in. */
+export function resumePlaceLabel(
+  action: LaunchActionKind | null,
+  relativePath: string,
+  positionMs: number,
+  durationMs: number | null,
+  t: (key: MessageKey, values?: Record<string, string | number>) => string,
+): string {
+  if (action === "read_images" && durationMs) return t("viewer.imageOf", { image: positionMs, total: durationMs });
+  if (action === "open_document" && durationMs) return t("reader.pageOf", { page: positionMs, total: durationMs });
+  const name = relativePath.split(/[\\/]/).filter(Boolean).at(-1) ?? relativePath;
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(0, dot) : name;
 }

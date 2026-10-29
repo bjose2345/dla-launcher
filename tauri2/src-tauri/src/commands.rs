@@ -18,6 +18,7 @@ use dla_application::{
         AudioWaveform, MediaService, OpenMediaSessionRequest, OpenPersonalizedVoiceQueueRequest,
         PersonalizedVoiceQueueService, UpdateMediaProgressRequest, UpdateMediaQueueSettingsRequest,
     },
+    own_work::OwnWorkService,
     package_preparation::{PackageDestinationConflictPolicy, PackageDestinationPreview},
     personalization::{LocalPersonalizationService, WorkPreferenceService},
     scan_findings::{AddScanFindingsRequest, ScanFindingList, ScanFindingService},
@@ -37,6 +38,9 @@ use dla_domain::{
     library::{LibraryShelves, LocalPersonalization, WorkPreference, WorkPreferenceKind},
     maintenance::{InstallationHealthReport, MaintenanceCleanupReport},
     media::{MediaRepeatMode, MediaSession, MediaSessionId, MediaSessionItem, MediaSessionStatus},
+    own_work::{
+        ImportOwnWorkArtworkRequest, InstallationImage, OwnWorkDetails, SaveOwnWorkDetailsRequest,
+    },
     package::{ArchiveRetentionPolicy, PackagePreparationProgress, PreparedPackageInstallation},
     scanner::{ScanRootId, ScanSessionId},
 };
@@ -81,9 +85,12 @@ pub struct AppState {
     pub catalog_import: Arc<CatalogImportController>,
     pub scan_findings: Arc<ScanFindingService>,
     pub scan_installs: Arc<ScanInstallController>,
+    #[cfg(desktop)]
+    pub library_add: Arc<crate::library_add::LibraryAddController>,
     pub installation_review: Arc<InstallationReviewService>,
     pub library_shelves: Arc<LibraryShelvesService>,
     pub work_preferences: Arc<WorkPreferenceService>,
+    pub own_works: Arc<OwnWorkService>,
     pub local_personalization: Arc<LocalPersonalizationService>,
     pub package_preparation: Arc<PackagePreparationController>,
     pub maintenance: Arc<LibraryMaintenanceService>,
@@ -1352,6 +1359,149 @@ pub async fn cancel_scan_install(
     .map_err(|error| error.to_string())
 }
 
+/// Opens the picker for "+ Add" and starts finding the picked works; None
+/// when the picker is closed without a choice.
+#[cfg(desktop)]
+#[tauri::command]
+pub async fn start_library_add(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    request: dla_application::library_add::StartLibraryAddRequest,
+) -> Result<Option<dla_application::library_add::LibraryAddView>, String> {
+    use dla_application::library_add::LibraryAddSourceRequest;
+    use tauri_plugin_dialog::DialogExt;
+
+    use crate::library_add::LibraryAddPick;
+
+    let controller = Arc::clone(&state.library_add);
+    controller.check_can_start()?;
+    let handle = app.clone();
+    let pick = tauri::async_runtime::spawn_blocking(move || {
+        let dialog = handle.dialog().file();
+        let paths = |picked: Option<Vec<tauri_plugin_dialog::FilePath>>| {
+            picked
+                .map(|picked| {
+                    picked
+                        .into_iter()
+                        .map(|path| path.into_path())
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .transpose()
+                .map_err(|error| error.to_string())
+        };
+        Ok::<_, String>(match request.source {
+            LibraryAddSourceRequest::Folders => paths(
+                dialog
+                    .set_title("Choose work folders to add")
+                    .blocking_pick_folders(),
+            )?
+            .filter(|picked| !picked.is_empty())
+            .map(LibraryAddPick::Folders),
+            LibraryAddSourceRequest::Archives => paths(
+                dialog
+                    .set_title("Choose archives to add")
+                    .add_filter("Archives", &["zip", "rar", "exe"])
+                    .blocking_pick_files(),
+            )?
+            .filter(|picked| !picked.is_empty())
+            .map(LibraryAddPick::Archives),
+            LibraryAddSourceRequest::Scan => dialog
+                .set_title("Choose a folder to look through for works")
+                .blocking_pick_folder()
+                .map(|path| path.into_path())
+                .transpose()
+                .map_err(|error| error.to_string())?
+                .map(LibraryAddPick::Scan),
+        })
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    let Some(pick) = pick else {
+        return Ok(None);
+    };
+    tauri::async_runtime::spawn_blocking(move || controller.start(pick).map(Some))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn start_library_add(
+    _app: AppHandle,
+    _request: dla_application::library_add::StartLibraryAddRequest,
+) -> Result<Option<dla_application::library_add::LibraryAddView>, String> {
+    Err("adding works from folders is not available on this device".to_owned())
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+pub fn read_library_add(
+    state: tauri::State<'_, AppState>,
+) -> Option<dla_application::library_add::LibraryAddView> {
+    state.library_add.view()
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+pub fn read_library_add() -> Option<dla_application::library_add::LibraryAddView> {
+    None
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+pub async fn confirm_library_add(
+    state: tauri::State<'_, AppState>,
+    request: dla_application::library_add::ConfirmLibraryAddRequest,
+) -> Result<dla_application::library_add::LibraryAddView, String> {
+    let controller = Arc::clone(&state.library_add);
+    tauri::async_runtime::spawn_blocking(move || controller.confirm(request))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn confirm_library_add(
+    _request: dla_application::library_add::ConfirmLibraryAddRequest,
+) -> Result<dla_application::library_add::LibraryAddView, String> {
+    Err("adding works from folders is not available on this device".to_owned())
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+pub async fn cancel_library_add(
+    state: tauri::State<'_, AppState>,
+    batch_id: String,
+) -> Result<dla_application::library_add::LibraryAddView, String> {
+    let controller = Arc::clone(&state.library_add);
+    tauri::async_runtime::spawn_blocking(move || controller.cancel(&batch_id))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn cancel_library_add(
+    _batch_id: String,
+) -> Result<dla_application::library_add::LibraryAddView, String> {
+    Err("adding works from folders is not available on this device".to_owned())
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+pub fn dismiss_library_add(
+    state: tauri::State<'_, AppState>,
+    batch_id: String,
+) -> Result<(), String> {
+    state.library_add.dismiss(&batch_id)
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+pub fn dismiss_library_add(_batch_id: String) -> Result<(), String> {
+    Err("adding works from folders is not available on this device".to_owned())
+}
+
 #[tauri::command]
 pub async fn list_library_installations(
     state: tauri::State<'_, AppState>,
@@ -1429,6 +1579,93 @@ pub async fn save_library_installation_review(
 ) -> Result<Installation, String> {
     let service = Arc::clone(&state.installation_review);
     blocking(move || service.save(request, dla_sqlite::current_timestamp())).await
+}
+
+#[tauri::command]
+pub async fn list_own_work_details(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<OwnWorkDetails>, String> {
+    let service = Arc::clone(&state.own_works);
+    blocking(move || service.list()).await
+}
+
+#[tauri::command]
+pub async fn read_own_work_details(
+    state: tauri::State<'_, AppState>,
+    installation_id: String,
+) -> Result<Option<OwnWorkDetails>, String> {
+    let service = Arc::clone(&state.own_works);
+    blocking(move || service.read(&InstallationId(installation_id))).await
+}
+
+#[tauri::command]
+pub async fn save_own_work_details(
+    state: tauri::State<'_, AppState>,
+    request: SaveOwnWorkDetailsRequest,
+) -> Result<OwnWorkDetails, String> {
+    let service = Arc::clone(&state.own_works);
+    blocking(move || service.save(request, &dla_sqlite::current_timestamp())).await
+}
+
+#[tauri::command]
+pub async fn list_installation_images(
+    state: tauri::State<'_, AppState>,
+    installation_id: String,
+) -> Result<Vec<InstallationImage>, String> {
+    let service = Arc::clone(&state.own_works);
+    blocking(move || service.list_images(&InstallationId(installation_id))).await
+}
+
+#[tauri::command]
+pub async fn import_own_work_artwork(
+    state: tauri::State<'_, AppState>,
+    request: ImportOwnWorkArtworkRequest,
+) -> Result<String, String> {
+    let service = Arc::clone(&state.own_works);
+    blocking(move || service.import_artwork(request)).await
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+pub async fn import_own_work_artwork_file(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    installation_id: String,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let handle = app.clone();
+    let selected = tauri::async_runtime::spawn_blocking(move || {
+        handle
+            .dialog()
+            .file()
+            .set_title("Choose a picture")
+            .add_filter("Pictures", OWN_WORK_PICTURE_EXTENSIONS)
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let path = selected.into_path().map_err(|error| error.to_string())?;
+    let service = Arc::clone(&state.own_works);
+    blocking(move || service.import_artwork_file(&InstallationId(installation_id), &path))
+        .await
+        .map(Some)
+}
+
+#[cfg(desktop)]
+const OWN_WORK_PICTURE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif", "bmp"];
+
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn import_own_work_artwork_file(
+    _app: AppHandle,
+    _state: tauri::State<'_, AppState>,
+    _installation_id: String,
+) -> Result<Option<String>, String> {
+    Err("choosing a picture file is not available on this platform yet".to_owned())
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]

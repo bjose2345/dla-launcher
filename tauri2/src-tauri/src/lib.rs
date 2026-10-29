@@ -5,11 +5,14 @@ mod cover_protocol;
 mod delivery;
 #[cfg(desktop)]
 mod delivery_access;
+#[cfg(desktop)]
+mod library_add;
 mod media_protocol;
 mod native_video;
 mod package_preparation;
 mod protocol_workers;
 mod read_only_navigation;
+mod render_recovery;
 mod scan_installs;
 mod scanner;
 mod search;
@@ -41,6 +44,7 @@ use dla_application::{
         AudioTrackStore, AudioWaveformReader, MediaInventoryReader, MediaService,
         MediaSessionStore, PersonalizedVoiceQueueService,
     },
+    own_work::{OwnWorkArtworkStore, OwnWorkDetailsStore, OwnWorkService},
     package_inspection::PackageManifestReader,
     package_preparation::{PackageInstaller, PackagePreparationService, PackagePreparationStore},
     personalization::{
@@ -64,7 +68,10 @@ use dla_catalog_import::{
 };
 use dla_cover_cache::DesktopCatalogArtworkCache;
 use dla_launch::{DesktopLaunchExecutor, SystemLaunchClock};
-use dla_media::{DesktopAudioWaveformReader, DesktopMediaInventory};
+use dla_media::{
+    DesktopAudioWaveformReader, DesktopMediaInventory, OwnWorkArtworkFiles, THUMBNAIL_CACHE_LIMIT,
+    ThumbnailCache,
+};
 use dla_scanner::{
     DesktopFilesystem, DesktopScanRootLocations, ScanAccessRegistry, SystemScanClock,
     SystemScanIdentifiers,
@@ -400,6 +407,28 @@ pub fn run() {
             let audio_tracks: Arc<dyn AudioTrackStore> = library.clone();
             let media_inventory: Arc<dyn MediaInventoryReader> =
                 Arc::new(DesktopMediaInventory::new());
+            let own_work_details: Arc<dyn OwnWorkDetailsStore> = library.clone();
+            let own_work_artwork: Arc<dyn OwnWorkArtworkStore> = Arc::new(
+                OwnWorkArtworkFiles::new(data_directory.join("library/artwork")),
+            );
+            let own_works = Arc::new(OwnWorkService::new(
+                Arc::clone(&installation_store),
+                Arc::clone(&package_preparation_store),
+                Arc::clone(&media_inventory),
+                own_work_details,
+                own_work_artwork,
+            ));
+            let orphans = Arc::clone(&own_works);
+            if let Err(error) = std::thread::Builder::new()
+                .name("dla-own-work-artwork-prune".to_owned())
+                .spawn(move || {
+                    if let Err(error) = orphans.remove_orphaned_artwork() {
+                        log::warn!("own work artwork cleanup failed: {error}");
+                    }
+                })
+            {
+                log::warn!("own work artwork cleanup could not start: {error}");
+            }
             let audio_waveforms: Arc<dyn AudioWaveformReader> = Arc::new(
                 DesktopAudioWaveformReader::new(cache_directory.join("media/waveforms")),
             );
@@ -503,6 +532,15 @@ pub fn run() {
                 Arc::clone(&package_preparation),
                 Arc::clone(&installation_review),
                 Arc::clone(&maintenance),
+                Arc::clone(&install_folders),
+                app.handle().clone(),
+            ));
+            #[cfg(desktop)]
+            let library_add = Arc::new(library_add::LibraryAddController::new(
+                Arc::clone(&scanner),
+                Arc::clone(&scan_findings),
+                Arc::clone(&scan_installs),
+                Arc::clone(&installation_store),
                 install_folders,
                 app.handle().clone(),
             ));
@@ -518,6 +556,19 @@ pub fn run() {
                 ),
             ));
 
+            let thumbnails = ThumbnailCache::new(cache_directory.join("media/thumbnails"));
+            let pruned = thumbnails.clone();
+            if let Err(error) = std::thread::Builder::new()
+                .name("dla-thumbnail-prune".to_owned())
+                .spawn(move || {
+                    if let Err(error) = pruned.prune(THUMBNAIL_CACHE_LIMIT) {
+                        log::warn!("media thumbnail cache prune failed: {error}");
+                    }
+                })
+            {
+                log::warn!("media thumbnail cache prune could not start: {error}");
+            }
+            app.manage(thumbnails);
             app.manage(AppState {
                 android_app,
                 android_package,
@@ -530,9 +581,12 @@ pub fn run() {
                 catalog_import,
                 scan_findings,
                 scan_installs,
+                #[cfg(desktop)]
+                library_add,
                 installation_review,
                 library_shelves,
                 work_preferences,
+                own_works,
                 local_personalization,
                 package_preparation,
                 maintenance,
@@ -600,6 +654,11 @@ pub fn run() {
             commands::install_library_archive,
             commands::cancel_scan_install,
             commands::select_install_folder,
+            commands::start_library_add,
+            commands::read_library_add,
+            commands::confirm_library_add,
+            commands::cancel_library_add,
+            commands::dismiss_library_add,
             commands::list_library_installations,
             commands::read_library_shelves,
             commands::read_work_preference,
@@ -609,6 +668,12 @@ pub fn run() {
             commands::list_library_installations_for_work,
             commands::read_library_installation,
             commands::save_library_installation_review,
+            commands::list_own_work_details,
+            commands::read_own_work_details,
+            commands::save_own_work_details,
+            commands::list_installation_images,
+            commands::import_own_work_artwork,
+            commands::import_own_work_artwork_file,
             commands::select_installation_destination,
             commands::select_installation_location,
             commands::read_delivery,
@@ -662,6 +727,7 @@ pub fn run() {
             commands::remove_catalog_generation,
             commands::read_window_metrics,
             commands::resize_window,
+            render_recovery::recover_webview_rendering,
             commands::maximize_window,
             support::read_support_status,
             support::acknowledge_unclean_shutdown,

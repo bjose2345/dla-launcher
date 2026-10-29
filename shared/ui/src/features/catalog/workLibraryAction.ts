@@ -32,6 +32,18 @@ export async function readWorkLibraryAction(
   })));
 }
 
+/** What the Library can do for one entry, such as a work outside the catalog. */
+export async function readInstallationLibraryAction(
+  gateway: LibraryGateway,
+  installationId: string,
+): Promise<WorkLibraryAction> {
+  const [installation, prepared] = await Promise.all([
+    gateway.readInstallation(installationId),
+    gateway.readPreparedPackage(installationId),
+  ]);
+  return resolveWorkLibraryAction([{ installation, prepared }]);
+}
+
 export function resolveWorkLibraryAction(
   snapshots: WorkInstallationSnapshot[],
 ): WorkLibraryAction {

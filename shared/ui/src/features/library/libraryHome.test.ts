@@ -3,12 +3,55 @@ import { describe, expect, it } from "vitest";
 import {
   featuredInstallationId,
   libraryContentKind,
+  libraryDisplayCode,
+  libraryDisplayCreator,
+  libraryReleaseDate,
+  resumePlaceLabel,
   launchTotalsByInstallation,
   libraryLensCounts,
   matchesLibraryLens,
   playTimeParts,
 } from "./libraryHome";
-import type { Installation, LibraryShelves } from "./types";
+import type { CatalogWork } from "../catalog";
+import type { Installation, LibraryShelves, OwnWorkDetails } from "./types";
+
+describe("works outside the catalog", () => {
+  const own: OwnWorkDetails = {
+    installationId: "installation-1",
+    circle: "My circle",
+    code: "D_123456",
+    releaseDate: "2023-03-12",
+    kind: "images",
+    tags: [],
+    description: null,
+    cover: null,
+    samples: [],
+    updatedAt: "2026-10-28T00:00:00Z",
+  };
+
+  it("shows the user's circle, code and date, and never a folder", () => {
+    const value = installation();
+    value.detection.catalogIdentity = null;
+    expect(libraryDisplayCreator(undefined, true, own)).toBe("My circle");
+    expect(libraryDisplayCreator(undefined, true)).toBe("");
+    expect(libraryDisplayCode(value, own)).toBe("D_123456");
+    expect(libraryDisplayCode(value)).toBeNull();
+    expect(libraryReleaseDate(undefined, own)).toBe("2023-03-12");
+  });
+
+  it("keeps the catalog's details over the user's once a work is matched", () => {
+    const work = { code: "RJ01000001", circles: [], releaseDate: "2024-01-01" } as unknown as CatalogWork;
+    expect(libraryDisplayCreator(work, true, own)).toBe("");
+    expect(libraryReleaseDate(work, own)).toBe("2024-01-01");
+  });
+
+  it("says where a reading stands without the folders of the file", () => {
+    const t = (key: string, values?: Record<string, string | number>) => `${key}:${JSON.stringify(values ?? {})}`;
+    expect(resumePlaceLabel("read_images", "Set/main/027.jpg", 27, 425, t)).toBe('viewer.imageOf:{"image":27,"total":425}');
+    expect(resumePlaceLabel("open_document", "Book/book.pdf", 7, 26, t)).toBe('reader.pageOf:{"page":7,"total":26}');
+    expect(resumePlaceLabel("play_audio", "Album/disc 1/03 Track.mp3", 0, null, t)).toBe("03 Track");
+  });
+});
 
 describe("library home presentation", () => {
   it("derives the content surface from the reviewed action", () => {

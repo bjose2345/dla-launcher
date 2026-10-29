@@ -39,9 +39,18 @@ export const bindingActions: readonly BindingAction[] = [
   { id: "readerPreviousPage", scope: "reader", labelKey: "settings.action.previousPage", defaults: ["arrowleft"], slots: 2 },
   { id: "readerScrollBack", scope: "reader", labelKey: "settings.action.scrollBack", defaults: ["arrowup", "pageup"], slots: 2 },
   { id: "readerScrollForward", scope: "reader", labelKey: "settings.action.scrollForward", defaults: ["arrowdown", "pagedown", "space"], slots: 3 },
+  { id: "readerFirstPage", scope: "reader", labelKey: "settings.action.firstPage", defaults: ["home"], slots: 2 },
+  { id: "readerLastPage", scope: "reader", labelKey: "settings.action.lastPage", defaults: ["end"], slots: 2 },
+  { id: "readerLayout", scope: "reader", labelKey: "settings.action.readerLayout", defaults: ["m"], slots: 2 },
+  { id: "readerFullscreen", scope: "reader", labelKey: "settings.action.fullscreen", defaults: ["f"], slots: 2 },
   { id: "readerZoomIn", scope: "reader", labelKey: "settings.action.zoomIn", defaults: ["plus", "="], slots: 2 },
   { id: "readerZoomOut", scope: "reader", labelKey: "settings.action.zoomOut", defaults: ["-"], slots: 2 },
   { id: "readerResetZoom", scope: "reader", labelKey: "settings.action.resetZoom", defaults: ["0"], slots: 2 },
+  { id: "readerGallery", scope: "reader", labelKey: "settings.action.gallery", defaults: ["g"], slots: 2 },
+  { id: "readerSlideshow", scope: "reader", labelKey: "settings.action.slideshow", defaults: ["s"], slots: 2 },
+  { id: "readerActualSize", scope: "reader", labelKey: "settings.action.actualSize", defaults: ["z"], slots: 2 },
+  { id: "readerPreviousFolder", scope: "reader", labelKey: "settings.action.previousFolder", defaults: ["["], slots: 2 },
+  { id: "readerNextFolder", scope: "reader", labelKey: "settings.action.nextFolder", defaults: ["]"], slots: 2 },
   { id: "readerClose", scope: "reader", labelKey: "settings.action.close", defaults: ["escape"], slots: 1, fixed: true },
 ];
 

@@ -15,6 +15,9 @@ const LIBRARY_MIGRATION_LIST: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/library/0020_add_scan_purpose_and_ignored_findings.sql"
     )),
+    M::up(include_str!(
+        "../migrations/library/0021_add_own_work_details.sql"
+    )),
 ];
 const LIBRARY_MIGRATIONS: Migrations<'static> = Migrations::from_slice(LIBRARY_MIGRATION_LIST);
 

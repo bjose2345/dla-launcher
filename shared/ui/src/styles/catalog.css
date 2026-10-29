@@ -1675,10 +1675,12 @@
   background: #14151a;
 }
 
+/* A few sweeps only: a lazy cover that is never scrolled into view stays
+   "loading", and an endless shimmer would keep the page repainting. */
 .work-card-image.loading {
   background: linear-gradient(105deg, #181a20 20%, #282b34 40%, #181a20 60%);
   background-size: 220% 100%;
-  animation: cover-loading 1.4s linear infinite;
+  animation: cover-loading 1.4s linear 3;
 }
 
 .work-card-image img {

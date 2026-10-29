@@ -8,7 +8,7 @@ import type { CatalogDetailGateway } from "../catalog";
 import type { AndroidAppGateway, AndroidAppView } from "../../android-package";
 import { PresentationProvider } from "../../preferences/PresentationProvider";
 import { KeyBindingsProvider } from "../../preferences/KeyBindingsProvider";
-import { ImageReaderProvider } from "./ImageReaderProvider";
+import { ReaderProvider } from "./ReaderProvider";
 import { LibraryPage } from "./LibraryPage";
 import { MediaPlaybackProvider } from "./MediaPlaybackProvider";
 import type {
@@ -70,7 +70,7 @@ describe("LibraryPage data loading", () => {
         <PresentationProvider>
           <KeyBindingsProvider>
             <MediaPlaybackProvider gateway={gateway}>
-              <ImageReaderProvider gateway={gateway}>
+              <ReaderProvider gateway={gateway}>
                 <LibraryPage
                   gateway={gateway}
                   catalogGateway={catalogGateway}
@@ -78,7 +78,7 @@ describe("LibraryPage data loading", () => {
                   onOpenMedia={vi.fn()}
                   onOpenWork={vi.fn()}
                 />
-              </ImageReaderProvider>
+              </ReaderProvider>
             </MediaPlaybackProvider>
           </KeyBindingsProvider>
         </PresentationProvider>
@@ -132,7 +132,7 @@ describe("LibraryPage data loading", () => {
         <PresentationProvider>
           <KeyBindingsProvider>
             <MediaPlaybackProvider gateway={gateway}>
-              <ImageReaderProvider gateway={gateway}>
+              <ReaderProvider gateway={gateway}>
                 <LibraryPage
                   gateway={gateway}
                   androidAppGateway={androidGateway}
@@ -142,7 +142,7 @@ describe("LibraryPage data loading", () => {
                   onOpenWork={vi.fn()}
                   onReinstallAndroidApp={vi.fn()}
                 />
-              </ImageReaderProvider>
+              </ReaderProvider>
             </MediaPlaybackProvider>
           </KeyBindingsProvider>
         </PresentationProvider>
@@ -158,17 +158,31 @@ describe("LibraryPage data loading", () => {
 });
 
 describe("Library executable actions", () => {
-  it("launches a prepared executable from Recent instead of opening its review", async () => {
+  it("launches a prepared executable from Recent with its arrow instead of opening its review", async () => {
     const onManage = vi.fn();
     const { gateway } = renderExecutableLibrary({ onManage });
 
     const recent = (await screen.findByRole("heading", { name: "Recent" })).closest("section");
     expect(recent).toBeTruthy();
-    const card = within(recent!).getByRole("button", { name: /^(?!More for )[\s\S]*RJ00000003/ });
+    await screen.findByRole("button", { name: "Play" });
+    fireEvent.click(within(recent!).getByRole("button", { name: /^Play: / }));
+
+    await waitFor(() => expect(gateway.launchInstallation).toHaveBeenCalledWith("installation-app"));
+    expect(onManage).not.toHaveBeenCalled();
+  });
+
+  it("selects a shelf card into the featured spot without launching it", async () => {
+    const onManage = vi.fn();
+    const { gateway } = renderExecutableLibrary({ onManage });
+
+    const recent = (await screen.findByRole("heading", { name: "Recent" })).closest("section");
+    expect(recent).toBeTruthy();
+    const card = within(recent!).getByRole("button", { name: /^(?!More for |Play: )[\s\S]*RJ00000003/ });
     await screen.findByRole("button", { name: "Play" });
     fireEvent.click(card);
 
-    await waitFor(() => expect(gateway.launchInstallation).toHaveBeenCalledWith("installation-app"));
+    await waitFor(() => expect(card.getAttribute("aria-current")).toBe("true"));
+    expect(gateway.launchInstallation).not.toHaveBeenCalled();
     expect(onManage).not.toHaveBeenCalled();
   });
 
@@ -195,16 +209,16 @@ describe("Library executable actions", () => {
     expect(onManage).toHaveBeenCalledWith("installation-app", "files");
   });
 
-  it("launches a prepared executable from Never launched instead of opening its review", async () => {
+  it("launches a prepared executable from Never launched with its arrow instead of opening its review", async () => {
     const onManage = vi.fn();
     const { gateway } = renderExecutableLibrary({ onManage, shelf: "never" });
 
     const neverLaunched = (await screen.findByRole("heading", { name: "Never launched" }))
       .closest("section");
     expect(neverLaunched).toBeTruthy();
-    const card = within(neverLaunched!).getByRole("button", { name: /^(?!More for )[\s\S]*RJ00000003/ });
+    const card = within(neverLaunched!).getByRole("button", { name: /^(?!More for |Play: )[\s\S]*RJ00000003/ });
     await within(card).findByText("Play");
-    fireEvent.click(card);
+    fireEvent.click(within(neverLaunched!).getByRole("button", { name: /^Play: / }));
 
     await waitFor(() => expect(gateway.launchInstallation).toHaveBeenCalledWith("installation-app"));
     expect(onManage).not.toHaveBeenCalled();
@@ -219,15 +233,15 @@ describe("Library executable actions", () => {
 
     const recent = (await screen.findByRole("heading", { name: "Recent" })).closest("section");
     expect(recent).toBeTruthy();
-    const card = within(recent!).getByRole("button", { name: /^(?!More for )[\s\S]*RJ00000003/ });
+    const arrow = within(recent!).getByRole("button", { name: /^Play: / });
     await screen.findByRole("button", { name: "Play" });
-    fireEvent.click(card);
+    fireEvent.click(arrow);
     await waitFor(() => expect(gateway.launchInstallation).toHaveBeenCalledTimes(1));
-    fireEvent.click(card);
+    fireEvent.click(arrow);
 
     expect(gateway.launchInstallation).toHaveBeenCalledTimes(1);
     resolveLaunch?.(executableActivity("running"));
-    await waitFor(() => expect(card.getAttribute("disabled")).not.toBeNull());
+    await waitFor(() => expect(arrow.getAttribute("disabled")).not.toBeNull());
   });
 
   it("preserves the media action recorded by a Recent shelf item", async () => {
@@ -239,7 +253,7 @@ describe("Library executable actions", () => {
 
     const recent = (await screen.findByRole("heading", { name: "Recent" })).closest("section");
     expect(recent).toBeTruthy();
-    fireEvent.click(within(recent!).getByRole("button", { name: /^(?!More for )[\s\S]*RJ00000003/ }));
+    fireEvent.click(within(recent!).getByRole("button", { name: /^Watch: / }));
 
     await waitFor(() => expect(onOpenMedia).toHaveBeenCalledWith("installation-app"));
     expect(gateway.launchInstallation).not.toHaveBeenCalled();
@@ -386,7 +400,7 @@ function renderLibrary(personalization: Record<string, unknown>) {
       <PresentationProvider>
         <KeyBindingsProvider>
           <MediaPlaybackProvider gateway={gateway}>
-            <ImageReaderProvider gateway={gateway}>
+            <ReaderProvider gateway={gateway}>
               <LibraryPage
                 gateway={gateway}
                 catalogGateway={catalogGateway}
@@ -394,7 +408,7 @@ function renderLibrary(personalization: Record<string, unknown>) {
                 onOpenMedia={vi.fn()}
                 onOpenWork={vi.fn()}
               />
-            </ImageReaderProvider>
+            </ReaderProvider>
           </MediaPlaybackProvider>
         </KeyBindingsProvider>
       </PresentationProvider>
@@ -558,7 +572,7 @@ function renderExecutableLibrary({
       <PresentationProvider>
         <KeyBindingsProvider>
           <MediaPlaybackProvider gateway={gateway}>
-            <ImageReaderProvider gateway={gateway}>
+            <ReaderProvider gateway={gateway}>
               <LibraryPage
                 gateway={gateway}
                 catalogGateway={catalogGateway}
@@ -566,7 +580,7 @@ function renderExecutableLibrary({
                 onOpenMedia={onOpenMedia}
                 onOpenWork={vi.fn()}
               />
-            </ImageReaderProvider>
+            </ReaderProvider>
           </MediaPlaybackProvider>
         </KeyBindingsProvider>
       </PresentationProvider>

@@ -13,6 +13,7 @@ import type {
   InstallationHealthReport,
   InstallationReviewRequest,
   LibraryGateway,
+  OwnWorkDetails,
 } from "./types";
 
 afterEach(() => {
@@ -47,6 +48,31 @@ describe("LibraryManageDrawer", () => {
 
     await waitFor(() => expect(gateway.saveReview).toHaveBeenCalledOnce());
     expect(savedRequest(gateway).catalogIdentity).toEqual({ kind: "catalog_work", workCode: "RJ01000004" });
+  });
+
+  it("shows a work outside the catalog with the user's own details", async () => {
+    const installation = gameInstallation();
+    installation.detection.catalogIdentity = null;
+    installation.overrides.catalogIdentity = { kind: "unidentified" };
+    const own: OwnWorkDetails = {
+      installationId: installation.id,
+      circle: "My circle",
+      code: "D_123456",
+      releaseDate: null,
+      kind: "game",
+      tags: [],
+      description: null,
+      cover: "cover-1",
+      samples: [],
+      updatedAt: "2026-10-28T00:00:00Z",
+    };
+    renderDrawer(libraryGateway({ installation, own }));
+
+    const dialog = await screen.findByRole("dialog", { name: "KUNOICHI RED" });
+    expect(await within(dialog).findByText("My circle · D_123456")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Metadata" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Game" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("img", { name: "Cover" }).getAttribute("src")).toBe("art:installation-1:cover-1");
   });
 
   it("shows an unknown work with question marks and a way to find it", async () => {
@@ -212,10 +238,13 @@ function scanInstalls(): ScanInstallGateway {
 function libraryGateway(overrides: {
   installation?: Installation;
   health?: InstallationHealthReport;
+  own?: OwnWorkDetails;
 } = {}): LibraryGateway {
   const installation = overrides.installation ?? gameInstallation();
   return {
     readInstallation: vi.fn().mockResolvedValue(installation),
+    readOwnWorkDetails: vi.fn().mockResolvedValue(overrides.own ?? null),
+    ownWorkArtworkUrl: vi.fn((installationId: string, artworkId: string) => `art:${installationId}:${artworkId}`),
     readInstallationHealth: vi.fn().mockResolvedValue(overrides.health ?? healthReport()),
     readPreparedPackage: vi.fn().mockResolvedValue(null),
     readPackagePreparationProgress: vi.fn().mockResolvedValue(null),

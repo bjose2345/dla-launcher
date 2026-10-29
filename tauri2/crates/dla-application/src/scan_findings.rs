@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use dla_detection::discover_package_source_set;
+use dla_detection::{MultipartVolumeName, discover_package_source_set};
 use dla_domain::{
     installation::{Installation, InstallationId, ManualCatalogIdentity},
     scanner::{
@@ -63,6 +63,23 @@ pub struct ScanFindingCandidate {
     pub confidence: ScanMatchConfidence,
 }
 
+/// What is wrong with an archive set the scanner could not take as a whole.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IncompleteArchiveSet {
+    /// Part numbers no file in the folder holds.
+    pub missing_parts: Vec<u32>,
+    /// Files that hold a part under a name 7-Zip cannot follow.
+    pub renames: Vec<VolumeRename>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VolumeRename {
+    pub from: String,
+    pub to: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanFindingInLibrary {
@@ -88,12 +105,23 @@ pub struct ScanFinding {
     pub file_count: u64,
     pub size_bytes: u64,
     pub volume_count: usize,
+    /// Set when the state is incomplete because of the set's volumes.
+    pub incomplete_set: Option<IncompleteArchiveSet>,
     pub in_library: Option<ScanFindingInLibrary>,
     pub ignored: bool,
     #[serde(skip)]
     result_id: ScanResultId,
     #[serde(skip)]
     identity_detected: bool,
+    #[serde(skip)]
+    files: Vec<String>,
+}
+
+impl ScanFinding {
+    /// The paths below the scan root of the files this finding holds.
+    pub fn files(&self) -> &[String] {
+        &self.files
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -376,6 +404,15 @@ impl ScanFindingService {
     }
 }
 
+/// The catalog identity adding a finding would save, or why it cannot be
+/// added, checked before anything is moved for it.
+pub fn identity_for_add(
+    finding: &ScanFinding,
+    item: &AddScanFinding,
+) -> Result<Option<ManualCatalogIdentity>, ScanFindingRefusal> {
+    chosen_identity(finding, item)
+}
+
 fn root_name(root_path: &str) -> String {
     root_path
         .rsplit(['/', '\\'])
@@ -424,7 +461,7 @@ struct Group<'a> {
     key: String,
     relative_path: String,
     kind: ScanFindingKind,
-    incomplete: bool,
+    incomplete: Option<IncompleteArchiveSet>,
     volume_count: usize,
     primary: Option<ScanEntryId>,
     files: Vec<&'a ScanEntry>,
@@ -470,7 +507,7 @@ fn scan_findings(
                 key: String::new(),
                 relative_path: String::new(),
                 kind: ScanFindingKind::Folder,
-                incomplete: false,
+                incomplete: None,
                 volume_count: 0,
                 primary: None,
                 files: groups.into_iter().flat_map(|group| group.files).collect(),
@@ -524,7 +561,7 @@ fn scan_findings(
             let work_code = (matched.len() == 1)
                 .then(|| matched.keys().next().cloned())
                 .flatten();
-            let state = if group.incomplete {
+            let state = if group.incomplete.is_some() {
                 ScanFindingState::Incomplete
             } else if matched.len() > 1 {
                 ScanFindingState::Mixed
@@ -609,9 +646,15 @@ fn scan_findings(
                     .filter_map(|entry| entry.size.as_deref()?.parse::<u64>().ok())
                     .sum(),
                 volume_count: group.volume_count,
+                incomplete_set: group.incomplete,
                 in_library,
                 result_id: representative.id.clone(),
                 identity_detected,
+                files: group
+                    .files
+                    .iter()
+                    .map(|entry| entry.relative_path.clone())
+                    .collect(),
             })
         })
         .collect::<Vec<_>>();
@@ -639,47 +682,62 @@ fn group_files(entries: &[ScanEntry]) -> Vec<Group<'_>> {
     let mut index_by_key = HashMap::new();
     let mut assigned = BTreeSet::<&ScanEntryId>::new();
 
-    for entry in files
+    // Named volumes go first, so a set claims a misnamed volume before that
+    // file is read as an archive of its own.
+    let mut volumes = files
         .iter()
         .copied()
         .filter(|entry| may_be_package_volume(entry))
-    {
+        .collect::<Vec<_>>();
+    volumes.sort_by_key(|entry| MultipartVolumeName::parse(&entry.relative_path).is_none());
+    for entry in volumes {
         if assigned.contains(&entry.id) {
             continue;
         }
-        match discover_package_source_set(&entry.id, entries) {
-            Ok(Some(source_set)) => {
-                let Some(primary) = source_set
+        let discovered = discover_package_source_set(&entry.id, entries);
+        let name = MultipartVolumeName::parse(&entry.relative_path);
+        let (set_files, incomplete) = match (discovered, name) {
+            (Ok(Some(source_set)), name) => {
+                let set_files = source_set
                     .volumes
-                    .first()
-                    .and_then(|volume| by_id.get(&volume.scan_entry_id).copied())
-                else {
-                    continue;
-                };
-                let index = place(
-                    &mut groups,
-                    &mut index_by_key,
-                    package_scope_key(&primary.id),
-                    |key| Group {
-                        key,
-                        relative_path: primary.relative_path.clone(),
-                        kind: ScanFindingKind::Archive,
-                        incomplete: false,
-                        volume_count: source_set.volumes.len(),
-                        primary: Some(primary.id.clone()),
-                        files: Vec::new(),
-                    },
-                );
-                for volume in &source_set.volumes {
-                    if let Some(volume_entry) = by_id.get(&volume.scan_entry_id).copied()
-                        && assigned.insert(&volume_entry.id)
-                    {
-                        groups[index].files.push(volume_entry);
+                    .iter()
+                    .filter_map(|volume| by_id.get(&volume.scan_entry_id).copied())
+                    .collect::<Vec<_>>();
+                match name {
+                    Some(name) => {
+                        let (misnamed, problem) =
+                            volume_problems(&name, &set_files, &files, &assigned);
+                        if misnamed.is_empty() && problem.missing_parts.is_empty() {
+                            (set_files, None)
+                        } else {
+                            ([set_files, misnamed].concat(), Some(problem))
+                        }
                     }
+                    None => (set_files, None),
                 }
             }
-            Ok(None) => {}
-            Err(_) => {
+            (Ok(None), _) => continue,
+            (Err(_), Some(name)) => {
+                let mut set_files = files
+                    .iter()
+                    .copied()
+                    .filter(|file| !assigned.contains(&file.id))
+                    .filter_map(|file| {
+                        let part = MultipartVolumeName::parse(&file.relative_path)
+                            .filter(|other| other.same_set(&name))?
+                            .part;
+                        Some((part, file))
+                    })
+                    .collect::<Vec<_>>();
+                set_files.sort_by_key(|(part, _)| *part);
+                let set_files = set_files
+                    .into_iter()
+                    .map(|(_, file)| file)
+                    .collect::<Vec<_>>();
+                let (misnamed, problem) = volume_problems(&name, &set_files, &files, &assigned);
+                ([set_files, misnamed].concat(), Some(problem))
+            }
+            (Err(_), None) => {
                 let index = place(
                     &mut groups,
                     &mut index_by_key,
@@ -688,7 +746,7 @@ fn group_files(entries: &[ScanEntry]) -> Vec<Group<'_>> {
                         key,
                         relative_path: entry.relative_path.clone(),
                         kind: ScanFindingKind::Archive,
-                        incomplete: true,
+                        incomplete: Some(IncompleteArchiveSet::default()),
                         volume_count: 1,
                         primary: Some(entry.id.clone()),
                         files: Vec::new(),
@@ -696,6 +754,29 @@ fn group_files(entries: &[ScanEntry]) -> Vec<Group<'_>> {
                 );
                 assigned.insert(&entry.id);
                 groups[index].files.push(entry);
+                continue;
+            }
+        };
+        let Some(primary) = set_files.first().copied() else {
+            continue;
+        };
+        let index = place(
+            &mut groups,
+            &mut index_by_key,
+            package_scope_key(&primary.id),
+            |key| Group {
+                key,
+                relative_path: primary.relative_path.clone(),
+                kind: ScanFindingKind::Archive,
+                incomplete,
+                volume_count: set_files.len(),
+                primary: Some(primary.id.clone()),
+                files: Vec::new(),
+            },
+        );
+        for file in set_files {
+            if assigned.insert(&file.id) {
+                groups[index].files.push(file);
             }
         }
     }
@@ -717,7 +798,7 @@ fn group_files(entries: &[ScanEntry]) -> Vec<Group<'_>> {
                         .map_or(directory, |(name, _)| name)
                         .to_owned(),
                     kind: ScanFindingKind::Folder,
-                    incomplete: false,
+                    incomplete: None,
                     volume_count: 0,
                     primary: None,
                     files: Vec::new(),
@@ -731,7 +812,7 @@ fn group_files(entries: &[ScanEntry]) -> Vec<Group<'_>> {
                     key,
                     relative_path: entry.relative_path.clone(),
                     kind: ScanFindingKind::File,
-                    incomplete: false,
+                    incomplete: None,
                     volume_count: 0,
                     primary: None,
                     files: Vec::new(),
@@ -741,6 +822,61 @@ fn group_files(entries: &[ScanEntry]) -> Vec<Group<'_>> {
         groups[index].files.push(entry);
     }
     groups
+}
+
+/// The parts a multipart set lacks, and the files beside it that hold one of
+/// those parts under a name 7-Zip cannot follow.
+fn volume_problems<'a>(
+    name: &MultipartVolumeName,
+    set_files: &[&'a ScanEntry],
+    files: &[&'a ScanEntry],
+    assigned: &BTreeSet<&ScanEntryId>,
+) -> (Vec<&'a ScanEntry>, IncompleteArchiveSet) {
+    let present = set_files
+        .iter()
+        .filter_map(|file| MultipartVolumeName::parse(&file.relative_path))
+        .map(|volume| volume.part)
+        .collect::<BTreeSet<_>>();
+    let mut misnamed = Vec::new();
+    let mut renamed = BTreeSet::new();
+    let mut renames = Vec::new();
+    for file in files {
+        if assigned.contains(&file.id) {
+            continue;
+        }
+        let Some(part) = name.misnamed_part(&file.relative_path) else {
+            continue;
+        };
+        if present.contains(&part) || !renamed.insert(part) {
+            continue;
+        }
+        let from = file
+            .relative_path
+            .rsplit('/')
+            .next()
+            .unwrap_or(&file.relative_path);
+        let extension = from
+            .rsplit_once('.')
+            .map_or("rar".to_owned(), |(_, extension)| {
+                extension.to_ascii_lowercase()
+            });
+        renames.push(VolumeRename {
+            from: from.to_owned(),
+            to: name.volume_file_name(part, &extension),
+        });
+        misnamed.push(*file);
+    }
+    let last = present.iter().chain(&renamed).max().copied().unwrap_or(0);
+    let missing_parts = (1..=last)
+        .filter(|part| !present.contains(part) && !renamed.contains(part))
+        .collect();
+    (
+        misnamed,
+        IncompleteArchiveSet {
+            missing_parts,
+            renames,
+        },
+    )
 }
 
 fn place<'a>(
@@ -806,6 +942,44 @@ fn raise(
     let current = best.entry(code).or_insert(confidence);
     if confidence > *current {
         *current = confidence;
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests_support {
+    use super::*;
+
+    pub(crate) fn finding(
+        key: &str,
+        relative_path: &str,
+        kind: ScanFindingKind,
+        work_code: Option<&str>,
+    ) -> ScanFinding {
+        ScanFinding {
+            key: key.to_owned(),
+            relative_path: relative_path.to_owned(),
+            kind,
+            state: if work_code.is_some() {
+                ScanFindingState::Ready
+            } else {
+                ScanFindingState::Unknown
+            },
+            work_code: work_code.map(str::to_owned),
+            candidates: Vec::new(),
+            file_count: 1,
+            size_bytes: 1,
+            volume_count: 0,
+            incomplete_set: None,
+            in_library: None,
+            ignored: false,
+            result_id: ScanResultId("result-1".to_owned()),
+            identity_detected: work_code.is_some(),
+            files: vec![relative_path.to_owned()],
+        }
+    }
+
+    pub(crate) fn set_files(finding: &mut ScanFinding, files: &[&str]) {
+        finding.files = files.iter().map(|file| (*file).to_owned()).collect();
     }
 }
 
@@ -1225,6 +1399,104 @@ mod tests {
 
     fn session() -> ScanSessionId {
         ScanSessionId(SESSION.to_owned())
+    }
+
+    #[test]
+    fn a_self_extracting_set_is_one_work() {
+        let list = fixture(snapshot(&[
+            matched("RJ01000001.zip", "RJ01000001", ScanMatchConfidence::Exact),
+            matched(
+                "RJ01000009.part3.rar",
+                "RJ01000009",
+                ScanMatchConfidence::Exact,
+            ),
+            matched(
+                "RJ01000009.part1.exe",
+                "RJ01000009",
+                ScanMatchConfidence::Exact,
+            ),
+            matched(
+                "RJ01000009.part2.rar",
+                "RJ01000009",
+                ScanMatchConfidence::Exact,
+            ),
+        ]))
+        .service
+        .list(&session())
+        .expect("findings");
+
+        assert_eq!(list.findings.len(), 2);
+        let set = finding(&list, "RJ01000009.part1.exe");
+        assert_eq!(set.state, ScanFindingState::Ready);
+        assert_eq!(set.volume_count, 3);
+        assert_eq!(set.incomplete_set, None);
+    }
+
+    #[test]
+    fn a_misnamed_volume_joins_its_set_with_the_name_it_needs() {
+        let list = fixture(snapshot(&[
+            matched(
+                "RJ01000009part2.rar",
+                "RJ01000009",
+                ScanMatchConfidence::Exact,
+            ),
+            matched("RJ01000001.zip", "RJ01000001", ScanMatchConfidence::Exact),
+            matched(
+                "RJ01000009.part1.exe",
+                "RJ01000009",
+                ScanMatchConfidence::Exact,
+            ),
+        ]))
+        .service
+        .list(&session())
+        .expect("findings");
+
+        assert_eq!(list.findings.len(), 2);
+        let set = finding(&list, "RJ01000009.part1.exe");
+        assert_eq!(set.state, ScanFindingState::Incomplete);
+        assert_eq!(set.volume_count, 2);
+        assert_eq!(
+            set.incomplete_set,
+            Some(IncompleteArchiveSet {
+                missing_parts: Vec::new(),
+                renames: vec![VolumeRename {
+                    from: "RJ01000009part2.rar".to_owned(),
+                    to: "RJ01000009.part2.rar".to_owned(),
+                }],
+            })
+        );
+    }
+
+    #[test]
+    fn a_set_with_a_gap_is_one_incomplete_work_naming_the_missing_part() {
+        let list = fixture(snapshot(&[
+            matched("RJ01000001.zip", "RJ01000001", ScanMatchConfidence::Exact),
+            matched(
+                "RJ01000009.part1.exe",
+                "RJ01000009",
+                ScanMatchConfidence::Exact,
+            ),
+            matched(
+                "RJ01000009.part3.rar",
+                "RJ01000009",
+                ScanMatchConfidence::Exact,
+            ),
+        ]))
+        .service
+        .list(&session())
+        .expect("findings");
+
+        assert_eq!(list.findings.len(), 2);
+        let set = finding(&list, "RJ01000009.part1.exe");
+        assert_eq!(set.state, ScanFindingState::Incomplete);
+        assert_eq!(set.volume_count, 2);
+        assert_eq!(
+            set.incomplete_set,
+            Some(IncompleteArchiveSet {
+                missing_parts: vec![2],
+                renames: Vec::new(),
+            })
+        );
     }
 
     #[test]

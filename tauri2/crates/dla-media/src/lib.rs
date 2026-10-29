@@ -5,13 +5,17 @@ use dla_detection::classify_media_type;
 use dla_domain::installation::{MediaType, RelativePath};
 use walkdir::WalkDir;
 
+mod artwork;
+mod thumbnail;
 mod waveform;
 
 pub mod subtitles;
 
+pub use artwork::{ARTWORK_EDGE, OwnWorkArtworkFiles};
 pub use subtitles::{
     SidecarSubtitle, SubtitleFormat, find_sidecar_subtitles, subtitle_to_web_vtt, to_web_vtt,
 };
+pub use thumbnail::{THUMBNAIL_CACHE_LIMIT, THUMBNAIL_EDGE, ThumbnailCache, ThumbnailError};
 pub use waveform::DesktopAudioWaveformReader;
 
 pub struct DesktopMediaInventory;

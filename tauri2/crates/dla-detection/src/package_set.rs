@@ -187,6 +187,70 @@ fn multipart_name(path: &str) -> Option<MultipartName> {
     })
 }
 
+/// A `name.partN.rar` or `name.partN.exe` volume name, with the base as written.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MultipartVolumeName {
+    pub parent: String,
+    pub base: String,
+    pub part: u32,
+    /// How many digits the part number is written with, such as 2 for `part01`.
+    pub digits: usize,
+}
+
+impl MultipartVolumeName {
+    pub fn parse(path: &str) -> Option<Self> {
+        let name = multipart_name(path)?;
+        let (_, file_name) = parent_and_name(path);
+        Some(Self {
+            parent: name.parent,
+            base: file_name[..name.base.len()].to_owned(),
+            part: name.part,
+            digits: file_name.len() - name.base.len() - ".part".len() - name.extension.len() - 1,
+        })
+    }
+
+    pub fn same_set(&self, other: &Self) -> bool {
+        self.parent == other.parent && self.base.eq_ignore_ascii_case(&other.base)
+    }
+
+    /// The name a volume of this set needs, so 7-Zip can follow the set.
+    pub fn volume_file_name(&self, part: u32, extension: &str) -> String {
+        format!(
+            "{}.part{part:0width$}.{extension}",
+            self.base,
+            width = self.digits
+        )
+    }
+
+    /// The part number of a file beside the set whose name only differs from
+    /// a volume name in punctuation, such as `RJ01234567part2.rar` for
+    /// `RJ01234567.part2.rar`. 7-Zip cannot find such a file.
+    pub fn misnamed_part(&self, path: &str) -> Option<u32> {
+        let (parent, file_name) = parent_and_name(path);
+        if parent != self.parent || multipart_name(path).is_some() {
+            return None;
+        }
+        let (stem, extension) = file_name.rsplit_once('.')?;
+        if !matches!(extension.to_ascii_lowercase().as_str(), "rar" | "exe") {
+            return None;
+        }
+        let squashed = squash(stem);
+        let rest = squashed.strip_prefix(&squash(&self.base))?;
+        let digits = rest.strip_prefix("part")?;
+        if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        digits.parse().ok()
+    }
+}
+
+fn squash(text: &str) -> String {
+    text.chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
 fn artifact(entry: &ScanEntry) -> Result<SourceArtifact, PackageSourceSetError> {
     Ok(SourceArtifact {
         scan_entry_id: entry.id.clone(),
@@ -220,6 +284,35 @@ mod tests {
     use dla_domain::scanner::{ScanEntryPresence, ScanRootId, ScanSessionId};
 
     use super::*;
+
+    #[test]
+    fn reads_a_volume_name_with_its_base_as_written() {
+        let name = MultipartVolumeName::parse("Works/RJ01234567 Game.Part01.rar").expect("volume");
+
+        assert_eq!(name.parent, "Works");
+        assert_eq!(name.base, "RJ01234567 Game");
+        assert_eq!(name.part, 1);
+        assert_eq!(name.digits, 2);
+        assert_eq!(
+            name.volume_file_name(3, "rar"),
+            "RJ01234567 Game.part03.rar"
+        );
+        assert_eq!(MultipartVolumeName::parse("RJ01234567.zip"), None);
+    }
+
+    #[test]
+    fn finds_a_volume_whose_name_lost_its_punctuation() {
+        let name = MultipartVolumeName::parse("RJ321730.part1.exe").expect("volume");
+
+        assert_eq!(name.misnamed_part("RJ321730part2.rar"), Some(2));
+        assert_eq!(name.misnamed_part("rj321730 part 3.RAR"), Some(3));
+        assert_eq!(name.misnamed_part("RJ321730_part02.rar"), Some(2));
+        assert_eq!(name.misnamed_part("RJ321730.part2.rar"), None);
+        assert_eq!(name.misnamed_part("other/RJ321730part2.rar"), None);
+        assert_eq!(name.misnamed_part("RJ321731part2.rar"), None);
+        assert_eq!(name.misnamed_part("RJ321730part2.zip"), None);
+        assert_eq!(name.misnamed_part("RJ321730 bonus.rar"), None);
+    }
 
     #[test]
     fn discovers_zero_padded_rar_parts_as_one_ordered_set() {

@@ -84,8 +84,6 @@ const request: Omit<OpenNativeVideoRequest, "viewport"> = {
     back: "Back",
     player: "Video player",
     play: "Play",
-    markFinished: "Mark finished",
-    completed: "Completed",
     playlist: "Playlist",
     openPlaylist: "Open playlist",
     closePlaylist: "Close playlist",

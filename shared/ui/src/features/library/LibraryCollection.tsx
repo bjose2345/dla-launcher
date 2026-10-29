@@ -11,8 +11,10 @@ import {
   libraryContentKind,
   libraryContentKindLabel,
   libraryDisplayCreator,
+  libraryDisplayCode,
   libraryDisplayTitle,
 } from "./libraryHome";
+import { useOwnWork } from "./ownWorkDetails";
 import { LibraryWorkMenu } from "./LibraryWorkMenu";
 import { mediaActionMessageKey } from "./mediaSession";
 import {
@@ -44,6 +46,8 @@ export interface LibraryCollectionEntry {
 export function LibraryCollection({
   entries,
   activatingInstallationId,
+  selectedId,
+  onSelect,
   onActivate,
   onManage,
   onOpenWork,
@@ -51,6 +55,9 @@ export function LibraryCollection({
 }: {
   entries: LibraryCollectionEntry[];
   activatingInstallationId: string | null;
+  /** The work shown in the featured spot, marked on its card. */
+  selectedId: string | null;
+  onSelect: (installationId: string) => void;
   onActivate: (entry: LibraryCollectionEntry) => void;
   onManage: (installationId: string, tab: ManageTab) => void | Promise<void>;
   onOpenWork: (code: string) => void | Promise<void>;
@@ -128,6 +135,8 @@ export function LibraryCollection({
                   <LibraryCollectionCard
                     entry={entry}
                     busy={activatingInstallationId === entry.installation.id}
+                    selected={selectedId === entry.installation.id}
+                    onSelect={onSelect}
                     onActivate={onActivate}
                     onManage={onManage}
                     onOpenWork={onOpenWork}
@@ -158,6 +167,8 @@ export function libraryGridColumnCount(width: number): number {
 const LibraryCollectionCard = memo(function LibraryCollectionCard({
   entry,
   busy,
+  selected,
+  onSelect: selectInstallation,
   onActivate: activateEntry,
   onManage: manageInstallation,
   onOpenWork: openWorkCode,
@@ -165,6 +176,8 @@ const LibraryCollectionCard = memo(function LibraryCollectionCard({
 }: {
   entry: LibraryCollectionEntry;
   busy: boolean;
+  selected: boolean;
+  onSelect: (installationId: string) => void;
   onActivate: (entry: LibraryCollectionEntry) => void;
   onManage: (installationId: string, tab: ManageTab) => void | Promise<void>;
   onOpenWork: (code: string) => void | Promise<void>;
@@ -175,10 +188,15 @@ const LibraryCollectionCard = memo(function LibraryCollectionCard({
   const { action, installation, work, resume } = entry;
   const onActivate = () => activateEntry(entry);
   const onManage = (tab: ManageTab) => void manageInstallation(installation.id, tab);
-  const onOpenWork = work ? () => void openWorkCode(work.code) : undefined;
+  const own = useOwnWork();
+  const onOpenWork = work
+    ? () => void openWorkCode(work.code)
+    : own.openPage ? () => own.openPage!(installation.id) : undefined;
   const onBrowse = browseInstallation ? () => browseInstallation(installation.id) : undefined;
+  const details = own.details(installation.id);
   const title = libraryDisplayTitle(installation, work, preferEnglish);
-  const creator = libraryDisplayCreator(installation, work, preferEnglish);
+  const creator = libraryDisplayCreator(work, preferEnglish, details);
+  const code = libraryDisplayCode(installation, details);
   const kind = libraryContentKind(installation, action);
   const progress = resumePercent(resume);
   const running = entry.latestLaunch !== null
@@ -188,26 +206,35 @@ const LibraryCollectionCard = memo(function LibraryCollectionCard({
     : action === "launch_executable"
       ? t("detail.play")
       : t("library.setUp");
-  const openPrimary = onOpenWork ?? onActivate;
 
   return (
     <article className="library-collection-card" data-library-kind={kind}>
-      <button className="library-collection-cover cover-hover-trigger" type="button" onClick={openPrimary}>
-        <LibraryArtwork kind={kind} title={title} work={work} />
-        <span className="library-collection-shade" aria-hidden="true" />
-        <span className="library-collection-kind">{libraryContentKindLabel(kind, t)}</span>
-        <CollectionStateChip entry={entry} />
-        <span className="library-collection-play" aria-hidden="true"><Play fill="currentColor" /></span>
-        <NowPlayingBars installationId={installation.id} alwaysVisible={kind === "audio"} />
-        {progress !== null ? (
-          <span className="library-collection-progress" aria-label={t("library.shelf.progress", { percent: progress })}>
-            <i style={{ width: `${progress}%` }} />
-          </span>
-        ) : null}
-      </button>
+      {/* The glow sits outside the notched cover, which would clip it. */}
+      <div className="library-collection-frame">
+        <button
+          className="library-collection-cover"
+          type="button"
+          aria-current={selected || undefined}
+          onClick={() => selectInstallation(installation.id)}
+        >
+          <LibraryArtwork kind={kind} title={title} work={work} cover={own.coverUrl(installation.id)} />
+          <span className="library-collection-shade" aria-hidden="true" />
+          <span className="library-collection-kind">{libraryContentKindLabel(kind, t)}</span>
+          <CollectionStateChip entry={entry} />
+          <NowPlayingBars installationId={installation.id} alwaysVisible={kind === "audio"} />
+          {progress !== null ? (
+            <span className="library-collection-progress" aria-label={t("library.shelf.progress", { percent: progress })}>
+              <i style={{ width: `${progress}%` }} />
+            </span>
+          ) : null}
+        </button>
+      </div>
       <div className="library-collection-copy">
         <strong title={title}>{title}</strong>
-        <span title={creator}>{creator}</span>
+        <span className="library-collection-meta">
+          <span title={creator}>{creator}</span>
+          {code ? <code>{code}</code> : null}
+        </span>
         {showPlayTime && entry.launchTotals ? <LibraryPlayTime totals={entry.launchTotals} /> : null}
       </div>
       <footer>
@@ -225,6 +252,7 @@ const LibraryCollectionCard = memo(function LibraryCollectionCard({
           className="library-collection-menu"
           title={title}
           onOpenWork={onOpenWork}
+          ownWork={!work}
           onManage={onManage}
           onBrowse={onBrowse}
         />

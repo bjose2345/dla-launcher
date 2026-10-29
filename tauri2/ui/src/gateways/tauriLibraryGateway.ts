@@ -3,6 +3,7 @@ import type {
   AudioWaveform,
   Installation,
   InstallationHealthReport,
+  InstallationImage,
   InstallationReviewRequest,
   LaunchActivity,
   LibraryGateway,
@@ -16,10 +17,12 @@ import type {
   OpenNativeVideoResponse,
   NativeVideoViewport,
   OpenNativeVideoRequest,
+  OwnWorkDetails,
   PackageDestinationConflictPolicy,
   PackageDestinationPreview,
   PackagePreparationProgress,
   PreparedPackageInstallation,
+  SaveOwnWorkDetailsRequest,
   SelectedInstallationDestination,
   UpdateMediaProgressRequest,
   UpdateMediaQueueSettingsRequest,
@@ -173,6 +176,33 @@ export const tauriLibraryGateway: LibraryGateway = {
   },
   mediaAssetUrl(sessionId: string, ordinal: number): string {
     return convertFileSrc(`${sessionId}/${ordinal}`, "dla-media");
+  },
+  mediaThumbnailUrl(sessionId: string, ordinal: number): string {
+    return `${convertFileSrc(`${sessionId}/${ordinal}`, "dla-media")}?thumbnail`;
+  },
+  listOwnWorkDetails(): Promise<OwnWorkDetails[]> {
+    return invoke("list_own_work_details");
+  },
+  readOwnWorkDetails(installationId: string): Promise<OwnWorkDetails | null> {
+    return invoke("read_own_work_details", { installationId });
+  },
+  saveOwnWorkDetails(request: SaveOwnWorkDetailsRequest): Promise<OwnWorkDetails> {
+    return invoke("save_own_work_details", { request });
+  },
+  listInstallationImages(installationId: string): Promise<InstallationImage[]> {
+    return invoke("list_installation_images", { installationId });
+  },
+  importOwnWorkArtwork(installationId: string, relativePath: string): Promise<string> {
+    return invoke("import_own_work_artwork", { request: { installationId, relativePath } });
+  },
+  importOwnWorkArtworkFile(installationId: string): Promise<string | null> {
+    return invoke("import_own_work_artwork_file", { installationId });
+  },
+  ownWorkArtworkUrl(installationId: string, artworkId: string): string {
+    return convertFileSrc(`artwork/${installationId}/${artworkId}`, "dla-media");
+  },
+  installationImageUrl(installationId: string, relativePath: string): string {
+    return `${convertFileSrc(`installation/${installationId}/${relativePath}`, "dla-media")}?thumbnail`;
   },
   openNativeVideo(request: OpenNativeVideoRequest): Promise<OpenNativeVideoResponse> {
     return invoke("open_native_video", { request });

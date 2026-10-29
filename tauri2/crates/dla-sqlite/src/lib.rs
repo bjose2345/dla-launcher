@@ -9,6 +9,7 @@ mod launch;
 mod library;
 mod maintenance;
 mod media;
+mod own_work;
 mod package_preparation;
 mod preference;
 mod scanner;
