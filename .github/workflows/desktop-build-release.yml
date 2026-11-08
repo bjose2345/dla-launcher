@@ -68,14 +68,14 @@ jobs:
           # The WebKitGTK build is not published since 0.1.0-alpha.5 (the
           # Chromium build below is the Linux release); it is built as a
           # check that the fallback still bundles. Only artifacts named
-          # dla-launcher-* become release assets.
+          # dla-launcher-* become release assets. Deb only: tauri-cli 2.12.4's
+          # RPM bundler rejects pre-release versions such as 0.1.0-alpha.5.
           - name: Linux x86_64 WebKitGTK (unpublished check)
             runner: ubuntu-22.04
-            bundles: deb,rpm
+            bundles: deb
             artifact-name: webkitgtk-check-linux-x86_64
             artifact-paths: |
               tauri2/target/release/bundle/deb/*.deb
-              tauri2/target/release/bundle/rpm/*.rpm
           - name: Windows x86_64 (MSI and NSIS)
             runner: windows-2022
             bundles: msi,nsis
