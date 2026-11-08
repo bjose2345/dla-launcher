@@ -1,0 +1,16 @@
+[package]
+name = "dla-translation-relay"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+dla-domain.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tiny_http.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+ureq.workspace = true

@@ -2,16 +2,19 @@ use std::{collections::HashSet, path::Path, sync::Arc};
 
 use dla_detection::{MediaClassificationRequest, classify_media};
 use dla_domain::{
-    installation::{Installation, InstallationId, InstallationStatus},
+    installation::{
+        Installation, InstallationId, InstallationPlatform, InstallationStatus, RelativePath,
+    },
     maintenance::{
-        ExpectedInstallationFile, FilesystemHealthSnapshot, InstallationHealthIssueKind,
-        InstallationHealthReport, InstallationHealthState, InstallationInventoryEntry,
-        MaintenanceCleanupReport,
+        ExpectedInstallationFile, FileNameFix, FileNameReport, FilesystemHealthSnapshot,
+        InstallationHealthIssueKind, InstallationHealthReport, InstallationHealthState,
+        InstallationInventoryEntry, LibraryFileNameReport, MaintenanceCleanupReport,
     },
     package::{PackageManifest, PackagePreparationProgress, PreparedPackageInstallation},
     scanner::{
         ScanEntry, ScanEntryId, ScanEntryKind, ScanEntryPresence, ScanRootId, ScanSessionId,
     },
+    translation::{GameFileChange, GameFileChangeKind},
 };
 use thiserror::Error;
 
@@ -99,7 +102,44 @@ pub trait LibraryMaintenanceStore: Send + Sync {
     ) -> Result<bool, LibraryMaintenanceError>;
 }
 
+/// Files the launcher itself added to or changed in a game to translate it.
+/// The file check counts neither as damage.
+pub trait LauncherFileChanges: Send + Sync {
+    fn launcher_file_changes(
+        &self,
+        installation_id: &InstallationId,
+    ) -> Result<Vec<GameFileChange>, LibraryMaintenanceError>;
+}
+
+/// File names an older install read wrongly: the ZIP stored Japanese names
+/// in Shift-JIS, and they were read as CP437.
+pub trait InstalledFileNames: Send + Sync {
+    /// The files under `root` with such a name, and the name they should have.
+    fn find(&self, root: &str) -> Result<Vec<FileNameFix>, LibraryMaintenanceError>;
+
+    /// Renames the files, all or none, and removes the folders left empty.
+    fn fix(&self, root: &str, fixes: &[FileNameFix]) -> Result<(), LibraryMaintenanceError>;
+
+    /// What a path the launcher stored becomes, when it has such a name.
+    fn fixed_path(&self, path: &str) -> Option<String>;
+}
+
+/// Everything the launcher stored that names a path inside a work: the file
+/// list and start-file choices found in it, the chosen start file, the
+/// install's folders, reading and listening progress, launches and
+/// translations.
+pub trait InstalledPathStore: Send + Sync {
+    fn rename_paths(
+        &self,
+        installation_id: &InstallationId,
+        rename: &dyn Fn(&str) -> Option<String>,
+    ) -> Result<(), LibraryMaintenanceError>;
+}
+
 pub trait LibraryMaintenanceFilesystem: Send + Sync {
+    /// `ignored` files, and everything inside `ignored` folders, are left
+    /// out of the check.
+    #[allow(clippy::too_many_arguments)]
     fn verify(
         &self,
         root_path: &str,
@@ -108,6 +148,7 @@ pub trait LibraryMaintenanceFilesystem: Send + Sync {
         expected_files: &[ExpectedInstallationFile],
         expected_file_count: u64,
         expected_bytes: u64,
+        ignored: &[RelativePath],
     ) -> Result<FilesystemHealthSnapshot, LibraryMaintenanceError>;
 
     fn inventory(
@@ -136,6 +177,8 @@ pub struct LibraryMaintenanceService {
     filesystem: Arc<dyn LibraryMaintenanceFilesystem>,
     manifests: Arc<dyn PackageManifestReader>,
     installer: Arc<dyn PackageInstaller>,
+    launcher_changes: Option<Arc<dyn LauncherFileChanges>>,
+    file_names: Option<(Arc<dyn InstalledFileNames>, Arc<dyn InstalledPathStore>)>,
 }
 
 impl LibraryMaintenanceService {
@@ -154,7 +197,104 @@ impl LibraryMaintenanceService {
             filesystem,
             manifests,
             installer,
+            launcher_changes: None,
+            file_names: None,
         }
+    }
+
+    pub fn with_launcher_changes(mut self, changes: Arc<dyn LauncherFileChanges>) -> Self {
+        self.launcher_changes = Some(changes);
+        self
+    }
+
+    pub fn with_file_names(
+        mut self,
+        names: Arc<dyn InstalledFileNames>,
+        paths: Arc<dyn InstalledPathStore>,
+    ) -> Self {
+        self.file_names = Some((names, paths));
+        self
+    }
+
+    /// How many of the work's file names an older install read wrongly.
+    pub fn check_file_names(
+        &self,
+        installation_id: &InstallationId,
+    ) -> Result<FileNameReport, LibraryMaintenanceError> {
+        let (names, _) = self.file_name_ports()?;
+        let installation = self.installation(installation_id)?;
+        let prepared = self.preparations.read_prepared_package(installation_id)?;
+        let wrong = names
+            .find(effective_root(&installation, prepared.as_ref()))?
+            .len() as u64;
+        Ok(FileNameReport {
+            installation_id: installation_id.clone(),
+            wrong,
+            fixed: 0,
+        })
+    }
+
+    /// Gives the work's files back their Japanese names, updates what the
+    /// launcher stored about them, and reads the file list again.
+    pub fn fix_file_names(
+        &self,
+        installation_id: &InstallationId,
+        updated_at: String,
+    ) -> Result<FileNameReport, LibraryMaintenanceError> {
+        let (names, paths) = self.file_name_ports()?;
+        self.ensure_idle(installation_id)?;
+        let installation = self.installation(installation_id)?;
+        let prepared = self.preparations.read_prepared_package(installation_id)?;
+        let root = effective_root(&installation, prepared.as_ref()).to_owned();
+        let fixes = names.find(&root)?;
+        if !fixes.is_empty() {
+            names.fix(&root, &fixes)?;
+            // Renamed, not scanned again: a scan would guess the start file
+            // anew and could send a work that was set up back to review.
+            paths.rename_paths(installation_id, &|path| names.fixed_path(path))?;
+            self.verify(installation_id, updated_at)?;
+        }
+        Ok(FileNameReport {
+            installation_id: installation_id.clone(),
+            wrong: 0,
+            fixed: fixes.len() as u64,
+        })
+    }
+
+    /// Fixes the wrongly read file names of every work. A work in use, or
+    /// one whose names cannot all be given back, is left as it was.
+    pub fn fix_all_file_names(
+        &self,
+        updated_at: String,
+    ) -> Result<LibraryFileNameReport, LibraryMaintenanceError> {
+        let (names, _) = self.file_name_ports()?;
+        let mut report = LibraryFileNameReport::default();
+        for installation in self.installations.list()? {
+            let prepared = self.preparations.read_prepared_package(&installation.id)?;
+            let Ok(fixes) = names.find(effective_root(&installation, prepared.as_ref())) else {
+                continue;
+            };
+            if fixes.is_empty() {
+                continue;
+            }
+            match self.fix_file_names(&installation.id, updated_at.clone()) {
+                Ok(fixed) => {
+                    report.works += 1;
+                    report.files += fixed.fixed;
+                }
+                Err(_) => report.skipped += 1,
+            }
+        }
+        Ok(report)
+    }
+
+    fn file_name_ports(
+        &self,
+    ) -> Result<(&dyn InstalledFileNames, &dyn InstalledPathStore), LibraryMaintenanceError> {
+        self.file_names
+            .as_ref()
+            .map(|(names, paths)| (names.as_ref(), paths.as_ref()))
+            .ok_or_else(|| LibraryMaintenanceError::adapter("file names cannot be fixed here"))
     }
 
     pub fn read_health(
@@ -268,6 +408,27 @@ impl LibraryMaintenanceService {
         })
         .map_err(LibraryMaintenanceError::adapter)?;
         detection.package_inspection = installation.detection.package_inspection.clone();
+        // A work the launcher unpacked starts with its install's start file,
+        // which the Library offers no way to change. While that file is
+        // there, the work stays ready, even when its pictures or music would
+        // make a new scan ask what Play opens.
+        let start_file = prepared
+            .as_ref()
+            .and_then(|prepared| prepared.preferred_action.as_ref())
+            .map(|action| match installation.platform {
+                InstallationPlatform::Windows => action.relative_path.as_str().to_lowercase(),
+                _ => action.relative_path.as_str().to_owned(),
+            });
+        if detection.catalog_identity.is_some()
+            && start_file.is_some_and(|key| {
+                detection
+                    .content_items
+                    .iter()
+                    .any(|item| item.path_key == key)
+            })
+        {
+            detection.suggested_status = InstallationStatus::Ready;
+        }
         self.installations
             .replace_detection(installation_id, detection, updated_at.clone())?;
         self.verify(installation_id, updated_at)
@@ -381,12 +542,52 @@ impl LibraryMaintenanceService {
         root: &str,
         checked_at: String,
     ) -> Result<InstallationHealthReport, LibraryMaintenanceError> {
-        let (expected, source_available) = self.expected_files(installation, prepared);
+        let (mut expected, source_available) = self.expected_files(installation, prepared);
+        let changes = match &self.launcher_changes {
+            Some(reader) => reader.launcher_file_changes(&installation.id)?,
+            None => Vec::new(),
+        };
+        // A rescan made while translation was on lists the plugin's files.
+        expected.retain(|file| {
+            !changes
+                .iter()
+                .any(|change| change.covers(file.relative_path.as_str()))
+        });
+        let mut size_change = 0_i64;
+        for change in &changes {
+            let sizes = match &change.kind {
+                GameFileChangeKind::Added => None,
+                GameFileChangeKind::Changed {
+                    original,
+                    written_bytes,
+                    ..
+                } => Some((original.len() as u64, *written_bytes)),
+                GameFileChangeKind::Patched {
+                    original_bytes,
+                    written_bytes,
+                    ..
+                } => Some((*original_bytes, *written_bytes)),
+            };
+            if let Some((original_bytes, written_bytes)) = sizes {
+                size_change += written_bytes as i64 - original_bytes as i64;
+                for file in expected
+                    .iter_mut()
+                    .filter(|file| file.relative_path == change.path)
+                {
+                    file.size_bytes = Some(written_bytes);
+                }
+            }
+        }
+        let ignored = changes
+            .iter()
+            .filter(|change| change.kind == GameFileChangeKind::Added)
+            .map(|change| change.path.clone())
+            .collect::<Vec<_>>();
         let expected_count = prepared
             .map(|value| value.installed_file_count)
             .unwrap_or(expected.len() as u64);
         let expected_bytes = prepared
-            .map(|value| value.installed_bytes)
+            .map(|value| value.installed_bytes.saturating_add_signed(size_change))
             .unwrap_or_else(|| expected.iter().filter_map(|file| file.size_bytes).sum());
         let snapshot = self.filesystem.verify(
             root,
@@ -395,6 +596,7 @@ impl LibraryMaintenanceService {
             &expected,
             expected_count,
             expected_bytes,
+            &ignored,
         )?;
         let repairable = prepared.is_some()
             && source_available

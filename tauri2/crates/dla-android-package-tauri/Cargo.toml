@@ -14,4 +14,4 @@ tauri-plugin = { version = "=2.7.1", features = ["build"] }
 dla-application.workspace = true
 dla-domain.workspace = true
 serde.workspace = true
-tauri = { version = "=2.12.1", features = [] }
+tauri = { version = "=2.12.5", features = [] }

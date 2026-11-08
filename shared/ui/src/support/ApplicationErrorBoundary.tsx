@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
+import { copyText } from "../app/clipboard";
 import type { SupportGateway } from "./types";
 
 export interface ApplicationErrorLabels {
@@ -95,11 +96,11 @@ export class ApplicationErrorBoundary extends Component<
     try {
       await this.recording;
       const status = await this.props.gateway.readStatus();
-      await navigator.clipboard.writeText(status.summary);
+      await copyText(status.summary);
       this.setState({ action: "copied" });
     } catch {
       try {
-        await navigator.clipboard.writeText(redactFallbackText(this.fallbackText()));
+        await copyText(redactFallbackText(this.fallbackText()));
         this.setState({ action: "copied" });
       } catch {
         this.setState({ action: "failed" });

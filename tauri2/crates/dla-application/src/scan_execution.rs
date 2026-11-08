@@ -1,6 +1,7 @@
 use std::{
     path::Path,
     sync::{Arc, Mutex, MutexGuard},
+    time::{Duration, Instant},
 };
 
 use dla_detection::{ProductCodeSource, detect_product_codes, resolve_scan_identities};
@@ -22,7 +23,10 @@ use crate::{
     },
 };
 
-const DEFAULT_BATCH_SIZE: usize = 32;
+// Pending rows reach the database and the page on a timer, so progress stays
+// visible on slow scans, with a row cap that bounds a fast scan's transactions.
+const FLUSH_INTERVAL: Duration = Duration::from_millis(250);
+const DEFAULT_BATCH_SIZE: usize = 2_048;
 const ARCHIVE_CANDIDATE_LIMIT: usize = 128;
 const MAXIMUM_WORKER_LIMIT: u16 = 32;
 
@@ -151,6 +155,7 @@ impl ScanExecutionService {
                 pending_results: Vec::new(),
                 pending_issues: Vec::new(),
                 current_relative_path: None,
+                last_flush_at: Instant::now(),
             }),
         };
 
@@ -211,6 +216,7 @@ struct ExecutionState {
     pending_results: Vec<ScanResult>,
     pending_issues: Vec<ScanIssue>,
     current_relative_path: Option<String>,
+    last_flush_at: Instant,
 }
 
 struct ExecutionObserver<'a> {
@@ -257,7 +263,7 @@ impl FilesystemScanObserver for ExecutionObserver<'_> {
             }
             state.pending_issues.push(issue);
         }
-        self.flush_if_full(&mut state)
+        self.flush_if_due(&mut state)
     }
 
     fn issue(&self, issue: ScanSourceIssue) -> Result<(), ScannerError> {
@@ -269,7 +275,7 @@ impl FilesystemScanObserver for ExecutionObserver<'_> {
         }
         state.current_relative_path = issue.relative_path.clone();
         state.pending_issues.push(issue);
-        self.flush_if_full(&mut state)
+        self.flush_if_due(&mut state)
     }
 }
 
@@ -454,10 +460,12 @@ impl ExecutionObserver<'_> {
         Ok(state.session.clone())
     }
 
-    fn flush_if_full(&self, state: &mut ExecutionState) -> Result<(), ScannerError> {
+    fn flush_if_due(&self, state: &mut ExecutionState) -> Result<(), ScannerError> {
         let pending =
             state.pending_entries.len() + state.pending_results.len() + state.pending_issues.len();
-        if pending >= self.batch_size {
+        if pending >= self.batch_size
+            || (pending > 0 && state.last_flush_at.elapsed() >= FLUSH_INTERVAL)
+        {
             self.flush_locked(state, true)?;
         }
         Ok(())
@@ -476,6 +484,7 @@ impl ExecutionObserver<'_> {
             })?;
             self.repository.update_session(&state.session)?;
         }
+        state.last_flush_at = Instant::now();
         if publish {
             self.publish_locked(state)?;
         }

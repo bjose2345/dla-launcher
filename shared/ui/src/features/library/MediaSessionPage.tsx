@@ -13,11 +13,14 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { errorMessage } from "../../app/errorMessage";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import type { CatalogDetailGateway } from "../catalog";
+import { catalogKeys } from "../catalog/catalogQueryKeys";
 import { visualImageUrls } from "../catalog/workImages";
 import { effectiveIdentity, installationTitle } from "./libraryPresentation";
-import { useMediaPlayback } from "./MediaPlaybackProvider";
+import { AudioPlayer } from "./AudioPlayerPage";
+import { OwnWorkDetailsProvider } from "./ownWorkDetails";
 import { isReaderAction, useReader } from "./ReaderProvider";
 import {
   mediaItemName,
@@ -52,19 +55,21 @@ export function MediaSessionPage({
   onBack,
 }: MediaSessionPageProps) {
   const { t } = usePresentation();
-  const playback = useMediaPlayback();
   const reader = useReader();
   const installation = useQuery({
     queryKey: ["library", "installation", installationId],
     queryFn: () => gateway.readInstallation(installationId),
   });
+  // Opening returns the work's open session or starts a new one; the cached
+  // one is dropped when the page goes, since it may be closed by the next visit.
   const session = useQuery({
     queryKey: ["library", "media", "open", installationId],
     queryFn: () => gateway.openMediaSession(installationId),
+    gcTime: 0,
   });
   const catalogCode = installation.data ? effectiveIdentity(installation.data) : null;
   const catalogWork = useQuery({
-    queryKey: ["catalog", "work", catalogCode],
+    queryKey: catalogKeys.work(catalogCode),
     queryFn: () => catalogGateway!.read(catalogCode!),
     enabled: Boolean(catalogGateway && catalogCode),
     retry: false,
@@ -73,14 +78,7 @@ export function MediaSessionPage({
     () => catalogWork.data ? visualImageUrls(catalogWork.data) : [],
     [catalogWork.data],
   );
-  const audioSession = session.data?.action === "play_audio" ? session.data : null;
   const readerSession = session.data && isReaderAction(session.data.action) ? session.data : null;
-
-  useEffect(() => {
-    if (!audioSession) return;
-    void playback.openWork(audioSession.installationId);
-    void onBack();
-  }, [audioSession, onBack, playback]);
 
   useEffect(() => {
     if (!readerSession) return;
@@ -91,7 +89,7 @@ export function MediaSessionPage({
   if (installation.isPending || session.isPending) {
     return (
       <main className="media-session-page media-session-state" aria-live="polite">
-        <LoaderCircle className="library-spin" aria-hidden="true" />
+        <LoaderCircle className="app-spin" aria-hidden="true" />
         <strong>{t("media.opening")}</strong>
       </main>
     );
@@ -102,7 +100,7 @@ export function MediaSessionPage({
     return (
       <main className="media-session-page media-session-state" role="alert">
         <strong>{t("media.openFailed")}</strong>
-        <span>{t("common.technicalDetail", { detail: error instanceof Error ? error.message : String(error) })}</span>
+        <span>{t("common.technicalDetail", { detail: errorMessage(error) })}</span>
         <button className="library-back-button" type="button" onClick={() => void onBack()}>
           <ArrowLeft aria-hidden="true" />{t("library.back")}
         </button>
@@ -118,6 +116,20 @@ export function MediaSessionPage({
           <ArrowLeft aria-hidden="true" />{t("library.back")}
         </button>
       </main>
+    );
+  }
+
+  if (session.data.action === "play_audio") {
+    return (
+      <OwnWorkDetailsProvider gateway={gateway}>
+        <AudioPlayer
+          gateway={gateway}
+          installation={installation.data}
+          session={session.data}
+          work={catalogWork.data ?? null}
+          onBack={onBack}
+        />
+      </OwnWorkDetailsProvider>
     );
   }
 
@@ -187,7 +199,7 @@ function MediaSessionView({
       })
       .catch((error: unknown) => {
         if (mountedRef.current) {
-          setSaveError(error instanceof Error ? error.message : String(error));
+          setSaveError(errorMessage(error));
         }
         throw error;
       });
@@ -297,7 +309,7 @@ function MediaSessionView({
       await gateway.updateMediaQueueSettings(next);
     } catch (error) {
       setQueueSettings(previous);
-      setSaveError(error instanceof Error ? error.message : String(error));
+      setSaveError(errorMessage(error));
     } finally {
       setSettingsPending(false);
     }
@@ -331,7 +343,7 @@ function MediaSessionView({
       await gateway.closeMediaSession(initialSession.id);
       await onBack();
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : String(error));
+      setSaveError(errorMessage(error));
       setClosing(false);
     }
   };
@@ -394,7 +406,7 @@ function MediaSessionView({
     <main className={`media-session-page media-session-${initialSession.action}`}>
       <header className="media-session-heading">
         <button className="library-back-button" type="button" disabled={closing} onClick={() => void closeAndBack()}>
-          {closing ? <LoaderCircle className="library-spin" aria-hidden="true" /> : <ArrowLeft aria-hidden="true" />}
+          {closing ? <LoaderCircle className="app-spin" aria-hidden="true" /> : <ArrowLeft aria-hidden="true" />}
           {t("library.back")}
         </button>
         <div>
@@ -408,7 +420,7 @@ function MediaSessionView({
         </span>
       </header>
 
-      {saveError && <div className="library-callout library-callout-error" role="alert">{t("common.requestFailed", { error: saveError })}</div>}
+      {saveError && <div className="app-callout" role="alert">{t("common.requestFailed", { error: saveError })}</div>}
 
       <section className="media-session-workspace">
         <div className="media-session-stage">
@@ -435,7 +447,7 @@ function MediaSessionView({
                 disabled={settingsPending}
                 onClick={changeShuffle}
               >
-                {settingsPending ? <LoaderCircle className="library-spin" aria-hidden="true" /> : <Shuffle aria-hidden="true" />}
+                {settingsPending ? <LoaderCircle className="app-spin" aria-hidden="true" /> : <Shuffle aria-hidden="true" />}
                 {t("media.shuffle")}
               </button>
               <button

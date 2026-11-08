@@ -1,0 +1,3 @@
+# The shared code in tauri2/ is linted here as tauri2/ lints it: against its
+# minimum Rust version (1.85), not Tauri 3's.
+msrv = "1.85.0"

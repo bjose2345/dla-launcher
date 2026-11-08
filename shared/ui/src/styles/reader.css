@@ -43,11 +43,6 @@
   position: absolute;
   inset: 0;
   overflow: auto;
-  scrollbar-width: none;
-}
-
-.reader-stage::-webkit-scrollbar {
-  display: none;
 }
 
 .reader.is-strip .reader-stage {

@@ -112,10 +112,6 @@ export interface CatalogImportGateway {
   subscribeProgress(listener: (progress: CatalogImportProgress) => void): Promise<() => void>;
 }
 
-export function catalogImportIsTerminal(stage: CatalogImportStage | undefined): boolean {
-  return stage === "completed" || stage === "cancelled" || stage === "failed";
-}
-
 export function catalogImportIsIndeterminate(stage: CatalogImportStage | undefined): boolean {
   return stage === "finalizing_catalog"
     || stage === "checkpointing_catalog"

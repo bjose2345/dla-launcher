@@ -132,6 +132,7 @@ const evidenceReasonKeys: Record<string, MessageKey> = {
   numbered_image_sequence: "domain.evidence.numberedSequence",
   numbered_track_sequence: "domain.evidence.numberedSequence",
   nwjs_package_manifest: "domain.evidence.packageLayout",
+  game_engine_layout: "domain.evidence.packageLayout",
   rpg_maker_layout: "domain.evidence.packageLayout",
   rpg_maker_system_manifest: "domain.evidence.packageLayout",
   archive_symlink: "domain.evidence.archiveSafety",

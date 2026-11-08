@@ -1,3 +1,4 @@
+import { readStoredText, writeStoredText } from "../../preferences/browserStorage";
 export const defaultGalleryRatio = 4 / 3;
 
 export function galleryColumnCount(width: number): 1 | 2 | 3 {
@@ -74,19 +75,11 @@ export type BentoSpan = "feature" | "feature-r" | "wide" | "single" | "full";
 const GALLERY_LAYOUT_KEY = "dla-launcher:gallery-layout:v1";
 
 export function readGalleryLayout(): GalleryLayout {
-  try {
-    return window.localStorage.getItem(GALLERY_LAYOUT_KEY) === "bento" ? "bento" : "grid";
-  } catch {
-    return "grid";
-  }
+  return readStoredText(GALLERY_LAYOUT_KEY) === "bento" ? "bento" : "grid";
 }
 
 export function writeGalleryLayout(layout: GalleryLayout): void {
-  try {
-    window.localStorage.setItem(GALLERY_LAYOUT_KEY, layout);
-  } catch {
-    return;
-  }
+  writeStoredText(GALLERY_LAYOUT_KEY, layout);
 }
 
 /**

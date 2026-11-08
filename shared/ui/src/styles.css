@@ -1,4 +1,10 @@
 @import "./styles/foundation.css";
+@import "./styles/progress.css";
+@import "./styles/button.css";
+@import "./styles/switch.css";
+@import "./styles/masthead.css";
+@import "./styles/minimap.css";
+@import "./styles/callout.css";
 @import "./styles/content-carousel.css";
 @import "./styles/catalog.css";
 @import "./styles/library-reader.css";
@@ -8,6 +14,7 @@
 @import "./styles/work-detail.css";
 @import "./styles/catalog-detail.css";
 @import "./styles/settings.css";
+@import "./styles/translation.css";
 @import "./styles/about.css";
 @import "./styles/catalog-import.css";
 @import "./styles/search-scanner.css";
@@ -15,6 +22,7 @@
 @import "./styles/reader.css";
 @import "./styles/image-viewer.css";
 @import "./styles/video-player.css";
+@import "./styles/audio-player.css";
 @import "./styles/library-virtualization.css";
 @import "./styles/support.css";
 @import "./styles/android-package.css";

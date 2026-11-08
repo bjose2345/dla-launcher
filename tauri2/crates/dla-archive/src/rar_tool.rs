@@ -114,6 +114,11 @@ pub(crate) fn rar_tool_candidates() -> Vec<RarTool> {
             RarTool::new(program, RarToolKind::SevenZip),
         );
     }
+    // The deb keeps the launcher under /usr/share and the sidecars in /usr/bin.
+    push_unique(
+        &mut candidates,
+        RarTool::new(BUNDLED_SEVEN_ZIP, RarToolKind::SevenZip),
+    );
     for (program, kind) in [
         ("7z", RarToolKind::SevenZip),
         ("7zz", RarToolKind::SevenZip),
@@ -171,6 +176,21 @@ mod tests {
         assert_eq!(infer_kind("/opt/tools/unrar"), RarToolKind::Unrar);
         assert_eq!(infer_kind(r"C:\Tools\UnRAR.exe"), RarToolKind::Unrar);
         assert_eq!(infer_kind("/opt/tools/7zz"), RarToolKind::SevenZip);
+    }
+
+    #[test]
+    fn offers_the_bundled_seven_zip_on_path_after_the_one_beside_the_launcher() {
+        let candidates = rar_tool_candidates();
+        let bundled = candidates
+            .iter()
+            .position(|tool| tool.program == BUNDLED_SEVEN_ZIP)
+            .expect("the bundled name is a candidate");
+        assert_eq!(candidates[bundled].kind, RarToolKind::SevenZip);
+        assert!(
+            candidates[bundled + 1..]
+                .iter()
+                .any(|tool| tool.program == "7z")
+        );
     }
 
     #[test]

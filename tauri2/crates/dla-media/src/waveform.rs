@@ -1,3 +1,4 @@
+use dla_application::paths::{PathEscape, resolve_within};
 use std::{
     fs::{self, File},
     path::{Path, PathBuf},
@@ -91,25 +92,20 @@ fn resolve_media_path(
     root_path: &str,
     relative_path: &RelativePath,
 ) -> Result<PathBuf, MediaError> {
-    let root = Path::new(root_path)
-        .canonicalize()
-        .map_err(MediaError::waveform)?;
-    let attempted = root.join(relative_path.as_str());
-    let target = attempted
-        .canonicalize()
+    let target = resolve_within(Path::new(root_path), Path::new(relative_path.as_str()))
         .inspect_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
+            if let PathEscape::Target { path, error } = error
+                && error.kind() == std::io::ErrorKind::NotFound
+            {
                 log::warn!(
                     "media asset is indexed but missing on disk: {}",
-                    attempted.display()
+                    path.display()
                 );
             }
         })
         .map_err(MediaError::waveform)?;
-    if !target.starts_with(&root) || !target.is_file() {
-        return Err(MediaError::waveform(
-            "waveform source is outside the installation root",
-        ));
+    if !target.is_file() {
+        return Err(MediaError::waveform("waveform source is not a file"));
     }
     Ok(target)
 }

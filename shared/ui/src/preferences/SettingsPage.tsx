@@ -5,6 +5,7 @@ import {
   FolderCog,
   FolderOpen,
   EyeOff,
+  Globe,
   HardDrive,
   Heart,
   Keyboard,
@@ -16,14 +17,17 @@ import {
   Palette,
   RotateCcw,
   TriangleAlert,
+  Wrench,
   X,
 } from "lucide-react";
 import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { displayPath } from "../displayPath";
 import { listFormatter } from "../i18n/formatters";
-import type { WorkPreference, WorkPreferenceKind } from "../features/library/types";
+import type { LibraryFileNameReport, WorkPreference, WorkPreferenceKind } from "../features/library/types";
 import type { ScannerRootPreferenceGateway } from "../features/scanner/types";
+import { TranslationSettingsSection } from "../features/translation/TranslationSettingsSection";
+import type { TranslationGateway } from "../features/translation/types";
 import { scannerRootPreferenceKey } from "../features/scanner/types";
 import { useKeyBindings } from "./KeyBindingsProvider";
 import { settingsTabs, type SettingsTab } from "./settingsRoute";
@@ -51,12 +55,15 @@ import { locales, themes } from "./preferences";
 import { usePresentation } from "./PresentationProvider";
 import { SettingsSection } from "./SettingsSection";
 import { windowPresets, type WindowGateway, type WindowPreset } from "./windowSizing";
+import { Switch } from "../app/Switch";
+import { pluralText } from "../i18n/pluralText";
 
 const tabLabelKeys = {
   general: "settings.tab.general",
   library: "settings.tab.library",
   display: "settings.tab.display",
   controls: "settings.tab.controls",
+  translation: "settings.tab.translation",
 } as const;
 
 const scopeLabelKeys = {
@@ -74,6 +81,11 @@ export interface WorkPreferenceGateway {
   ): Promise<WorkPreference | null>;
 }
 
+/** Fixes file names an older install read wrongly, in every work. */
+export interface FileNameGateway {
+  fixAllFileNames(): Promise<LibraryFileNameReport>;
+}
+
 export function SettingsPage({
   scannerRootGateway,
   windowGateway,
@@ -81,6 +93,8 @@ export function SettingsPage({
   onTabChange,
   coverCacheGateway,
   workPreferenceGateway,
+  fileNameGateway,
+  translationGateway,
   onOpenWork,
 }: {
   scannerRootGateway?: ScannerRootPreferenceGateway;
@@ -89,19 +103,24 @@ export function SettingsPage({
   onTabChange?: (tab: SettingsTab) => void;
   coverCacheGateway?: CoverCacheGateway;
   workPreferenceGateway?: WorkPreferenceGateway;
+  fileNameGateway?: FileNameGateway;
+  /** Game translation, where the launcher can start games. */
+  translationGateway?: TranslationGateway;
   onOpenWork?: (code: string) => void | Promise<void>;
 }) {
   const { t } = usePresentation();
   const [localTab, setLocalTab] = useState<SettingsTab>(tab);
-  const active = onTabChange ? tab : localTab;
+  const tabs = settingsTabs.filter((value) => value !== "translation" || translationGateway);
+  const requested = onTabChange ? tab : localTab;
+  const active = tabs.includes(requested) ? requested : "general";
   const select = (next: SettingsTab) => (onTabChange ? onTabChange(next) : setLocalTab(next));
   const moveTabFocus = (event: ReactKeyboardEvent<HTMLButtonElement>, current: SettingsTab) => {
-    const index = settingsTabs.indexOf(current);
+    const index = tabs.indexOf(current);
     let next: SettingsTab | undefined;
-    if (event.key === "ArrowRight") next = settingsTabs[(index + 1) % settingsTabs.length];
-    if (event.key === "ArrowLeft") next = settingsTabs[(index - 1 + settingsTabs.length) % settingsTabs.length];
-    if (event.key === "Home") next = settingsTabs[0];
-    if (event.key === "End") next = settingsTabs[settingsTabs.length - 1];
+    if (event.key === "ArrowRight") next = tabs[(index + 1) % tabs.length];
+    if (event.key === "ArrowLeft") next = tabs[(index - 1 + tabs.length) % tabs.length];
+    if (event.key === "Home") next = tabs[0];
+    if (event.key === "End") next = tabs[tabs.length - 1];
     if (!next) return;
     event.preventDefault();
     select(next);
@@ -110,11 +129,11 @@ export function SettingsPage({
 
   return (
     <main className="settings-shell">
-      <header className="settings-masthead">
-        <span className="settings-eyebrow">{t("settings.eyebrow")}</span>
+      <header className="page-masthead settings-masthead">
+        <span className="page-eyebrow">{t("settings.eyebrow")}</span>
         <h1>{t("settings.title")}</h1>
         <div className="settings-tabs" role="tablist" aria-label={t("settings.title")}>
-          {settingsTabs.map((value) => (
+          {tabs.map((value) => (
             <button
               className={value === active ? "active" : undefined}
               type="button"
@@ -153,6 +172,7 @@ export function SettingsPage({
               <WorkPreferenceSection gateway={workPreferenceGateway} onOpenWork={onOpenWork} />
             ) : null}
             {coverCacheGateway ? <CoverCacheSection gateway={coverCacheGateway} /> : null}
+            {fileNameGateway ? <FileNameSection gateway={fileNameGateway} /> : null}
           </>
         ) : null}
         {active === "display" ? (
@@ -162,6 +182,9 @@ export function SettingsPage({
           </>
         ) : null}
         {active === "controls" ? <KeyBindingSection /> : null}
+        {active === "translation" && translationGateway ? (
+          <TranslationSettingsSection gateway={translationGateway} />
+        ) : null}
       </div>
     </main>
   );
@@ -171,6 +194,7 @@ function TabIcon({ tab }: { tab: SettingsTab }) {
   if (tab === "general") return <Languages aria-hidden="true" />;
   if (tab === "library") return <Library aria-hidden="true" />;
   if (tab === "display") return <Monitor aria-hidden="true" />;
+  if (tab === "translation") return <Globe aria-hidden="true" />;
   return <Keyboard aria-hidden="true" />;
 }
 
@@ -239,13 +263,13 @@ function LibrarySection() {
       description={t("settings.libraryDisplayDescription")}
     >
       <div className="settings-switches">
-        <SettingsSwitch
+        <Switch
           checked={showPlayTime}
           label={t("settings.showPlayTime")}
           help={t("settings.showPlayTimeHelp")}
           onChange={setShowPlayTime}
         />
-        <SettingsSwitch
+        <Switch
           checked={includeUnreviewed}
           label={t("settings.includeUnreviewed")}
           help={t("settings.includeUnreviewedHelp")}
@@ -297,13 +321,13 @@ function WorkPreferenceSection({
       description={t("library.preferencesHelp")}
     >
       {error ? (
-        <p className="settings-error" role="alert">
+        <p className="app-callout" role="alert">
           {t("common.requestFailed", { error: String(error) })}
         </p>
       ) : null}
       {preferences.isPending ? (
         <p className="settings-note">
-          <LoaderCircle className="settings-spin" aria-hidden="true" />{t("library.preferencesLoading")}
+          <LoaderCircle className="app-spin" aria-hidden="true" />{t("library.preferencesLoading")}
         </p>
       ) : ordered.length === 0 ? (
         <p className="settings-note">{t("library.preferencesEmpty")}</p>
@@ -352,7 +376,7 @@ function WorkPreferenceSection({
                   onClick={() => change.mutate({ workCode: item.workCode, preference: null })}
                 >
                   {changingCode === item.workCode
-                    ? <LoaderCircle className="settings-spin" aria-hidden="true" />
+                    ? <LoaderCircle className="app-spin" aria-hidden="true" />
                     : <X aria-hidden="true" />}
                 </button>
               </div>
@@ -469,13 +493,59 @@ function CoverCacheSection({ gateway }: { gateway: CoverCacheGateway }) {
       ) : null}
       {summary.isPending ? (
         <p className="settings-note settings-loading">
-          <LoaderCircle className="settings-spin" aria-hidden="true" />
+          <LoaderCircle className="app-spin" aria-hidden="true" />
           {t("settings.coverCacheLoading")}
         </p>
       ) : null}
       {error ? (
-        <p className="settings-error" role="alert">
+        <p className="app-callout" role="alert">
           {t("common.requestFailed", { error: String(error) })}
+        </p>
+      ) : null}
+    </SettingsSection>
+  );
+}
+
+function FileNameSection({ gateway }: { gateway: FileNameGateway }) {
+  const { locale, t } = usePresentation();
+  const queryClient = useQueryClient();
+  const fix = useMutation({
+    mutationFn: () => gateway.fixAllFileNames(),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["library"] }),
+  });
+  const report = fix.data;
+  const count = (value: number) => value.toLocaleString(locale);
+
+  return (
+    <SettingsSection
+      icon={<Wrench aria-hidden="true" />}
+      title={t("settings.fileNames")}
+      description={t("settings.fileNamesDescription")}
+      action={(
+        <button className="app-button is-quiet" type="button" disabled={fix.isPending} onClick={() => fix.mutate()}>
+          {fix.isPending ? <LoaderCircle className="app-spin" aria-hidden="true" /> : null}
+          {t(fix.isPending ? "settings.fileNamesChecking" : "settings.fileNamesAction")}
+        </button>
+      )}
+    >
+      {report ? (
+        <p className="settings-note" role="status">
+          {report.works === 0
+            ? t("settings.fileNamesNone")
+            : pluralText(t, locale, report.works, "settings.fileNamesFixedOne", "settings.fileNamesFixed", {
+              files: count(report.files),
+              works: count(report.works),
+            })}
+        </p>
+      ) : null}
+      {report && report.skipped > 0 ? (
+        <p className="settings-note">
+          {pluralText(t, locale, report.skipped, "settings.fileNamesSkippedOne", "settings.fileNamesSkipped")}
+        </p>
+      ) : null}
+      {fix.error ? (
+        <p className="app-callout" role="alert">
+          {t("common.requestFailed", { error: String(fix.error) })}
         </p>
       ) : null}
     </SettingsSection>
@@ -511,7 +581,7 @@ function WindowSection({ gateway }: { gateway: WindowGateway }) {
       title={t("settings.windowSize")}
       description={t("settings.windowSizeDescription")}
       action={supported ? (
-        <button className="settings-button" type="button" disabled={resize.isPending} onClick={() => resize.mutate(null)}>
+        <button className="app-button is-quiet" type="button" disabled={resize.isPending} onClick={() => resize.mutate(null)}>
           <Maximize2 aria-hidden="true" />{t("settings.maximize")}
         </button>
       ) : undefined}
@@ -558,17 +628,17 @@ function WindowSection({ gateway }: { gateway: WindowGateway }) {
       ) : null}
       {metrics.isPending ? (
         <p className="settings-note settings-loading">
-          <LoaderCircle className="settings-spin" aria-hidden="true" />
+          <LoaderCircle className="app-spin" aria-hidden="true" />
           {t("settings.windowLoading")}
         </p>
       ) : null}
       {metrics.error ? (
-        <p className="settings-error" role="alert">
+        <p className="app-callout" role="alert">
           {t("common.requestFailed", { error: String(metrics.error) })}
         </p>
       ) : null}
       {resize.error ? (
-        <p className="settings-error" role="alert">{t("common.requestFailed", { error: String(resize.error) })}</p>
+        <p className="app-callout" role="alert">{t("common.requestFailed", { error: String(resize.error) })}</p>
       ) : null}
     </SettingsSection>
   );
@@ -620,7 +690,7 @@ function KeyBindingSection() {
       title={t("settings.keyBindings")}
       description={t("settings.keyBindingsDescription")}
       action={(
-        <button className="settings-button" type="button" onClick={() => { resetAll(); setFeedback(null); setListening(null); }}>
+        <button className="app-button is-quiet" type="button" onClick={() => { resetAll(); setFeedback(null); setListening(null); }}>
           <RotateCcw aria-hidden="true" />{t("settings.bindingResetAll")}
         </button>
       )}
@@ -800,7 +870,7 @@ function ScannerRootSection({ gateway }: { gateway: ScannerRootPreferenceGateway
         <div>
           <small>{source}</small>
           {preference.isPending ? (
-            <strong><LoaderCircle className="settings-spin" aria-hidden="true" />{t("settings.scannerRootLoading")}</strong>
+            <strong><LoaderCircle className="app-spin" aria-hidden="true" />{t("settings.scannerRootLoading")}</strong>
           ) : (
             <strong>{preference.data?.displayPath
               ? <code className="app-path">{displayPath(preference.data.displayPath)}</code>
@@ -818,45 +888,18 @@ function ScannerRootSection({ gateway }: { gateway: ScannerRootPreferenceGateway
           ) : null}
         </div>
         <div className="settings-folder-actions">
-          <button className="settings-button" type="button" disabled={pending} onClick={() => choose.mutate()}>
-            {choose.isPending ? <LoaderCircle className="settings-spin" aria-hidden="true" /> : <FolderOpen aria-hidden="true" />}
+          <button className="app-button is-quiet" type="button" disabled={pending} onClick={() => choose.mutate()}>
+            {choose.isPending ? <LoaderCircle className="app-spin" aria-hidden="true" /> : <FolderOpen aria-hidden="true" />}
             {t("settings.chooseScannerRoot")}
           </button>
-          <button className="settings-button is-ghost" type="button" disabled={pending} onClick={() => reset.mutate()}>
-            {reset.isPending ? <LoaderCircle className="settings-spin" aria-hidden="true" /> : <RotateCcw aria-hidden="true" />}
+          <button className="app-button is-quiet is-ghost" type="button" disabled={pending} onClick={() => reset.mutate()}>
+            {reset.isPending ? <LoaderCircle className="app-spin" aria-hidden="true" /> : <RotateCcw aria-hidden="true" />}
             {t("settings.resetScannerRoot")}
           </button>
         </div>
       </div>
-      {error ? <p className="settings-error" role="alert">{t("common.requestFailed", { error: String(error) })}</p> : null}
+      {error ? <p className="app-callout" role="alert">{t("common.requestFailed", { error: String(error) })}</p> : null}
     </SettingsSection>
   );
 }
 
-function SettingsSwitch({
-  checked,
-  label,
-  help,
-  onChange,
-}: {
-  checked: boolean;
-  label: string;
-  help: string;
-  onChange: (checked: boolean) => void;
-}) {
-  return (
-    <button
-      className="settings-switch"
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-    >
-      <span>
-        <strong>{label}</strong>
-        <small>{help}</small>
-      </span>
-      <span className="settings-switch-track" aria-hidden="true" />
-    </button>
-  );
-}

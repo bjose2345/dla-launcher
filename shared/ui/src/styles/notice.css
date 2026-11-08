@@ -38,7 +38,7 @@
 
 .app-notice.is-progress .app-notice-icon {
   color: var(--color-primary);
-  animation: scanner-spin 0.9s linear infinite;
+  animation: app-spin 0.9s linear infinite;
 }
 
 .app-notice.is-problem .app-notice-icon {

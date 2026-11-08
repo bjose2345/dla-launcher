@@ -202,10 +202,6 @@
     gap: 14px;
   }
 
-  .catalog-day-density {
-    align-content: end;
-  }
-
   .catalog-month-loading {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     padding: 15px;
@@ -279,17 +275,6 @@
     align-items: flex-start;
     flex-direction: column;
     gap: 9px;
-  }
-
-  .catalog-day-density {
-    width: 100%;
-    align-items: start;
-    justify-items: start;
-    overflow: hidden;
-  }
-
-  .catalog-day-density > div {
-    max-width: 100%;
   }
 
   .catalog-month-loading {

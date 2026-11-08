@@ -10,6 +10,7 @@ import {
 import { useState } from "react";
 
 import { ActionMenu } from "../../app/ActionMenu";
+import { ProgressBar } from "../../app/ProgressBar";
 import { displayPath } from "../../displayPath";
 import { formatByteSize } from "../../formatByteSize";
 import type { MessageKey } from "../../i18n/catalogs";
@@ -17,6 +18,7 @@ import { usePresentation } from "../../preferences/PresentationProvider";
 import { CatalogWorkPicker } from "../catalog/CatalogWorkPicker";
 import type { CatalogDetailGateway, CatalogWork } from "../catalog/types";
 import { WorkCardImage } from "../catalog/WorkCardImage";
+import { localizedName, workTitle } from "../catalog/localizedNames";
 import type { ManageTab } from "../library/LibraryManageDrawer";
 import type { PackagePreparationProgress } from "../library/types";
 import { packagePreparationPercent } from "../library/usePackagePreparationProgress";
@@ -28,6 +30,7 @@ import type {
   ScanFindingRefusal,
   ScanInstall,
 } from "./types";
+import { pluralText } from "../../i18n/pluralText";
 
 export type RowOutcome =
   | { kind: "added"; installationId: string; workCode: string | null }
@@ -119,7 +122,7 @@ export function ScanFindingRow({
       <div className="scan-finding-copy">
         <div className="scan-finding-title">
           <strong>{title}</strong>
-          {circle ? <span>{preferEnglish && circle.nameEnglish.trim() ? circle.nameEnglish : circle.name}</span> : null}
+          {circle ? <span>{localizedName(circle.name, circle.nameEnglish, preferEnglish)}</span> : null}
           {finding.state === "unknown" && !work ? <em>{t("scanner.unknownWork")}</em> : null}
         </div>
         <div className="scan-finding-facts">
@@ -140,7 +143,7 @@ export function ScanFindingRow({
         {status === "open" && finding.state === "ready" ? (
           <>
             <button
-              className="scan-button is-primary"
+              className="app-button is-primary"
               type="button"
               disabled={busy}
               onClick={() => onAdd({ key: finding.key })}
@@ -311,7 +314,7 @@ export function ScanFindingRow({
           </details>
           <div className="scan-finding-choose-actions">
             <button
-              className="scan-button is-primary"
+              className="app-button is-primary"
               type="button"
               disabled={busy || !picked}
               onClick={() => picked && onAdd({ key: finding.key, workCode: picked.code })}
@@ -331,7 +334,7 @@ export function ScanFindingRow({
               </button>
             ) : (
               <button
-                className="scan-button"
+                className="app-button"
                 type="button"
                 disabled={busy}
                 onClick={() => onAdd({ key: finding.key, unknown: true })}
@@ -358,14 +361,19 @@ function InstallProgress({
   return (
     <span className="scan-finding-progress">
       <span>
-        <LoaderCircle className="scan-spin" aria-hidden="true" />
+        <LoaderCircle className="app-spin" aria-hidden="true" />
         {status === "queued"
           ? t("scanner.status.queued")
           : percent === null
             ? t("scanner.status.installing")
             : t("scanner.status.installingPercent", { percent })}
       </span>
-      <progress max={100} value={percent ?? undefined} aria-label={t("scanner.status.installing")} />
+      <ProgressBar
+        percent={percent}
+        state={status === "queued" ? "waiting" : "running"}
+        size="slim"
+        label={t("scanner.status.installing")}
+      />
     </span>
   );
 }
@@ -395,9 +403,7 @@ function kindLabel(
       : t("scanner.kind.archive", { size });
   }
   if (finding.kind === "file") return t("scanner.kind.file", { size });
-  return finding.fileCount === 1
-    ? t("scanner.kind.folderOne", { size })
-    : t("scanner.kind.folder", { count: finding.fileCount.toLocaleString(locale), size });
+  return pluralText(t, locale, finding.fileCount, "scanner.kind.folderOne", "scanner.kind.folder", { size });
 }
 
 function refusalKey(refusal: ScanFindingRefusal): MessageKey {
@@ -410,12 +416,8 @@ function refusalKey(refusal: ScanFindingRefusal): MessageKey {
   }
 }
 
-export function workTitle(work: CatalogWork, preferEnglish: boolean): string {
-  return preferEnglish && work.titleEnglish.trim() ? work.titleEnglish : work.title;
-}
-
 function candidateCircle(work: CatalogWork | undefined, preferEnglish: boolean): string {
   const circle = work?.circles[0];
   if (!circle) return "";
-  return `${preferEnglish && circle.nameEnglish.trim() ? circle.nameEnglish : circle.name} · `;
+  return `${localizedName(circle.name, circle.nameEnglish, preferEnglish)} · `;
 }

@@ -7,6 +7,7 @@ use std::{
 };
 
 use dla_application::{
+    cancellation::CancellationToken,
     delivery::InstallFolderStore,
     installation_review::InstallationReviewService,
     maintenance::LibraryMaintenanceService,
@@ -96,7 +97,7 @@ struct Queued {
 struct State {
     installs: Vec<ScanInstall>,
     queue: VecDeque<Queued>,
-    cancels: HashMap<InstallationId, Arc<AtomicBool>>,
+    cancels: HashMap<InstallationId, CancellationToken>,
 }
 
 /// Installs the archives a scan found, one after another, into the install
@@ -360,7 +361,7 @@ impl ScanInstallController {
                     None,
                 );
             } else if let Some(cancel) = state.cancels.get(installation_id) {
-                cancel.store(true, Ordering::SeqCst);
+                cancel.cancel();
             }
             queued.is_some()
         };
@@ -404,13 +405,13 @@ impl ScanInstallController {
         });
     }
 
-    fn next(&self) -> Option<(Queued, Arc<AtomicBool>)> {
+    fn next(&self) -> Option<(Queued, CancellationToken)> {
         let mut state = self.state.lock().ok()?;
         let next = state.queue.pop_front()?;
-        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel = CancellationToken::default();
         state
             .cancels
-            .insert(next.installation_id.clone(), Arc::clone(&cancel));
+            .insert(next.installation_id.clone(), cancel.clone());
         set_status(
             &mut state,
             &next.installation_id,
@@ -422,7 +423,7 @@ impl ScanInstallController {
         Some((next, cancel))
     }
 
-    fn install(&self, (queued, cancel): (Queued, Arc<AtomicBool>)) {
+    fn install(&self, (queued, cancel): (Queued, CancellationToken)) {
         let id = queued.installation_id.clone();
         let (status, detail) = self.prepare_and_confirm(queued, &cancel);
         if status == ScanInstallStatus::Cancelled {
@@ -443,7 +444,7 @@ impl ScanInstallController {
     fn prepare_and_confirm(
         &self,
         queued: Queued,
-        cancel: &AtomicBool,
+        cancel: &CancellationToken,
     ) -> (ScanInstallStatus, Option<String>) {
         let folder = match self.folders.read_install_folder(platform()) {
             Ok(Some(folder)) => folder,
@@ -455,7 +456,7 @@ impl ScanInstallController {
             }
             Err(error) => return (ScanInstallStatus::Failed, Some(error.to_string())),
         };
-        let cancelled = || cancel.load(Ordering::SeqCst);
+        let cancelled = || cancel.is_cancelled();
         match self.preparation.execute_now(
             queued.installation_id.clone(),
             folder,

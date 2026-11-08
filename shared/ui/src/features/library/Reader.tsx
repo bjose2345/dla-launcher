@@ -20,13 +20,12 @@ import {
   useMemo,
   useRef,
   useState,
-  type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent,
-  type WheelEvent as ReactWheelEvent,
 } from "react";
 
+import { errorMessage } from "../../app/errorMessage";
 import { useBoundKeys } from "../../preferences/KeyBindingsProvider";
 import type { MessageKey } from "../../preferences/preferences";
+import { BackButton } from "../../app/BackButton";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import type { ImageSetViewer } from "./imageViewerModel";
 import { mediaItemName } from "./mediaSession";
@@ -38,6 +37,9 @@ import {
   useElementSize,
   useEscapeClosesPanel,
   useFullscreen,
+  usePreloadedImages,
+  useResumeNotice,
+  useStageGestures,
 } from "./readerControls";
 import { useReader, type ReaderPosition } from "./ReaderProvider";
 import { ImagePage, PdfPage, PdfThumbnail, StripView } from "./ReaderPages";
@@ -61,15 +63,11 @@ import {
   type ReaderLayout,
   type ReaderPreferences,
 } from "./readerModel";
-import type { LibraryGateway } from "./types";
+import type { MediaDelivery, LibraryGateway } from "./types";
+import { pluralText } from "../../i18n/pluralText";
 
-const WHEEL_TURN_DELAY_MS = 320;
-const WHEEL_TURN_THRESHOLD = 35;
 const ZOOM_STEP = 0.15;
-const DRAG_THRESHOLD_PX = 6;
-const EDGE_REVEAL_TOP_PX = 90;
 const EDGE_REVEAL_BOTTOM_PX = 150;
-const RESUME_NOTICE_MS = 7_000;
 const READER_ACTIONS: ReadonlySet<string> = new Set([
   "readerNextPage",
   "readerPreviousPage",
@@ -85,20 +83,11 @@ const READER_ACTIONS: ReadonlySet<string> = new Set([
   "readerClose",
 ]);
 
-interface DragState {
-  pointerId: number;
-  x: number;
-  y: number;
-  left: number;
-  top: number;
-  moved: boolean;
-}
-
 export function Reader({
   gateway,
   onOpenIn,
 }: {
-  gateway: Pick<LibraryGateway, "mediaAssetUrl" | "mediaThumbnailUrl">;
+  gateway: Pick<LibraryGateway, "mediaAssetUrl" | "mediaThumbnailUrl" | "documentDelivery">;
   /** Offered for image sets, which open in the CG viewer unless moved here. */
   onOpenIn?: (viewer: ImageSetViewer, position: ReaderPosition) => void;
 }) {
@@ -112,9 +101,6 @@ export function Reader({
   const isPdf = session.action === "open_document";
   const rootRef = useRef<HTMLElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<DragState | null>(null);
-  const draggedRef = useRef(false);
-  const wheelAtRef = useRef(0);
 
   const [preferences, setPreferences] = useState<ReaderPreferences>(() => (
     readReaderPreferences(session.installationId, defaultReaderPreferences(reader.manga))
@@ -122,9 +108,9 @@ export function Reader({
   const [position, setPosition] = useState<ReaderPosition>(start);
   const [chrome, setChrome] = useState(true);
   const [panel, setPanel] = useState<"settings" | "shortcuts" | null>(null);
-  const [resumeNotice, setResumeNotice] = useState(() => (
-    reader.resumed && (start.page > 0 || (isPdf && start.ordinal !== items[0]?.ordinal))
-  ));
+  const [resumeNotice, dismissResumeNotice] = useResumeNotice(
+    reader.resumed && (start.page > 0 || (isPdf && start.ordinal !== items[0]?.ordinal)),
+  );
   const [endCard, setEndCard] = useState(false);
   const [sizes, setSizes] = useState<ReadonlyMap<number, PageBox>>(new Map());
   const stage = useElementSize(stageRef);
@@ -133,7 +119,7 @@ export function Reader({
   const itemIndex = Math.max(0, items.findIndex((item) => item.ordinal === position.ordinal));
   const pdfItem = isPdf ? items[itemIndex] : undefined;
   const pdfUrl = pdfItem ? gateway.mediaAssetUrl(session.id, pdfItem.ordinal) : null;
-  const pdfState = usePdfDocument(pdfUrl);
+  const pdfState = usePdfDocument(pdfUrl, gateway.documentDelivery);
   const pdf = pdfState.pdf;
   const count = isPdf ? (pdf?.pageCount ?? 0) : items.length;
   const page = count ? Math.min(position.page, count - 1) : 0;
@@ -142,12 +128,6 @@ export function Reader({
   useEffect(() => {
     writeReaderPreferences(session.installationId, preferences);
   }, [preferences, session.installationId]);
-
-  useEffect(() => {
-    if (!resumeNotice) return;
-    const timer = window.setTimeout(() => setResumeNotice(false), RESUME_NOTICE_MS);
-    return () => window.clearTimeout(timer);
-  }, [resumeNotice]);
 
   // A new PDF of a work with several brings its own page sizes.
   useEffect(() => setSizes(new Map()), [pdf]);
@@ -202,7 +182,7 @@ export function Reader({
     if (!count) return;
     const next = Math.max(0, Math.min(count - 1, index));
     setPosition({ ordinal: ordinalFor(next), page: next });
-    setResumeNotice(false);
+    dismissResumeNotice();
     setEndCard(false);
     if (turning && preferences.hideControls) {
       setChrome(false);
@@ -268,65 +248,15 @@ export function Reader({
   const closePanel = useCallback(() => setPanel(null), []);
   useEscapeClosesPanel(panel !== null, closePanel);
 
-  const onWheel = (event: ReactWheelEvent<HTMLElement>) => {
-    if (layout === "strip") return;
-    if (event.ctrlKey || event.metaKey) {
-      event.preventDefault();
-      changeZoom(event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP);
-      return;
-    }
-    const scroller = stageRef.current;
-    if (scroller && (scroller.scrollHeight > scroller.clientHeight + 1 || scroller.scrollWidth > scroller.clientWidth + 1)) {
-      // The click zones sit over the page, so a zoomed page is scrolled here.
-      event.preventDefault();
-      scroller.scrollBy({ left: event.deltaX, top: event.deltaY });
-      return;
-    }
-    const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
-    if (Math.abs(delta) < WHEEL_TURN_THRESHOLD || Date.now() - wheelAtRef.current < WHEEL_TURN_DELAY_MS) return;
-    wheelAtRef.current = Date.now();
-    turn(delta > 0 ? 1 : -1);
-  };
-
-  const onPointerDown = (event: ReactPointerEvent<HTMLElement>) => {
-    draggedRef.current = false;
-    const scroller = stageRef.current;
-    if (layout === "strip" || event.button !== 0 || !scroller) return;
-    if ((event.target as Element).closest(".reader-bar, .reader-panel, .reader-card")) return;
-    dragRef.current = {
-      pointerId: event.pointerId,
-      x: event.clientX,
-      y: event.clientY,
-      left: scroller.scrollLeft,
-      top: scroller.scrollTop,
-      moved: false,
-    };
-  };
-  const onPointerMove = (event: ReactPointerEvent<HTMLElement>) => {
-    if (event.clientY < EDGE_REVEAL_TOP_PX || event.clientY > window.innerHeight - EDGE_REVEAL_BOTTOM_PX) {
-      setChrome(true);
-    }
-    const drag = dragRef.current;
-    const scroller = stageRef.current;
-    if (!drag || drag.pointerId !== event.pointerId || !scroller) return;
-    const dx = event.clientX - drag.x;
-    const dy = event.clientY - drag.y;
-    if (!drag.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
-    drag.moved = true;
-    draggedRef.current = true;
-    scroller.scrollLeft = drag.left - dx;
-    scroller.scrollTop = drag.top - dy;
-  };
-  const onPointerUp = () => {
-    dragRef.current = null;
-  };
-  const zone = (action: () => void) => () => {
-    if (draggedRef.current) return;
-    action();
-  };
-  // Clicks on the page leave focus on the reader, so the arrow keys keep
-  // working and no focus ring lights up on a click area.
-  const keepFocus = (event: ReactMouseEvent) => event.preventDefault();
+  const { onWheel, onPointerDown, onPointerMove, onPointerUp, zone, keepFocus } = useStageGestures({
+    stageRef,
+    enabled: layout !== "strip",
+    ignore: ".reader-bar, .reader-panel, .reader-card",
+    revealBottomPx: EDGE_REVEAL_BOTTOM_PX,
+    onZoom: (direction) => changeZoom(direction * ZOOM_STEP),
+    onTurn: turn,
+    onReveal: () => setChrome(true),
+  });
   const sideLabel = (side: "left" | "right") => (
     t(horizontalStep(side, direction) > 0 ? "settings.action.nextPage" : "settings.action.previousPage")
   );
@@ -338,7 +268,7 @@ export function Reader({
     : shown.length > 1
       ? t("reader.positionSpread", { first: shown[0]! + 1, last: shown.at(-1)! + 1, total: count })
       : t("reader.position", { page: page + 1, total: count });
-  const pageCountLabel = count === 1 ? t("reader.pageCountOne") : t("reader.pageCount", { count });
+  const pageCountLabel = pluralText(t, locale, count, "reader.pageCountOne", "reader.pageCount");
   const thumbnails = count ? nearbyPages(page, count) : [];
 
   const boxFor = useCallback((index: number, together: number) => pageBox(
@@ -371,7 +301,7 @@ export function Reader({
     ? []
     : [shown.at(-1)! + 1, shown.at(-1)! + together, shown[0]! - 1, shown[0]! - together];
 
-  usePreloadedImages(isPdf ? [] : items, page, gateway, session.id);
+  usePreloadedImages(isPdf ? [] : [page - 1, page + 1, page + 2], items, gateway, session.id);
   usePrerenderedPages(pdf, ahead, (index) => boxFor(index, together));
 
   const stageReady = stage.width > 0 && stage.height > 0;
@@ -389,7 +319,7 @@ export function Reader({
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
     >
-      <div className="reader-stage" ref={stageRef}>
+      <div className="reader-stage scrollbar-hidden" ref={stageRef}>
         {pdfState.error ? (
           <div className="reader-card reader-message" role="alert">
             <AlertTriangle aria-hidden="true" />
@@ -401,7 +331,7 @@ export function Reader({
           </div>
         ) : opening ? (
           <div className="reader-message" role="status">
-            <LoaderCircle className="library-spin" aria-hidden="true" />
+            <LoaderCircle className="app-spin" aria-hidden="true" />
             <span>{t("reader.opening")}</span>
           </div>
         ) : !count ? (
@@ -462,16 +392,7 @@ export function Reader({
 
       {chrome ? (
         <header className="reader-bar reader-top">
-          <button
-            className="reader-icon-button reader-back"
-            type="button"
-            aria-label={t("library.back")}
-            title={t("library.back")}
-            disabled={reader.closing}
-            onClick={() => void reader.close()}
-          >
-            {reader.closing ? <LoaderCircle className="library-spin" aria-hidden="true" /> : <ArrowLeft aria-hidden="true" />}
-          </button>
+          <BackButton closing={reader.closing} onClick={() => void reader.close()} />
           <div className="reader-title">
             <strong title={title}>{title}</strong>
             <span>
@@ -579,7 +500,7 @@ export function Reader({
         <div className="reader-toast" role="status">
           <span>{t("reader.resumed", { page: page + 1 })}</span>
           <button className="reader-chip-button is-outline" type="button" onClick={() => goTo(0)}>{t("reader.startOver")}</button>
-          <button className="reader-icon-button is-plain" type="button" aria-label={t("notice.close")} onClick={() => setResumeNotice(false)}>
+          <button className="reader-icon-button is-plain" type="button" aria-label={t("notice.close")} onClick={() => dismissResumeNotice()}>
             <X aria-hidden="true" />
           </button>
         </div>
@@ -710,7 +631,7 @@ function ReaderSettings({
   );
 }
 
-function usePdfDocument(url: string | null): { pdf: PdfDocument | null; error: string } {
+function usePdfDocument(url: string | null, delivery: MediaDelivery | undefined): { pdf: PdfDocument | null; error: string } {
   const [state, setState] = useState<{ url: string | null; pdf: PdfDocument | null; error: string }>({
     url: null,
     pdf: null,
@@ -721,7 +642,7 @@ function usePdfDocument(url: string | null): { pdf: PdfDocument | null; error: s
     let current = true;
     let opened: PdfDocument | null = null;
     setState({ url, pdf: null, error: "" });
-    openPdfDocument(url).then(
+    openPdfDocument(url, delivery).then(
       (pdf) => {
         if (!current) {
           pdf.destroy();
@@ -731,34 +652,15 @@ function usePdfDocument(url: string | null): { pdf: PdfDocument | null; error: s
         setState({ url, pdf, error: "" });
       },
       (cause: unknown) => {
-        if (current) setState({ url, pdf: null, error: cause instanceof Error ? cause.message : String(cause) });
+        if (current) setState({ url, pdf: null, error: errorMessage(cause) });
       },
     );
     return () => {
       current = false;
       opened?.destroy();
     };
-  }, [url]);
+  }, [delivery, url]);
   return state.url === url ? state : { pdf: null, error: "" };
-}
-
-function usePreloadedImages(
-  items: { ordinal: number }[],
-  page: number,
-  gateway: Pick<LibraryGateway, "mediaAssetUrl">,
-  sessionId: string,
-) {
-  useEffect(() => {
-    const preloaders = [page - 1, page + 1, page + 2].flatMap((index) => {
-      const item = items[index];
-      if (!item) return [];
-      const image = new window.Image();
-      image.decoding = "async";
-      image.src = gateway.mediaAssetUrl(sessionId, item.ordinal);
-      return [image];
-    });
-    return () => preloaders.forEach((image) => { image.src = ""; });
-  }, [gateway, items, page, sessionId]);
 }
 
 function usePrerenderedPages(

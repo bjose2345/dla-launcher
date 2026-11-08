@@ -12,6 +12,7 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 
+import { useResizeObserver } from "../../app/useResizeObserver";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import { ArchiveImagePlaceholder } from "./ArchiveImagePlaceholder";
 import {
@@ -63,16 +64,7 @@ export function WorkGallery({
 
   useEffect(() => setStates(createTileStates(images)), [imageKey]);
 
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-    const measure = () => setColumnCount(galleryColumnCount(root.getBoundingClientRect().width));
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(root);
-    return () => observer.disconnect();
-  }, [layout]);
+  useResizeObserver(rootRef, (root) => setColumnCount(galleryColumnCount(root.getBoundingClientRect().width)), [layout]);
 
   const columns = useMemo(
     () => balanceGalleryColumns(images.map((_, index) => states[index]?.ratio ?? defaultGalleryRatio), columnCount),

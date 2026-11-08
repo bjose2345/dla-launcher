@@ -5,6 +5,8 @@ import { useEffect, useId, useState } from "react";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import type { SearchGateway } from "../search/types";
 import { emptyCatalogFacetFilters } from "./catalogFilters";
+import { catalogKeys } from "./catalogQueryKeys";
+import { localizedName, workTitle } from "./localizedNames";
 import type { CatalogDetailGateway, CatalogWork } from "./types";
 import { WorkCardImage } from "./WorkCardImage";
 
@@ -32,7 +34,7 @@ export function CatalogWorkPicker({
   const query = useDebounced(text.trim(), 250);
   const byCode = workCodePattern.test(query);
   const results = useQuery({
-    queryKey: ["catalog-work-picker", query],
+    queryKey: catalogKeys.workPicker(query),
     queryFn: async (): Promise<CatalogWork[]> => {
       if (byCode) return catalogGateway.readWorks([query.toUpperCase()]);
       const response = await searchGateway!.search({
@@ -62,13 +64,13 @@ export function CatalogWorkPicker({
           aria-label={t("catalog.picker.label")}
           onChange={(event) => setText(event.target.value)}
         />
-        {results.isFetching ? <LoaderCircle className="catalog-work-picker-spin" aria-hidden="true" /> : null}
+        {results.isFetching ? <LoaderCircle className="app-spin" aria-hidden="true" /> : null}
       </label>
       {results.isSuccess && query ? (
         works.length ? (
           <ul className="catalog-work-picker-results">
             {works.slice(0, RESULT_LIMIT).map((work) => {
-              const title = preferEnglish && work.titleEnglish.trim() ? work.titleEnglish : work.title;
+              const title = workTitle(work, preferEnglish);
               const circle = work.circles[0];
               return (
                 <li key={work.code}>
@@ -84,7 +86,7 @@ export function CatalogWorkPicker({
                     <span className="catalog-work-picker-copy">
                       <strong>{title}</strong>
                       <small>
-                        {circle ? `${preferEnglish && circle.nameEnglish.trim() ? circle.nameEnglish : circle.name} · ` : ""}
+                        {circle ? `${localizedName(circle.name, circle.nameEnglish, preferEnglish)} · ` : ""}
                         {work.code}
                       </small>
                     </span>

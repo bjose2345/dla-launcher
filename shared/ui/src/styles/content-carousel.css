@@ -39,13 +39,7 @@
   scroll-behavior: smooth;
   scroll-padding-inline: 2px;
   scroll-snap-type: inline proximity;
-  scrollbar-width: none;
   user-select: none;
-  -ms-overflow-style: none;
-}
-
-.content-carousel-track::-webkit-scrollbar {
-  display: none;
 }
 
 .content-carousel-track[data-dragging="true"] {

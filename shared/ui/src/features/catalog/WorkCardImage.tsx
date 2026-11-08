@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { useImageSourceChain } from "../../app/useImageSourceChain";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import { ArchiveImagePlaceholder } from "./ArchiveImagePlaceholder";
 import { visualImageUrls } from "./workImages";
@@ -22,15 +23,9 @@ export function WorkCardImage({
     () => visualImageUrls({ mainImageUrls, thumbnailUrls }),
     [mainImageUrls, thumbnailUrls],
   );
-  const [candidate, setCandidate] = useState(0);
+  const { source, advance } = useImageSourceChain(candidates, code);
   const [loaded, setLoaded] = useState(false);
-
-  useEffect(() => {
-    setCandidate(0);
-    setLoaded(false);
-  }, [code, candidates]);
-
-  const source = candidates[candidate];
+  useEffect(() => setLoaded(false), [code, candidates]);
   if (!source) {
     return <ArchiveImagePlaceholder className="work-card-image-missing" label={t("image.noCover", { title })} />;
   }
@@ -50,7 +45,7 @@ export function WorkCardImage({
         onLoad={() => setLoaded(true)}
         onError={() => {
           setLoaded(false);
-          setCandidate((current) => current + 1);
+          advance();
         }}
       />
     </span>

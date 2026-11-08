@@ -72,7 +72,7 @@ describe("DeliveryActivity", () => {
     renderActivity(view([job("1", "RJ01", "downloading")]));
 
     expect(await screen.findByText("Title RJ01")).toBeTruthy();
-    expect(document.querySelector(".delivery-activity progress")).toBeTruthy();
+    expect(document.querySelector(".sidebar-activity .app-progress")).toBeTruthy();
   });
 
   it("announces a job that finished before the view first showed it, but not older jobs", async () => {

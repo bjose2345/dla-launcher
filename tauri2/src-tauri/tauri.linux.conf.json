@@ -10,7 +10,8 @@
     ],
     "resources": {
       "binaries/7zip/linux/License.txt": "licenses/7-Zip.txt",
-      "binaries/cloudflared/LICENSE": "licenses/cloudflared.txt"
+      "binaries/cloudflared/LICENSE": "licenses/cloudflared.txt",
+      "../crates/dla-translator/data/JMnedict-NOTICE.txt": "licenses/JMnedict.txt"
     }
   }
 }

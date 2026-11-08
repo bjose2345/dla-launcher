@@ -4,29 +4,43 @@ import {
   Check,
   CheckCircle2,
   CircleHelp,
+  Eraser,
   ExternalLink,
   FolderOpen,
+  ListX,
   LoaderCircle,
   PackageOpen,
+  RefreshCw,
   ShieldCheck,
+  Trash2,
+  Undo2,
   Wrench,
   X,
 } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { useDocumentScrollLock } from "../../app/useDocumentScrollLock";
+import { ProgressBar } from "../../app/ProgressBar";
+import { Switch } from "../../app/Switch";
+import { useModalDialog } from "../../app/useModalDialog";
 import { displayPath } from "../../displayPath";
 import { formatByteSize } from "../../formatByteSize";
 import { launchActionMessageKey, mediaTypeMessageKey } from "../../i18n/domainLabels";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import { CatalogWorkPicker } from "../catalog/CatalogWorkPicker";
+import { catalogKeys } from "../catalog/catalogQueryKeys";
+import { workTitle } from "../catalog/localizedNames";
 import type { CatalogDetailGateway, CatalogWork } from "../catalog/types";
+import type { DeliveryGateway } from "../delivery/types";
 import { WorkCardImage } from "../catalog/WorkCardImage";
 import type { ScanInstallGateway } from "../scanner/types";
 import { scanInstallIsActive } from "../scanner/types";
 import { acceptScanInstallView, useScanInstalls } from "../scanner/useScanInstalls";
 import type { SearchGateway } from "../search/types";
-import { libraryDisplayCreator, libraryDisplayTitle } from "./libraryHome";
+import { GameTranslationTab } from "../translation/GameTranslationTab";
+import { untranslatableLanguage } from "../translation/language";
+import type { TranslationGateway } from "../translation/types";
+import { InstalledFileTree, type InstalledFile } from "./InstalledFileTree";
+import { libraryContentKind, libraryDisplayCreator, libraryDisplayTitle } from "./libraryHome";
 import { OwnWorkDetailsEditor, ownWorkDetailsKey, type OwnWorkSaveState } from "./OwnWorkDetailsEditor";
 import { useOwnWork } from "./ownWorkDetails";
 import {
@@ -49,13 +63,17 @@ import type {
   InstallationHealthReport,
   LaunchCandidate,
   LibraryGateway,
+  MediaPlayerKind,
   MediaType,
   PreparedPackageInstallation,
   OwnWorkDetails,
+  VisualCppRuntime,
+  WindowScale,
 } from "./types";
 import { packagePreparationPercent, usePackagePreparationProgress } from "./usePackagePreparationProgress";
 
 import { manageTabs, type ManageTab } from "./types";
+import { pluralText } from "../../i18n/pluralText";
 
 export type { ManageTab };
 
@@ -73,10 +91,51 @@ const mediaTypes: MediaType[] = [
 
 type SaveState = "idle" | "saving" | "saved" | "failed";
 
+const tabLabelKeys = {
+  general: "library.manage.tab.general",
+  files: "library.manage.tab.installedFiles",
+  display: "library.manage.tab.display",
+  translation: "library.manage.tab.translation",
+} as const satisfies Record<ManageTab, string>;
+
+/** A work the launcher can start: the only kind it can translate. */
+/** A work that is a video: by what it starts with, what it holds, or its catalog category. */
+function isVideoWork(installation: Installation, work: CatalogWork | undefined, own: OwnWorkDetails | undefined): boolean {
+  if (own?.kind === "video") return true;
+  if (work?.categories.some((category) => /video|動画/i.test(`${category.name} ${category.nameEnglish}`))) return true;
+  const action = installation.overrides.preferredAction?.action
+    ?? installation.detection.launchCandidates[0]?.action
+    ?? null;
+  return libraryContentKind(installation, action) === "video";
+}
+
+function isAudioWork(installation: Installation, work: CatalogWork | undefined, own: OwnWorkDetails | undefined): boolean {
+  if (own?.kind === "voice") return true;
+  if (work?.categories.some((category) => /voice|audio|音声|ボイス|ASMR/i.test(`${category.name} ${category.nameEnglish}`))) return true;
+  const action = installation.overrides.preferredAction?.action
+    ?? installation.detection.launchCandidates[0]?.action
+    ?? null;
+  return libraryContentKind(installation, action) === "audio";
+}
+
+function isGame(installation: Installation): boolean {
+  return installation.detection.launchCandidates.length > 0
+    || installation.detection.contentItems.some((item) => item.mediaType === "executable");
+}
+
+/** A work that starts a program, the only kind a resolution applies to. */
+function isApp(installation: Installation): boolean {
+  const action = installation.overrides.preferredAction?.action
+    ?? installation.detection.launchCandidates[0]?.action
+    ?? null;
+  return libraryContentKind(installation, action) === "apps";
+}
+
 /**
  * A Library work's properties, as game launchers present them: General for
  * its name, catalog match and start file; Installed files for its folder,
- * verification and uninstalling. Each change saves as it is made.
+ * verification and uninstalling; Translation for games. Each change saves as
+ * it is made.
  */
 export function LibraryManageDrawer({
   installationId,
@@ -85,17 +144,27 @@ export function LibraryManageDrawer({
   catalogGateway,
   searchGateway,
   installs,
+  translationGateway,
+  deliveryGateway,
   onClose,
   onOpenWork,
+  onOpenTranslationSettings,
+  onOpenExternal,
 }: {
   installationId: string;
   initialTab?: ManageTab;
   gateway: LibraryGateway;
-  catalogGateway: Pick<CatalogDetailGateway, "readWorks">;
+  catalogGateway: Pick<CatalogDetailGateway, "readWorks"> & Partial<Pick<CatalogDetailGateway, "read">>;
   searchGateway?: Pick<SearchGateway, "search">;
   installs?: ScanInstallGateway;
+  /** Game translation, where the launcher can start games. */
+  translationGateway?: TranslationGateway;
+  /** Signs in to DLA for the Archive's translations, where downloads work. */
+  deliveryGateway?: DeliveryGateway;
   onClose: () => void;
   onOpenWork?: (workCode: string) => void;
+  onOpenTranslationSettings?: () => void;
+  onOpenExternal?: (url: string) => Promise<void>;
 }) {
   const { locale, t } = usePresentation();
   const queryClient = useQueryClient();
@@ -114,11 +183,18 @@ export function LibraryManageDrawer({
   });
   const code = installation.data ? effectiveIdentity(installation.data) : null;
   const work = useQuery({
-    queryKey: ["catalog-works", code ? [code] : []],
+    queryKey: catalogKeys.works(code ? [code] : []),
     queryFn: () => catalogGateway.readWorks([code!]),
     enabled: Boolean(code),
     staleTime: 5 * 60_000,
     select: (works) => works.find((item) => item.code === code),
+  });
+  // The work's languages, which decide whether it can be translated.
+  const detail = useQuery({
+    queryKey: catalogKeys.work(code),
+    queryFn: () => catalogGateway.read!(code!),
+    enabled: Boolean(code && catalogGateway.read && translationGateway),
+    staleTime: 5 * 60_000,
   });
   const autosave = useReviewAutosave(installationId, gateway);
   const own = useQuery({
@@ -130,22 +206,27 @@ export function LibraryManageDrawer({
   const saveState = ownSave?.state ?? autosave.state;
   const saveError = ownSave?.state === "failed" ? ownSave.error : autosave.error;
 
-  useDocumentScrollLock(true);
+  useModalDialog({ dialog: panel, onClose });
   useEffect(() => {
     setTab(initialTab);
   }, [initialTab, installationId]);
-  useEffect(() => {
-    panel.current?.focus({ preventScroll: true });
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
 
   const preferEnglish = locale !== "ja-JP";
   const current = installation.data;
   const title = current ? libraryDisplayTitle(current, work.data, preferEnglish) : "";
+  const tabs = manageTabs.filter((value) => (
+    value === "translation"
+      ? Boolean(translationGateway && current && isGame(current))
+      : value === "display"
+        ? Boolean(gateway.readLaunchOptions && current && isApp(current))
+        : true
+  ));
+  const untranslatable = untranslatableLanguage(detail.data?.supportedLanguages.map((language) => language.code));
+  const shownTab = tabs.includes(tab) ? tab : "general";
+  const launch = useMutation({
+    mutationFn: () => gateway.launchInstallation(installationId),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["library", "launches"] }),
+  });
 
   return (
     <div className="library-manage-layer">
@@ -193,7 +274,7 @@ export function LibraryManageDrawer({
         </header>
 
         <p className={`library-manage-saved is-${saveState}`} role="status">
-          {saveState === "saving" ? <LoaderCircle className="library-spin" aria-hidden="true" /> : null}
+          {saveState === "saving" ? <LoaderCircle className="app-spin" aria-hidden="true" /> : null}
           {saveState === "saved" ? <Check aria-hidden="true" /> : null}
           {saveState === "failed" ? <AlertTriangle aria-hidden="true" /> : null}
           {t(saveState === "saving"
@@ -206,39 +287,56 @@ export function LibraryManageDrawer({
         </p>
 
         <div className="library-manage-tabs" role="tablist" aria-label={t("library.manage.tabs")}>
-          {manageTabs.map((value) => (
+          {tabs.map((value) => (
             <button
               type="button"
               role="tab"
-              aria-selected={tab === value}
-              className={tab === value ? "active" : undefined}
+              aria-selected={shownTab === value}
+              className={shownTab === value ? "active" : undefined}
               key={value}
               onClick={() => setTab(value)}
             >
-              {t(value === "general" ? "library.manage.tab.general" : "library.manage.tab.installedFiles")}
+              {t(tabLabelKeys[value])}
             </button>
           ))}
         </div>
 
         <div className="library-manage-body" role="tabpanel">
           {saveError ? (
-            <div className="library-callout library-callout-error" role="alert">
+            <div className="app-callout" role="alert">
               <AlertTriangle aria-hidden="true" />{t("common.requestFailed", { error: String(saveError) })}
             </div>
           ) : null}
           {installation.isPending ? (
-            <p className="library-manage-note"><LoaderCircle className="library-spin" aria-hidden="true" />{t("library.loading")}</p>
+            <p className="library-manage-note"><LoaderCircle className="app-spin" aria-hidden="true" />{t("library.loading")}</p>
           ) : null}
           {installation.error ? (
-            <div className="library-callout library-callout-error" role="alert">
+            <div className="app-callout" role="alert">
               <AlertTriangle aria-hidden="true" />{t("common.requestFailed", { error: String(installation.error) })}
             </div>
           ) : null}
-          {current && tab === "general" ? (
+          {launch.error ? (
+            <div className="app-callout" role="alert">
+              <AlertTriangle aria-hidden="true" />{t("common.requestFailed", { error: String(launch.error) })}
+            </div>
+          ) : null}
+          {current && shownTab === "general" ? (
             <GeneralTab
               installation={current}
               work={work.data}
               own={own.data ?? undefined}
+              launchOptions={gateway.readLaunchOptions ? (
+                <>
+                  {isGame(current) ? <JapaneseLocaleSection installationId={installationId} gateway={gateway} /> : null}
+                  {gateway.selectMediaPlayer ? (
+                    isVideoWork(current, work.data, own.data ?? undefined)
+                      ? <ExternalPlayerSection installationId={installationId} gateway={gateway} kind="video" />
+                      : isAudioWork(current, work.data, own.data ?? undefined)
+                        ? <ExternalPlayerSection installationId={installationId} gateway={gateway} kind="audio" />
+                        : null
+                  ) : null}
+                </>
+              ) : null}
               ownEditor={!work.data && work.fetchStatus !== "fetching" ? (
                 <OwnWorkDetailsEditor
                   installationId={installationId}
@@ -255,7 +353,7 @@ export function LibraryManageDrawer({
               onOpenWork={onOpenWork}
             />
           ) : null}
-          {current && tab === "files" ? (
+          {current && shownTab === "files" ? (
             <InstalledFilesTab
               installation={current}
               title={title}
@@ -270,6 +368,24 @@ export function LibraryManageDrawer({
                 await queryClient.invalidateQueries({ queryKey: ["scanner", "findings"] });
               }}
             />
+          ) : null}
+          {current && shownTab === "display" ? (
+            <DisplayTab installationId={installationId} gateway={gateway} />
+          ) : null}
+          {current && shownTab === "translation" && translationGateway ? (
+            detail.isLoading ? (
+              <p className="library-manage-note"><LoaderCircle className="app-spin" aria-hidden="true" />{t("library.loading")}</p>
+            ) : (
+              <GameTranslationTab
+                installationId={installationId}
+                gateway={translationGateway}
+                untranslatable={untranslatable}
+                deliveryGateway={deliveryGateway}
+                onOpenSettings={onOpenTranslationSettings}
+                onOpenExternal={onOpenExternal}
+                onPlay={() => launch.mutate()}
+              />
+            )
           ) : null}
         </div>
       </section>
@@ -319,6 +435,7 @@ function GeneralTab({
   work,
   own,
   ownEditor,
+  launchOptions,
   catalogGateway,
   searchGateway,
   onSave,
@@ -329,6 +446,8 @@ function GeneralTab({
   own: OwnWorkDetails | undefined;
   /** Shown for a work outside the catalog, after its catalog section. */
   ownEditor: ReactNode;
+  /** How the work starts, last. */
+  launchOptions?: ReactNode;
   catalogGateway: Pick<CatalogDetailGateway, "readWorks">;
   searchGateway?: Pick<SearchGateway, "search">;
   onSave: Save;
@@ -363,7 +482,7 @@ function GeneralTab({
           className="library-manage-input"
           type="text"
           value={name}
-          placeholder={work ? (preferEnglish && work.titleEnglish.trim() ? work.titleEnglish : work.title) : installationName(installation)}
+          placeholder={work ? workTitle(work, preferEnglish) : installationName(installation)}
           onChange={(event) => setName(event.target.value)}
           onBlur={commitName}
           onKeyDown={(event) => {
@@ -387,7 +506,7 @@ function GeneralTab({
                 />
               </span>
               <span className="library-manage-work-copy">
-                <strong>{preferEnglish && work.titleEnglish.trim() ? work.titleEnglish : work.title}</strong>
+                <strong>{workTitle(work, preferEnglish)}</strong>
                 <small>{libraryDisplayCreator(work, preferEnglish)} · {work.code}</small>
               </span>
             </>
@@ -404,7 +523,7 @@ function GeneralTab({
             </>
           )}
           <span className="library-manage-work-actions">
-            <button className="library-manage-button" type="button" aria-expanded={matching} onClick={() => setMatching((open) => !open)}>
+            <button className="app-button" type="button" aria-expanded={matching} onClick={() => setMatching((open) => !open)}>
               {t(matching ? "library.manage.closeMatch" : work ? "library.manage.fixMatch" : "library.manage.findInCatalog")}
             </button>
             {work && onOpenWork ? (
@@ -490,7 +609,231 @@ function GeneralTab({
           </select>
         </section>
       ) : null}
+
+      {launchOptions}
     </div>
+  );
+}
+
+// Microsoft's lasting links to the latest Visual C++ Redistributable.
+const runtimeDownloads = {
+  x64: "https://aka.ms/vs/17/release/vc_redist.x64.exe",
+  x86: "https://aka.ms/vs/17/release/vc_redist.x86.exe",
+} as const satisfies Record<VisualCppRuntime, string>;
+
+const runtimeLabelKeys = {
+  x64: "library.manage.japaneseLocaleRuntimeX64",
+  x86: "library.manage.japaneseLocaleRuntimeX86",
+} as const satisfies Record<VisualCppRuntime, string>;
+
+/** Windows only: an older game started as if Windows were Japanese. */
+function JapaneseLocaleSection({ installationId, gateway }: { installationId: string; gateway: LibraryGateway }) {
+  const { t } = usePresentation();
+  const queryClient = useQueryClient();
+  const key = ["library", "launch-options", installationId] as const;
+  const options = useQuery({ queryKey: key, queryFn: () => gateway.readLaunchOptions!(installationId) });
+  const save = useMutation({
+    mutationFn: (japaneseLocale: boolean) => gateway.saveLaunchOptions!(installationId, {
+      japaneseLocale,
+      videoPlayer: options.data?.videoPlayer ?? null,
+      audioPlayer: options.data?.audioPlayer ?? null,
+      windowScale: options.data?.windowScale ?? null,
+      refreshRate: options.data?.refreshRate ?? null,
+    }),
+    onSuccess: (saved) => queryClient.setQueryData(key, saved),
+  });
+  if (!options.data?.japaneseLocaleAvailable) return null;
+  const checked = save.isPending ? Boolean(save.variables) : options.data.japaneseLocale;
+  // Turning it on the first time downloads Locale Remulator.
+  const downloading = save.isPending && Boolean(save.variables);
+  return (
+    <section className="library-manage-field">
+      <h3>{t("library.manage.japaneseLocale")}</h3>
+      <Switch
+        checked={checked}
+        disabled={save.isPending}
+        label={t("library.manage.japaneseLocaleSwitch")}
+        help={t(downloading ? "library.manage.japaneseLocaleDownloading" : "library.manage.japaneseLocaleHelp")}
+        onChange={(next) => save.mutate(next)}
+      />
+      {checked && options.data.missingRuntimes.length ? (
+        <p className="library-manage-result is-problem">
+          <AlertTriangle aria-hidden="true" />{t("library.manage.japaneseLocaleRuntime")}
+          {gateway.openWebsite ? options.data.missingRuntimes.map((runtime) => (
+            <button
+              className="library-manage-link"
+              type="button"
+              key={runtime}
+              onClick={() => void gateway.openWebsite!(runtimeDownloads[runtime])}
+            >
+              {t(runtimeLabelKeys[runtime])}
+            </button>
+          )) : null}
+        </p>
+      ) : null}
+      {save.error ? (
+        <p className="library-manage-result is-problem" role="alert">
+          <AlertTriangle aria-hidden="true" />{t("common.requestFailed", { error: String(save.error) })}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+const windowSizes = [
+  "1280x720", "1280x960", "1600x1200", "1920x1080", "1920x1440", "2560x1440", "2560x1920",
+] as const satisfies readonly WindowScale[];
+
+const fullScreenScales = {
+  fit: "library.manage.windowScaleFit",
+  integer: "library.manage.windowScaleInteger",
+} as const satisfies Partial<Record<WindowScale, string>>;
+
+const refreshRates = {
+  60: "library.manage.refreshRate60",
+  120: "library.manage.refreshRate120",
+} as const;
+
+const DEFAULT_REFRESH_RATE = 120;
+
+type DisplayChange = { windowScale?: WindowScale | null; refreshRate?: number | null };
+
+/**
+ * Linux only, experimental: an app that opens small shown at a chosen size or
+ * full screen through gamescope, paced at a chosen refresh rate.
+ */
+function DisplayTab({ installationId, gateway }: { installationId: string; gateway: LibraryGateway }) {
+  const { t } = usePresentation();
+  const queryClient = useQueryClient();
+  const resolutionId = useId();
+  const rateId = useId();
+  const key = ["library", "launch-options", installationId] as const;
+  const options = useQuery({ queryKey: key, queryFn: () => gateway.readLaunchOptions!(installationId) });
+  const save = useMutation({
+    mutationFn: (change: DisplayChange) => gateway.saveLaunchOptions!(installationId, {
+      japaneseLocale: options.data?.japaneseLocale ?? false,
+      videoPlayer: options.data?.videoPlayer ?? null,
+      audioPlayer: options.data?.audioPlayer ?? null,
+      windowScale: change.windowScale !== undefined ? change.windowScale : options.data?.windowScale ?? null,
+      refreshRate: change.refreshRate !== undefined ? change.refreshRate : options.data?.refreshRate ?? null,
+    }),
+    onSuccess: (saved) => queryClient.setQueryData(key, saved),
+  });
+  if (!options.data) return null;
+  const pending = save.isPending ? save.variables : undefined;
+  const scale = pending?.windowScale !== undefined ? pending.windowScale : options.data.windowScale;
+  const rate = (pending?.refreshRate !== undefined ? pending.refreshRate : options.data.refreshRate) ?? DEFAULT_REFRESH_RATE;
+  return (
+    <>
+      <div className="app-callout">
+        <AlertTriangle aria-hidden="true" />{t("library.manage.displayExperimental")}
+      </div>
+      {options.data.windowScaleAvailable ? (
+        <>
+          <section className="library-manage-field">
+            <label htmlFor={resolutionId}><h3>{t("library.manage.windowScale")}</h3></label>
+            <select
+              id={resolutionId}
+              className="library-manage-input"
+              value={scale ?? ""}
+              disabled={save.isPending}
+              onChange={(event) => save.mutate({ windowScale: event.target.value === "" ? null : (event.target.value as WindowScale) })}
+            >
+              <option value="">{t("library.manage.windowScaleNative")}</option>
+              {windowSizes.map((size) => (
+                <option value={size} key={size}>{size.replace("x", " × ")}</option>
+              ))}
+              {(Object.keys(fullScreenScales) as (keyof typeof fullScreenScales)[]).map((value) => (
+                <option value={value} key={value}>{t(fullScreenScales[value])}</option>
+              ))}
+            </select>
+            <p className="library-manage-help">{t("library.manage.windowScaleHelp")}</p>
+          </section>
+          <section className="library-manage-field">
+            <label htmlFor={rateId}><h3>{t("library.manage.refreshRate")}</h3></label>
+            <select
+              id={rateId}
+              className="library-manage-input"
+              value={rate}
+              disabled={save.isPending || scale === null}
+              onChange={(event) => save.mutate({ refreshRate: Number(event.target.value) })}
+            >
+              {(Object.keys(refreshRates) as unknown as (keyof typeof refreshRates)[]).map((value) => (
+                <option value={value} key={value}>{t(refreshRates[value])}</option>
+              ))}
+            </select>
+            <p className="library-manage-help">{t("library.manage.refreshRateHelp")}</p>
+          </section>
+        </>
+      ) : (
+        <p className="library-manage-note">{t("library.manage.displayNeedsGamescope")}</p>
+      )}
+      {save.error ? (
+        <p className="library-manage-result is-problem" role="alert">
+          <AlertTriangle aria-hidden="true" />{t("common.requestFailed", { error: String(save.error) })}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+/** A player program of the user's for the work's videos or tracks, or the built-in one. */
+function ExternalPlayerSection({
+  installationId,
+  gateway,
+  kind,
+}: {
+  installationId: string;
+  gateway: LibraryGateway;
+  kind: MediaPlayerKind;
+}) {
+  const { t } = usePresentation();
+  const queryClient = useQueryClient();
+  const key = ["library", "launch-options", installationId] as const;
+  const options = useQuery({ queryKey: key, queryFn: () => gateway.readLaunchOptions!(installationId) });
+  const save = useMutation({
+    mutationFn: (player: string | null) => gateway.saveLaunchOptions!(installationId, {
+      japaneseLocale: options.data?.japaneseLocale ?? false,
+      videoPlayer: kind === "video" ? player : options.data?.videoPlayer ?? null,
+      audioPlayer: kind === "audio" ? player : options.data?.audioPlayer ?? null,
+      windowScale: options.data?.windowScale ?? null,
+      refreshRate: options.data?.refreshRate ?? null,
+    }),
+    onSuccess: (saved) => queryClient.setQueryData(key, saved),
+  });
+  const choose = useMutation({
+    mutationFn: async () => {
+      const chosen = await gateway.selectMediaPlayer!();
+      if (chosen) await save.mutateAsync(chosen);
+    },
+  });
+  if (!options.data) return null;
+  const player = save.isPending
+    ? save.variables ?? null
+    : kind === "audio" ? options.data.audioPlayer : options.data.videoPlayer;
+  return (
+    <section className="library-manage-field">
+      <h3>{t("library.manage.externalPlayer")}</h3>
+      <div className="library-manage-location">
+        <code className="library-manage-path" title={player ?? undefined}>
+          {player ?? t("library.manage.externalPlayerBuiltIn")}
+        </code>
+        <button className="app-button" type="button" disabled={choose.isPending || save.isPending} onClick={() => choose.mutate()}>
+          <FolderOpen aria-hidden="true" />{t("library.manage.externalPlayerChoose")}
+        </button>
+        {player ? (
+          <button className="app-button" type="button" disabled={save.isPending} onClick={() => save.mutate(null)}>
+            <X aria-hidden="true" />{t("library.manage.externalPlayerClear")}
+          </button>
+        ) : null}
+      </div>
+      <p className="library-manage-help">{t("library.manage.externalPlayerHelp")}</p>
+      {save.error || choose.error ? (
+        <p className="library-manage-result is-problem" role="alert">
+          <AlertTriangle aria-hidden="true" />{t("common.requestFailed", { error: String(save.error ?? choose.error) })}
+        </p>
+      ) : null}
+    </section>
   );
 }
 
@@ -515,20 +858,36 @@ function InstalledFilesTab({
   const queryClient = useQueryClient();
   const [verified, setVerified] = useState(false);
   const [confirm, setConfirm] = useState<"remove" | "uninstall" | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
   const healthKey = ["library", "installation-health", installation.id] as const;
   const health = useQuery({
     queryKey: healthKey,
     queryFn: () => gateway.readInstallationHealth(installation.id),
   });
+  const refreshWork = () => Promise.all([
+    queryClient.invalidateQueries({ queryKey: ["library", "installations"] }),
+    queryClient.invalidateQueries({ queryKey: ["library", "shelves"] }),
+    queryClient.invalidateQueries({ queryKey: ["library", "installation-healths"] }),
+    queryClient.invalidateQueries({ queryKey: ["library", "installation", installation.id] }),
+  ]);
   const acceptReport = async (report: InstallationHealthReport) => {
     queryClient.setQueryData(healthKey, report);
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["library", "installations"] }),
-      queryClient.invalidateQueries({ queryKey: ["library", "shelves"] }),
-      queryClient.invalidateQueries({ queryKey: ["library", "installation-healths"] }),
-      queryClient.invalidateQueries({ queryKey: ["library", "installation", installation.id] }),
-    ]);
+    await refreshWork();
   };
+  // File names an older install read wrongly; not for an archive still to install.
+  const namesKey = ["library", "file-names", installation.id] as const;
+  const names = useQuery({
+    queryKey: namesKey,
+    queryFn: () => gateway.checkFileNames!(installation.id),
+    enabled: Boolean(gateway.checkFileNames) && !(installation.detection.packageInspection && !prepared),
+  });
+  const fixNames = useMutation({
+    mutationFn: () => gateway.fixFileNames!(installation.id),
+    onSuccess: async (fixed) => {
+      queryClient.setQueryData(namesKey, fixed);
+      await Promise.all([queryClient.invalidateQueries({ queryKey: healthKey }), refreshWork()]);
+    },
+  });
   const verify = useMutation({
     mutationFn: () => gateway.verifyInstallation(installation.id),
     onSuccess: async (report) => {
@@ -571,9 +930,11 @@ function InstalledFilesTab({
 
   const report = health.data;
   const busy = verify.isPending || locate.isPending || rescan.isPending || repair.isPending || cleanup.isPending
-    || remove.isPending;
+    || remove.isPending || fixNames.isPending;
   const error = health.error ?? verify.error ?? locate.error ?? rescan.error ?? repair.error ?? cleanup.error
-    ?? install.error ?? browse.error ?? remove.error;
+    ?? install.error ?? browse.error ?? remove.error ?? fixNames.error;
+  const wrongNames = names.data?.wrong ?? 0;
+  const fixedNames = names.data?.fixed ?? 0;
   const archive = installation.detection.packageInspection;
   const running = scanInstalls.data?.installs.find((item) => (
     item.installationId === installation.id && scanInstallIsActive(item.status)
@@ -586,12 +947,37 @@ function InstalledFilesTab({
   const sizeBytes = prepared?.installedBytes
     ?? installation.detection.contentItems.reduce((total, item) => total + (item.sizeBytes ?? 0), 0);
   const changedFiles = report ? report.missingFiles + report.modifiedFiles + report.inaccessibleFiles : 0;
+  const draft = buildInstallationReviewDraft(installation);
+  const rows = contentRows(installation);
+  const selectedRow = rows.find((row) => row.relativePath === selected) ?? null;
+  const files = useMemo<InstalledFile[]>(() => {
+    const content = buildInstallationReviewDraft(installation).content;
+    return installation.detection.contentItems.map((item) => {
+      const value = content[item.relativePath] ?? emptyContentReview();
+      return {
+        relativePath: item.relativePath,
+        mediaType: value.mediaType ?? item.mediaType,
+        sizeBytes: item.sizeBytes,
+        changed: isChanged(value),
+        hidden: value.ignored,
+      };
+    });
+  }, [installation]);
+  // "Image 612, Audio 410, …": what the folder holds, most first.
+  const kinds = useMemo(() => {
+    const counts = new Map<MediaType, number>();
+    for (const file of files) counts.set(file.mediaType, (counts.get(file.mediaType) ?? 0) + 1);
+    const parts = [...counts]
+      .sort((left, right) => right[1] - left[1])
+      .map(([mediaType, count]) => `${t(mediaTypeMessageKey(mediaType))} ${count.toLocaleString(locale)}`);
+    return new Intl.ListFormat(locale, { style: "narrow", type: "unit" }).format(parts);
+  }, [files, locale, t]);
   const problem = report && ["missing_files", "modified_files", "inaccessible", "repairable"].includes(report.state);
 
   return (
     <div className="library-manage-stack">
       {error ? (
-        <div className="library-callout library-callout-error" role="alert">
+        <div className="app-callout" role="alert">
           <AlertTriangle aria-hidden="true" />{t("common.requestFailed", { error: String(error) })}
         </div>
       ) : null}
@@ -603,14 +989,14 @@ function InstalledFilesTab({
           <p className="library-manage-help">{t("library.manage.notInstalledHelp")}</p>
           {running ? (
             <span className="library-manage-progress">
-              <span><LoaderCircle className="library-spin" aria-hidden="true" />
+              <span><LoaderCircle className="app-spin" aria-hidden="true" />
                 {percent === null ? t("library.manage.installing") : t("library.manage.installingPercent", { percent })}
               </span>
-              <progress max={100} value={percent ?? undefined} />
+              <ProgressBar percent={percent} size="slim" />
             </span>
           ) : installs ? (
-            <button className="library-manage-button is-primary" type="button" disabled={install.isPending} onClick={() => install.mutate()}>
-              {install.isPending ? <LoaderCircle className="library-spin" aria-hidden="true" /> : <PackageOpen aria-hidden="true" />}
+            <button className="app-button is-primary" type="button" disabled={install.isPending} onClick={() => install.mutate()}>
+              {install.isPending ? <LoaderCircle className="app-spin" aria-hidden="true" /> : <PackageOpen aria-hidden="true" />}
               {t("library.manage.install")}
             </button>
           ) : null}
@@ -622,42 +1008,46 @@ function InstalledFilesTab({
         <div className="library-manage-location">
           <code className="library-manage-path" title={location}>{location}</code>
           {gateway.openInstallationFolder ? (
-            <button className="library-manage-button" type="button" disabled={browse.isPending} onClick={() => browse.mutate()}>
+            <button className="app-button" type="button" disabled={browse.isPending} onClick={() => browse.mutate()}>
               <FolderOpen aria-hidden="true" />{t("library.manage.browse")}
             </button>
           ) : null}
         </div>
         <p className="library-manage-help">
-          {fileCount === 1
-            ? t("library.manage.sizeOne", { size: formatByteSize(sizeBytes, locale) })
-            : t("library.manage.size", {
-              count: fileCount.toLocaleString(locale),
+          {[
+            pluralText(t, locale, fileCount, "library.manage.sizeOne", "library.manage.size", {
               size: formatByteSize(sizeBytes, locale),
-            })}
+            }),
+            kinds,
+          ].filter(Boolean).join(" · ")}
         </p>
       </section>
 
       <section className="library-manage-field">
+        <h3>{t("library.manage.checkTitle")}</h3>
         <div className="library-manage-row">
           <ActionButton busy={verify.isPending} disabled={busy} icon={<ShieldCheck aria-hidden="true" />} onClick={() => verify.mutate()}>
             {t(verify.isPending ? "library.manage.verifying" : "library.manage.verify")}
           </ActionButton>
+          <ActionButton busy={rescan.isPending} disabled={busy} icon={<RefreshCw aria-hidden="true" />} onClick={() => rescan.mutate()}>
+            {t("library.manage.refreshFiles")}
+          </ActionButton>
+          <ActionButton busy={cleanup.isPending} disabled={busy} icon={<Eraser aria-hidden="true" />} onClick={() => cleanup.mutate()}>
+            {t("library.manage.cleanUp")}
+          </ActionButton>
         </div>
+        <p className="library-manage-help">{t("library.manage.checkHelp")}</p>
         {verified && report?.state === "healthy" ? (
           <p className="library-manage-result is-ok" role="status">
             <CheckCircle2 aria-hidden="true" />
-            {report.presentFiles === 1
-              ? t("library.manage.verifyOkOne")
-              : t("library.manage.verifyOk", { count: report.presentFiles.toLocaleString(locale) })}
+            {pluralText(t, locale, report.presentFiles, "library.manage.verifyOkOne", "library.manage.verifyOk")}
           </p>
         ) : null}
         {problem ? (
           <div className="library-manage-result is-problem" role="status">
             <AlertTriangle aria-hidden="true" />
             <span>
-              {changedFiles === 1
-                ? t("library.manage.verifyProblemOne")
-                : t("library.manage.verifyProblem", { count: changedFiles.toLocaleString(locale) })}
+              {pluralText(t, locale, changedFiles, "library.manage.verifyProblemOne", "library.manage.verifyProblem")}
             </span>
             {report.repairable ? (
               <ActionButton busy={repair.isPending} disabled={busy} icon={<Wrench aria-hidden="true" />} onClick={() => repair.mutate()}>
@@ -675,58 +1065,26 @@ function InstalledFilesTab({
             </ActionButton>
           </div>
         ) : null}
-      </section>
-
-      <section className="library-manage-field">
-        {report?.managed ? (
-          <div className="library-manage-remove">
-            {confirm === "uninstall" ? (
-              <ConfirmRow
-                question={t("library.manage.uninstallConfirm")}
-                confirmLabel={t("library.manage.uninstallAction")}
-                danger
-                busy={remove.isPending}
-                onConfirm={() => remove.mutate("uninstall")}
-                onCancel={() => setConfirm(null)}
-              />
-            ) : (
-              <button className="library-manage-button is-danger" type="button" disabled={busy} onClick={() => setConfirm("uninstall")}>
-                {`${t("library.manage.uninstallAction")}…`}
-              </button>
-            )}
-            <p className="library-manage-help">{t("library.manage.uninstallHelp")}</p>
+        {wrongNames > 0 ? (
+          <div className="library-manage-result is-problem" role="status">
+            <AlertTriangle aria-hidden="true" />
+            <span>
+              <strong>
+                {pluralText(t, locale, wrongNames, "library.manage.namesWrongOne", "library.manage.namesWrong")}
+              </strong>
+              {" "}{t("library.manage.namesWrongHelp")}
+            </span>
+            <ActionButton busy={fixNames.isPending} disabled={busy} icon={<Wrench aria-hidden="true" />} onClick={() => fixNames.mutate()}>
+              {t(fixNames.isPending ? "library.manage.fixingNames" : "library.manage.fixNames")}
+            </ActionButton>
           </div>
         ) : null}
-        <div className="library-manage-remove">
-          {confirm === "remove" ? (
-            <ConfirmRow
-              question={t("library.manage.removeConfirm", { title })}
-              confirmLabel={t("library.manage.removeAction")}
-              busy={remove.isPending}
-              onConfirm={() => remove.mutate("remove")}
-              onCancel={() => setConfirm(null)}
-            />
-          ) : (
-            <button className="library-manage-button" type="button" disabled={busy} onClick={() => setConfirm("remove")}>
-              {`${t("library.manage.removeAction")}…`}
-            </button>
-          )}
-          <p className="library-manage-help">{t("library.manage.removeHelp")}</p>
-        </div>
-      </section>
-
-      <details className="library-manage-advanced">
-        <summary>{t("library.manage.advanced")}</summary>
-        <ContentEditor installation={installation} onSave={onSave} />
-        <div className="library-manage-row">
-          <ActionButton busy={rescan.isPending} disabled={busy} onClick={() => rescan.mutate()}>
-            {t("library.manage.refreshFiles")}
-          </ActionButton>
-          <ActionButton busy={cleanup.isPending} disabled={busy} onClick={() => cleanup.mutate()}>
-            {t("library.maintenance.cleanupAction")}
-          </ActionButton>
-        </div>
-        <p className="library-manage-help">{t("library.maintenance.cleanupHelp")}</p>
+        {fixedNames > 0 ? (
+          <p className="library-manage-result is-ok" role="status">
+            <CheckCircle2 aria-hidden="true" />
+            {pluralText(t, locale, fixedNames, "library.manage.namesFixedOne", "library.manage.namesFixed")}
+          </p>
+        ) : null}
         {cleanup.data ? (
           <p className="library-manage-help" role="status">
             {t("library.maintenance.cleanupResult", {
@@ -736,88 +1094,187 @@ function InstalledFilesTab({
             })}
           </p>
         ) : null}
-      </details>
+      </section>
+
+      <section className="library-manage-field">
+        <h3>{t("library.manage.changeTitle")}</h3>
+        <p className="library-manage-help">{t("library.manage.changeHelp")}</p>
+        <InstalledFileTree files={files} selected={selectedRow ? selected : null} onSelect={setSelected} />
+        {selectedRow ? (
+          <FileEditor
+            row={selectedRow}
+            value={draft.content[selectedRow.relativePath] ?? emptyContentReview()}
+            ordered={rows.length > 1}
+            onSave={onSave}
+            onClose={() => setSelected(null)}
+          />
+        ) : null}
+        <h4 className="library-manage-subhead">{t("library.manage.changedTitle")}</h4>
+        <ChangedFiles rows={rows} draft={draft} onSelect={setSelected} onSave={onSave} />
+      </section>
+
+      <section className="library-manage-field">
+        <h3>{t("library.manage.removeTitle")}</h3>
+        {confirm === "uninstall" ? (
+          <ConfirmRow
+            question={t("library.manage.uninstallConfirm")}
+            confirmLabel={t("library.manage.uninstallAction")}
+            danger
+            busy={remove.isPending}
+            onConfirm={() => remove.mutate("uninstall")}
+            onCancel={() => setConfirm(null)}
+          />
+        ) : confirm === "remove" ? (
+          <ConfirmRow
+            question={t("library.manage.removeConfirm", { title })}
+            confirmLabel={t("library.manage.removeAction")}
+            busy={remove.isPending}
+            onConfirm={() => remove.mutate("remove")}
+            onCancel={() => setConfirm(null)}
+          />
+        ) : (
+          <div className="library-manage-row">
+            {report?.managed ? (
+              <button className="app-button is-danger" type="button" disabled={busy} onClick={() => setConfirm("uninstall")}>
+                <Trash2 aria-hidden="true" />{`${t("library.manage.uninstallAction")}…`}
+              </button>
+            ) : null}
+            <button className="app-button" type="button" disabled={busy} onClick={() => setConfirm("remove")}>
+              <ListX aria-hidden="true" />{`${t("library.manage.removeAction")}…`}
+            </button>
+          </div>
+        )}
+        <p className="library-manage-help">
+          {t(report?.managed ? "library.manage.removeHelpBoth" : "library.manage.removeHelp")}
+        </p>
+      </section>
     </div>
   );
 }
 
-function ContentEditor({ installation, onSave }: { installation: Installation; onSave: Save }) {
-  const { t } = usePresentation();
-  const draft = buildInstallationReviewDraft(installation);
-  const rows = contentRows(installation);
-  const ordered = rows.length > 1;
-  const update = (path: string, change: (value: ContentReviewValue) => ContentReviewValue) => {
-    onSave((next) => ({
-      ...next,
-      content: { ...next.content, [path]: change(next.content[path] ?? emptyContentReview()) },
-    }));
-  };
+type ContentRow = { relativePath: string; item: ContentItem | null };
 
-  if (!rows.length) return <p className="library-manage-note">{t("library.noContent")}</p>;
+/** The file picked in the tree: its type, its place in a sequence, and whether the Library shows it. */
+function FileEditor({
+  row: { relativePath, item },
+  value,
+  ordered,
+  onSave,
+  onClose,
+}: {
+  row: ContentRow;
+  value: ContentReviewValue;
+  ordered: boolean;
+  onSave: Save;
+  onClose: () => void;
+}) {
+  const { t } = usePresentation();
+  const update = (change: (current: ContentReviewValue) => ContentReviewValue) => onSave((next) => ({
+    ...next,
+    content: { ...next.content, [relativePath]: change(next.content[relativePath] ?? emptyContentReview()) },
+  }));
   return (
-    <div className="library-manage-table-wrap">
-      <table className="library-manage-table">
-        <thead>
-          <tr>
-            <th>{t("library.path")}</th>
-            <th>{t("library.overrideType")}</th>
-            {ordered ? <th>{t("library.order")}</th> : null}
-            <th>{t("library.ignore")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(({ item, relativePath }) => {
-            const value = draft.content[relativePath] ?? emptyContentReview();
-            return (
-              <tr className={value.ignored ? "is-ignored" : undefined} key={relativePath}>
-                <td>
-                  <code title={relativePath}>{relativePath}</code>
-                  {item ? null : <small>{t("library.orphanedOverride")}</small>}
-                </td>
-                <td>
-                  <select
-                    value={value.mediaType ?? item?.mediaType ?? "unknown"}
-                    aria-label={t("library.overrideType")}
-                    onChange={(event) => {
-                      const selected = event.target.value as MediaType;
-                      update(relativePath, (current) => ({
-                        ...current,
-                        mediaType: item?.mediaType === selected ? null : selected,
-                      }));
-                    }}
-                  >
-                    {mediaTypes.map((mediaType) => (
-                      <option value={mediaType} key={mediaType}>{t(mediaTypeMessageKey(mediaType))}</option>
-                    ))}
-                  </select>
-                </td>
-                {ordered ? (
-                  <td>
-                    <OrderInput
-                      value={value.order}
-                      label={t("library.orderFor", { path: relativePath })}
-                      onCommit={(order) => update(relativePath, (current) => ({ ...current, order }))}
-                    />
-                  </td>
-                ) : null}
-                <td>
-                  <input
-                    type="checkbox"
-                    checked={value.ignored}
-                    aria-label={t("library.ignorePath", { path: relativePath })}
-                    onChange={(event) => {
-                      const ignored = event.target.checked;
-                      update(relativePath, (current) => ({ ...current, ignored }));
-                    }}
-                  />
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    <div className="library-file-editor" role="group" aria-label={relativePath}>
+      <div className="library-file-editor-head">
+        <code title={relativePath}>{relativePath}</code>
+        <button className="library-manage-close" type="button" aria-label={t("library.manage.close")} onClick={onClose}>
+          <X aria-hidden="true" />
+        </button>
+      </div>
+      {item ? null : <p className="library-manage-help">{t("library.orphanedOverride")}</p>}
+      <div className="library-manage-row">
+        <label className="library-file-editor-field">
+          <span>{t("library.files.type")}</span>
+          <select
+            value={value.mediaType ?? item?.mediaType ?? "unknown"}
+            onChange={(event) => {
+              const selected = event.target.value as MediaType;
+              update((current) => ({ ...current, mediaType: item?.mediaType === selected ? null : selected }));
+            }}
+          >
+            {mediaTypes.map((mediaType) => (
+              <option value={mediaType} key={mediaType}>{t(mediaTypeMessageKey(mediaType))}</option>
+            ))}
+          </select>
+        </label>
+        {ordered ? (
+          <label className="library-file-editor-field">
+            <span>{t("library.order")}</span>
+            <OrderInput
+              value={value.order}
+              label={t("library.orderFor", { path: relativePath })}
+              onCommit={(order) => update((current) => ({ ...current, order }))}
+            />
+          </label>
+        ) : null}
+        <label className="library-file-editor-check">
+          <input
+            type="checkbox"
+            checked={value.ignored}
+            onChange={(event) => {
+              const ignored = event.target.checked;
+              update((current) => ({ ...current, ignored }));
+            }}
+          />
+          {t("library.files.hide")}
+        </label>
+      </div>
     </div>
   );
+}
+
+/** Only the files changed by hand, each with a way back to the launcher's own reading. */
+function ChangedFiles({
+  rows,
+  draft,
+  onSelect,
+  onSave,
+}: {
+  rows: ContentRow[];
+  draft: InstallationReviewDraft;
+  onSelect: (relativePath: string) => void;
+  onSave: Save;
+}) {
+  const { t } = usePresentation();
+  const changed = rows.filter(({ relativePath }) => isChanged(draft.content[relativePath]));
+  if (!changed.length) return <p className="library-manage-help">{t("library.manage.changedNone")}</p>;
+  return (
+    <ul className="library-changed-files">
+      {changed.map(({ relativePath, item }) => {
+        const value = draft.content[relativePath]!;
+        const parts = relativePath.split("/");
+        const what = [
+          !item ? t("library.orphanedOverride") : null,
+          value.mediaType && value.mediaType !== item?.mediaType ? t(mediaTypeMessageKey(value.mediaType)) : null,
+          value.order.trim() ? t("library.files.orderValue", { order: value.order.trim() }) : null,
+          value.ignored ? t("library.files.hidden") : null,
+        ].filter(Boolean).join(" · ");
+        return (
+          <li key={relativePath}>
+            <button className="library-changed-name" type="button" title={relativePath} onClick={() => onSelect(relativePath)}>
+              <strong>{parts[parts.length - 1]}</strong>
+              {parts.length > 1 ? <small>{parts.slice(0, -1).join("/")}</small> : null}
+            </button>
+            <span className="library-changed-what">{what}</span>
+            <button
+              className="app-button"
+              type="button"
+              onClick={() => onSave((next) => ({
+                ...next,
+                content: { ...next.content, [relativePath]: emptyContentReview() },
+              }))}
+            >
+              <Undo2 aria-hidden="true" />{t("library.manage.undo")}
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function isChanged(value: ContentReviewValue | undefined): boolean {
+  return Boolean(value && (value.mediaType !== null || value.ignored || value.order.trim() !== ""));
 }
 
 function OrderInput({ value, label, onCommit }: { value: string; label: string; onCommit: (value: string) => void }) {
@@ -856,8 +1313,8 @@ function ConfirmRow({
   return (
     <div className="library-manage-confirm" role="alertdialog" aria-modal="false" aria-label={question}>
       <span>{question}</span>
-      <button className={`library-manage-button ${danger ? "is-solid-danger" : "is-primary"}`} type="button" disabled={busy} onClick={onConfirm}>
-        {busy ? <LoaderCircle className="library-spin" aria-hidden="true" /> : null}
+      <button className={`app-button ${danger ? "is-solid-danger" : "is-primary"}`} type="button" disabled={busy} onClick={onConfirm}>
+        {busy ? <LoaderCircle className="app-spin" aria-hidden="true" /> : null}
         {confirmLabel}
       </button>
       <button className="library-manage-link" type="button" disabled={busy} onClick={onCancel}>{t("common.cancel")}</button>
@@ -879,8 +1336,8 @@ function ActionButton({
   children: ReactNode;
 }) {
   return (
-    <button className="library-manage-button" type="button" disabled={disabled} onClick={onClick}>
-      {busy ? <LoaderCircle className="library-spin" aria-hidden="true" /> : icon}
+    <button className="app-button" type="button" disabled={disabled} onClick={onClick}>
+      {busy ? <LoaderCircle className="app-spin" aria-hidden="true" /> : icon}
       {children}
     </button>
   );

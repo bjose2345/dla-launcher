@@ -1,0 +1,100 @@
+The X11 host follows the toplevel when GDK does not: after a fullscreen or maximize change
+the host's size is compared with the X window's for two seconds; on a mismatch GTK is asked
+for a frame, and if GDK still disagrees the host takes the X size and the CEF children are laid
+out again. Seen on mutter when a maximized window went fullscreen (the toplevel grew by the
+title bar's height, GDK kept the old size). Applied by scripts/prepare-runtime-cef.sh.
+Reported upstream as tauri-apps/tauri#16480; drop the patch when a released runtime has it.
+
+diff -ruN rt7-range/src/platform/linux/window.rs /home/develop/projects/dla-launcher/tauri3/vendor/tauri-runtime-cef/src/platform/linux/window.rs
+--- a/src/platform/linux/window.rs	2026-11-07 08:04:10.560200939 +0100
++++ b/src/platform/linux/window.rs	2026-11-07 08:02:56.921507615 +0100
+@@ -83,6 +83,7 @@
+       let gtk_window = gtk_window.clone();
+       let layout_webview_area = webview_area.clone();
+       let layout_geometry = geometry.clone();
++      let sync_window = gtk_window.clone();
+       surface.connect_layout(move |surface, _, _| {
+         let size = set_cef_container_bounds(
+           xid,
+@@ -97,6 +98,81 @@
+           layout_geometry.needs_relayout.set(true);
+         }
+       });
++
++      // GDK takes the toplevel's size from the X server's ConfigureNotify and lays the
++      // window out on its frame clock. Seen on mutter when a maximized window went
++      // fullscreen: the toplevel grew by the title bar's height, GDK kept the old size
++      // for minutes, and the host, the CEF children and the page stayed short by that
++      // band at the bottom. After a state change that makes the window manager resize
++      // the toplevel, compare GDK's size with the X window's for a while: on a mismatch
++      // ask GTK for a frame, and when GDK still disagrees, size the host from X and
++      // re-lay out the children; the next GDK layout takes over again.
++      let sync_geometry = geometry.clone();
++      let sync_area = webview_area.clone();
++      let reconcile_host_size = move |gtk_window: &gtk::ApplicationWindow| {
++        let gtk_window = gtk_window.clone();
++        let geometry = sync_geometry.clone();
++        let webview_area = sync_area.clone();
++        let mut ticks = 0u32;
++        gtk::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
++          ticks += 1;
++          let Some(surface) = gtk_window.surface() else {
++            return gtk::glib::ControlFlow::Break;
++          };
++          let scale = surface.scale_factor().max(1) as f64;
++          let believed = PhysicalSize::new(
++            (surface.width() as f64 * scale).round() as u32,
++            (surface.height() as f64 * scale).round() as u32,
++          );
++          let actual = super::utils::with_x11(believed, |xlib, display| unsafe {
++            let (mut root, mut x, mut y, mut width, mut height, mut border, mut depth) =
++              (0, 0, 0, 0u32, 0u32, 0u32, 0u32);
++            if (xlib.XGetGeometry)(
++              display,
++              parent_xid as _,
++              &mut root,
++              &mut x,
++              &mut y,
++              &mut width,
++              &mut height,
++              &mut border,
++              &mut depth,
++            ) == 0
++            {
++              return believed;
++            }
++            PhysicalSize::new(width, height)
++          });
++          if actual == believed {
++            return gtk::glib::ControlFlow::from(ticks < 20);
++          }
++          if ticks < 5 {
++            gtk_window.queue_draw();
++            return gtk::glib::ControlFlow::Continue;
++          }
++          // Only when the webview area is the whole content: with a menu bar attached
++          // the host must stay below it, and GDK's layout is the one to wait for.
++          let area_is_content =
++            webview_area.width() == surface.width() && webview_area.height() == surface.height();
++          if area_is_content && geometry.size.replace(actual) != actual {
++            super::utils::with_x11((), |xlib, display| unsafe {
++              (xlib.XMoveResizeWindow)(display, xid as _, 0, 0, actual.width, actual.height);
++            });
++            geometry.needs_relayout.set(true);
++            log::warn!(
++              "the X11 toplevel is {}x{} while GDK laid out {}x{}; sized the CEF host from X11",
++              actual.width,
++              actual.height,
++              believed.width,
++              believed.height
++            );
++          }
++          gtk::glib::ControlFlow::Break
++        });
++      };
++      let reconcile_on_fullscreen = reconcile_host_size.clone();
++      sync_window.connect_fullscreened_notify(move |window| reconcile_on_fullscreen(window));
++      sync_window.connect_maximized_notify(move |window| reconcile_host_size(window));
+     }
+ 
+     Some(Self {

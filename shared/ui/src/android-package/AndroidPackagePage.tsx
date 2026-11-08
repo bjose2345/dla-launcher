@@ -145,7 +145,7 @@ export function AndroidPackagePage({
               disabled={pending}
               onClick={() => select.mutate()}
             >
-              {select.isPending ? <LoaderCircle className="android-package-spin" aria-hidden="true" /> : <PackageOpen aria-hidden="true" />}
+              {select.isPending ? <LoaderCircle className="app-spin" aria-hidden="true" /> : <PackageOpen aria-hidden="true" />}
               {t(select.isPending ? "androidPackage.inspecting" : "androidPackage.choose")}
             </button>
           ) : (
@@ -213,7 +213,7 @@ export function AndroidPackagePage({
                     </span>
                   </div>
                   <button type="button" disabled={pending} onClick={() => approve.mutate()}>
-                    {approve.isPending ? <LoaderCircle className="android-package-spin" aria-hidden="true" /> : <Settings aria-hidden="true" />}
+                    {approve.isPending ? <LoaderCircle className="app-spin" aria-hidden="true" /> : <Settings aria-hidden="true" />}
                     {t("androidPackage.openSettings")}
                   </button>
                 </div>
@@ -257,7 +257,7 @@ export function AndroidPackagePage({
                     onClick={() => install.mutate()}
                   >
                     {install.isPending || installPending
-                      ? <LoaderCircle className="android-package-spin" aria-hidden="true" />
+                      ? <LoaderCircle className="app-spin" aria-hidden="true" />
                       : <PackageOpen aria-hidden="true" />}
                     {t(installPending ? "androidPackage.waiting" : "androidPackage.continue")}
                   </button>
@@ -267,7 +267,7 @@ export function AndroidPackagePage({
           )}
 
           {error ? (
-            <div className="android-package-error" role="alert">
+            <div className="app-callout" role="alert">
               <strong>{t("androidPackage.actionFailed")}</strong>
               <details><summary>{t("androidPackage.errorDetails")}</summary><p>{String(error)}</p></details>
             </div>
@@ -319,7 +319,7 @@ function AndroidLibraryAssociation({
         </button>
       ) : !linked ? (
         <button type="button" disabled={pending} onClick={onAssociate}>
-          {pending ? <LoaderCircle className="android-package-spin" aria-hidden="true" /> : <BookPlus aria-hidden="true" />}
+          {pending ? <LoaderCircle className="app-spin" aria-hidden="true" /> : <BookPlus aria-hidden="true" />}
           {t(existing ? "androidApp.replaceLink" : "androidApp.addToLibrary")}
         </button>
       ) : null}
@@ -335,7 +335,7 @@ function InstallStatus({ state, detail }: { state: AndroidPackageInstallState; d
   return (
     <div className={`android-package-status is-${state}`} role={state === "failed" ? "alert" : "status"}>
       {pending
-        ? <LoaderCircle className="android-package-spin" aria-hidden="true" />
+        ? <LoaderCircle className="app-spin" aria-hidden="true" />
         : success
           ? <Check aria-hidden="true" />
           : warning

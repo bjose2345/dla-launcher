@@ -1,0 +1,55 @@
+/* ── page masthead (the heading band of a full page) ───────── */
+
+.page-masthead {
+  padding: 34px var(--page-gutter, 16px) 26px;
+  border-bottom: 1px solid var(--app-border);
+  background-color: var(--app-backdrop);
+  background-image: radial-gradient(color-mix(in oklch, var(--color-base-content) 13%, transparent) 0.8px, transparent 0.8px);
+  background-size: 17px 17px;
+}
+
+/* A title on the left and the page's actions on the right. */
+.page-masthead.has-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.page-masthead-title {
+  min-width: 0;
+}
+
+.page-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 6px;
+  color: var(--color-primary);
+  font-size: 0.62rem;
+  font-weight: 850;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.page-eyebrow svg {
+  width: 13px;
+  height: 13px;
+}
+
+.page-masthead h1 {
+  margin: 0;
+  font-size: clamp(1.7rem, 3.4vw, 2.5rem);
+  font-weight: 850;
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
+.page-masthead p {
+  max-width: 62ch;
+  margin: 8px 0 0;
+  color: var(--app-muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}

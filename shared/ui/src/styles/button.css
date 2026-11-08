@@ -1,0 +1,97 @@
+/* ── chip button (every feature's action button) ─────────── */
+
+.app-button {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 15px;
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-chip);
+  background: var(--app-panel-raised);
+  color: var(--color-base-content);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.app-button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.app-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* A secondary action on a page: muted until the pointer reaches it. */
+.app-button.is-quiet {
+  color: var(--app-muted);
+  font-weight: 700;
+}
+
+.app-button.is-quiet:hover:not(:disabled) {
+  color: var(--color-base-content);
+}
+
+.app-button.is-ghost {
+  background: transparent;
+}
+
+.app-button.is-primary,
+.app-button.is-primary:hover:not(:disabled) {
+  box-shadow: none;
+  background: var(--color-primary);
+  color: var(--color-primary-content);
+}
+
+.app-button.is-danger,
+.app-button.is-danger:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-error) 45%, transparent);
+  background: color-mix(in oklch, var(--color-error) 12%, transparent);
+  color: var(--color-error);
+}
+
+.app-button.is-solid-danger,
+.app-button.is-solid-danger:hover:not(:disabled) {
+  box-shadow: none;
+  background: var(--color-error);
+  color: var(--color-error-content);
+}
+
+/* The arrow that leaves a viewer or player: the reader's icon button. */
+.app-back-button {
+  display: grid;
+  width: 40px;
+  height: 36px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  background: color-mix(in oklch, var(--app-panel-raised) 90%, transparent);
+  color: var(--color-base-content);
+  cursor: pointer;
+  clip-path: var(--app-chip-sm);
+}
+
+.app-back-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.app-back-button:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--app-panel-raised) 70%, var(--color-base-content));
+}
+
+.app-back-button:disabled {
+  cursor: default;
+}
+
+.app-back-button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}

@@ -1,0 +1,22 @@
+# tauri2/crates/dla-android-package-tauri built against Tauri 3: the launcher
+# installs this plugin on every platform, so the Chromium build needs it too.
+[package]
+name = "dla-android-package-tauri"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+links = "dla-android-package-tauri"
+
+[lib]
+path = "../../../tauri2/crates/dla-android-package-tauri/src/lib.rs"
+
+[build-dependencies]
+tauri-plugin = { version = "=3.0.0-alpha.4", features = ["build"] }
+
+[dependencies]
+dla-application.workspace = true
+dla-domain.workspace = true
+serde.workspace = true
+tauri = { version = "=3.0.0-alpha.6", features = [] }

@@ -4,6 +4,7 @@ import { usePresentation } from "../../preferences/PresentationProvider";
 import type { GallerySize, ImageFolder } from "./imageViewerModel";
 import { mediaItemName } from "./mediaSession";
 import type { MediaSessionItem } from "./types";
+import { pluralText } from "../../i18n/pluralText";
 
 const TILE_WIDTHS: Record<GallerySize, string> = {
   small: "140px",
@@ -33,7 +34,7 @@ export function ImageGallery({
   onScope: (key: string | null) => void;
   onOpen: (index: number) => void;
 }) {
-  const { t } = usePresentation();
+  const { locale, t } = usePresentation();
   const currentRef = useRef<HTMLButtonElement>(null);
   const shown = scope === null ? folders : folders.filter((folder) => folder.key === scope);
   const currentItem = items[current];
@@ -75,11 +76,7 @@ export function ImageGallery({
             {folders.length > 1 ? (
               <h2>
                 {folderName(folder)}
-                <small>
-                  {folder.indexes.length === 1
-                    ? t("viewer.imageCountOne")
-                    : t("viewer.imageCount", { count: folder.indexes.length })}
-                </small>
+                <small>{pluralText(t, locale, folder.indexes.length, "viewer.imageCountOne", "viewer.imageCount")}</small>
               </h2>
             ) : null}
             <div className="image-gallery-grid" style={grid}>

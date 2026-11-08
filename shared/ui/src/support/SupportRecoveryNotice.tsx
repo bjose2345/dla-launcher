@@ -1,6 +1,7 @@
 import { Copy, ExternalLink, FileArchive, ShieldAlert, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { copyText } from "../app/clipboard";
 import { usePresentation } from "../preferences/PresentationProvider";
 import type { SupportGateway, SupportStatus } from "./types";
 
@@ -37,7 +38,7 @@ export function SupportRecoveryNotice({
   };
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(status.summary);
+      await copyText(status.summary);
       setAction("copied");
     } catch {
       setAction("failed");

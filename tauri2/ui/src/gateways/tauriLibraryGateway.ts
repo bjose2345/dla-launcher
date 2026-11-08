@@ -1,11 +1,15 @@
 import type {
   ArchiveRetentionPolicy,
   AudioWaveform,
+  FileNameReport,
   Installation,
   InstallationHealthReport,
   InstallationImage,
   InstallationReviewRequest,
   LaunchActivity,
+  LaunchOptions,
+  LaunchOptionsRequest,
+  MediaPlayerKind,
   LibraryGateway,
   LibraryShelves,
   LocalPersonalization,
@@ -14,7 +18,9 @@ import type {
   MediaSessionItem,
   NativeVideoControlRequest,
   NativeVideoState,
+  NativeVideoSubtitle,
   OpenNativeVideoResponse,
+  NativeVideoRectangle,
   NativeVideoViewport,
   OpenNativeVideoRequest,
   OwnWorkDetails,
@@ -29,8 +35,10 @@ import type {
   WorkPreference,
   WorkPreferenceKind,
 } from "@dla-launcher/shared-ui/library";
+import type { FileNameGateway } from "@dla-launcher/shared-ui/preferences";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { cacheCatalogWork } from "./catalogArtwork";
 
 export const tauriLibraryGateway: LibraryGateway = {
@@ -124,9 +132,30 @@ export const tauriLibraryGateway: LibraryGateway = {
   openInstallationFolder: __DLA_TARGET_PLATFORM__ === "android"
     ? undefined
     : (installationId: string): Promise<void> => invoke("open_installation_folder", { installationId }),
+  readLaunchOptions: __DLA_TARGET_PLATFORM__ === "android"
+    ? undefined
+    : (installationId: string): Promise<LaunchOptions> => invoke("read_launch_options", { installationId }),
+  saveLaunchOptions: __DLA_TARGET_PLATFORM__ === "android"
+    ? undefined
+    : (installationId: string, options: LaunchOptionsRequest): Promise<LaunchOptions> =>
+      invoke("save_launch_options", { installationId, ...options }),
+  selectMediaPlayer: __DLA_TARGET_PLATFORM__ === "android"
+    ? undefined
+    : (): Promise<string | null> => invoke("select_media_player"),
+  playInPlayer: __DLA_TARGET_PLATFORM__ === "android"
+    ? undefined
+    : (installationId: string, kind: MediaPlayerKind, ordinal: number | null): Promise<void> =>
+      invoke("play_in_player", { installationId, kind, ordinal }),
+  openWebsite: __DLA_TARGET_PLATFORM__ === "android" ? undefined : (url: string) => openUrl(url),
   cleanupMaintenance(): Promise<MaintenanceCleanupReport> {
     return invoke("cleanup_library_maintenance");
   },
+  checkFileNames: __DLA_TARGET_PLATFORM__ === "android"
+    ? undefined
+    : (installationId: string): Promise<FileNameReport> => invoke("check_library_file_names", { installationId }),
+  fixFileNames: __DLA_TARGET_PLATFORM__ === "android"
+    ? undefined
+    : (installationId: string): Promise<FileNameReport> => invoke("fix_library_file_names", { installationId }),
   launchInstallation(installationId: string): Promise<LaunchActivity> {
     return invoke("launch_library_installation", { installationId });
   },
@@ -135,6 +164,9 @@ export const tauriLibraryGateway: LibraryGateway = {
   },
   listRecentLaunches(limit: number): Promise<LaunchActivity[]> {
     return invoke("list_recent_launches", { limit });
+  },
+  subscribeLaunchActivity(listener: (activity: LaunchActivity) => void): Promise<() => void> {
+    return listen<LaunchActivity>("launch-activity", (event) => listener(event.payload));
   },
   listInstallationLaunchHistory(
     installationId: string,
@@ -204,11 +236,22 @@ export const tauriLibraryGateway: LibraryGateway = {
   installationImageUrl(installationId: string, relativePath: string): string {
     return `${convertFileSrc(`installation/${installationId}/${relativePath}`, "dla-media")}?thumbnail`;
   },
+  readVideoSubtitles(sessionId: string, ordinal: number): Promise<NativeVideoSubtitle[]> {
+    return invoke("read_video_subtitles", { sessionId, ordinal });
+  },
+  videoSubtitleUrl(sessionId: string, ordinal: number, trackIndex: number): string {
+    return convertFileSrc(`${sessionId}/${ordinal}/${trackIndex}`, "dla-subtitle");
+  },
   openNativeVideo(request: OpenNativeVideoRequest): Promise<OpenNativeVideoResponse> {
     return invoke("open_native_video", { request });
   },
-  updateNativeVideoViewport(sessionId: string, surfaceId: string, viewport: NativeVideoViewport): Promise<void> {
-    return invoke("update_native_video_viewport", { sessionId, surfaceId, viewport });
+  updateNativeVideoViewport(
+    sessionId: string,
+    surfaceId: string,
+    viewport: NativeVideoViewport,
+    obstructions: NativeVideoRectangle[] = [],
+  ): Promise<void> {
+    return invoke("update_native_video_viewport", { sessionId, surfaceId, viewport, obstructions });
   },
   controlNativeVideo(request: NativeVideoControlRequest): Promise<void> {
     return invoke("control_native_video", { request });
@@ -219,6 +262,18 @@ export const tauriLibraryGateway: LibraryGateway = {
   subscribeNativeVideoState(listener: (state: NativeVideoState) => void): Promise<() => void> {
     return listen<NativeVideoState>("native-video-state", (event) => listener(event.payload));
   },
+  // The Chromium build's GStreamer surface draws nothing over the video, so the
+  // page draws the player's bar; the webview window draws its own.
+  nativeVideoChrome: __DLA_WEBVIEW__ === "chromium" ? "page" : "surface",
+  // WebKitGTK cannot stream the protocol at all (ADR 0028). Chromium can: CEF
+  // answers a Range request by skipping to its first byte through the scheme
+  // handler's body, which the Tauri 3 runtime does with the launcher's patch
+  // (tauri3/patches), so the media protocol's partial bodies satisfy a seek.
+  audioDelivery: __DLA_WEBVIEW__ === "chromium" ? "stream" : "blob",
+  documentDelivery: "stream",
+  openVideoExternally: __DLA_TARGET_PLATFORM__ === "android"
+    ? undefined
+    : (sessionId: string, ordinal: number): Promise<void> => invoke("open_video_externally", { sessionId, ordinal }),
   startPackagePreparation(
     installationId: string,
     destinationAccessHandle: string,
@@ -244,3 +299,8 @@ export const tauriLibraryGateway: LibraryGateway = {
     });
   },
 };
+
+/** Fixes file names an older install read wrongly, in every work, on desktop. */
+export const tauriFileNameGateway: FileNameGateway | undefined = __DLA_TARGET_PLATFORM__ === "android"
+  ? undefined
+  : { fixAllFileNames: () => invoke("fix_all_library_file_names") };

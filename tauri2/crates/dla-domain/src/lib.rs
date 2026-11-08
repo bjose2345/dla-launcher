@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 pub mod android_app;
 pub mod android_package;
 pub mod delivery;
+pub mod game_engine;
 pub mod installation;
 pub mod launch;
 pub mod library;
@@ -11,6 +12,7 @@ pub mod media;
 pub mod own_work;
 pub mod package;
 pub mod scanner;
+pub mod translation;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]

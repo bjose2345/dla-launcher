@@ -17,20 +17,33 @@ import {
   SkipForward,
   Video,
   Volume2,
+  VolumeX,
   X,
 } from "lucide-react";
-import { useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
+import { useKeyBindings } from "../../preferences/KeyBindingsProvider";
+import { ariaKeyShortcuts, bindingsForAction, formatCombo } from "../../preferences/keyBindings";
 import { usePresentation } from "../../preferences/PresentationProvider";
-import { clampPlaybackPosition, formatPlaybackTime } from "./audioPlayer";
+import { VOLUME_WHEEL_STEP, clampPlaybackPosition, formatPlaybackTime } from "./audioPlayer";
 import { useMediaPlayback } from "./MediaPlaybackProvider";
 import { mediaItemName } from "./mediaSession";
 import { assetFailureMessageKey } from "./mediaAsset";
+import type { MessageKey } from "../../preferences/preferences";
+import {
+  SUBTITLE_BACKGROUNDS,
+  SUBTITLE_COLORS,
+  SUBTITLE_OPACITIES,
+  SUBTITLE_SIZES,
+  type SubtitleStyle,
+} from "./videoPlayerModel";
 import {
   formatPlaybackRate,
   MediaDockMenu,
+  MediaDockMenuAction,
   MediaDockMenuGroup,
   MediaDockMenuItem,
+  MediaDockMenuToggle,
   PLAYBACK_RATES,
 } from "./MediaDockMenu";
 import type { MediaRepeatMode } from "./types";
@@ -40,11 +53,51 @@ export function MediaDock({ onExpand }: { onExpand: (installationId: string) => 
   const playback = useMediaPlayback();
   const { session, item } = playback;
   const [openMenu, setOpenMenu] = useState<"subtitles" | "more" | null>(null);
+  // The bar keeps the value under the pointer itself while pressed: the
+  // player's position only follows the seek, and the press can blur the bar
+  // (Chromium under GTK blurs the page on every press) before it is released.
+  const [scrub, setScrub] = useState<number | null>(null);
+  const pressRef = useRef({ pressed: false, moved: false, changed: false });
+  const { bindings } = useKeyBindings();
+  const muteBindings = bindingsForAction(bindings, "toggleMute");
+  const volumeRef = useRef(playback.volume);
+  volumeRef.current = playback.volume;
+  const setVolume = playback.setVolume;
+  // The wheel over the volume control turns it, as over the video picture. A
+  // listener of its own, since React's wheel handlers cannot stop the page
+  // from scrolling; attached by the ref, since the control appears only once
+  // a session plays.
+  const volumeControl = useCallback((control: HTMLDivElement | null) => {
+    if (!control) return undefined;
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY === 0) return;
+      event.preventDefault();
+      setVolume(volumeRef.current + (event.deltaY < 0 ? VOLUME_WHEEL_STEP : -VOLUME_WHEEL_STEP));
+    };
+    control.addEventListener("wheel", onWheel, { passive: false });
+    return () => control.removeEventListener("wheel", onWheel);
+  }, [setVolume]);
+  const setSubtitleStyle = (change: Partial<SubtitleStyle>) => {
+    const display = playback.videoDisplay;
+    if (display) display.setSubtitleStyle({ ...display.subtitleStyle, ...change });
+  };
+  const playerPosition = playback.positionSeconds;
+  // After a release the bar shows the chosen point until the player reports
+  // it, or gives up after a while, so it does not flash the old position.
+  useEffect(() => {
+    if (scrub === null || pressRef.current.pressed) return;
+    if (Math.abs(playerPosition - scrub) <= 0.5) {
+      setScrub(null);
+      return;
+    }
+    const timer = window.setTimeout(() => setScrub(null), 2_000);
+    return () => window.clearTimeout(timer);
+  }, [playerPosition, scrub]);
 
   if (!session || !item) return null;
 
   const duration = playback.durationSeconds;
-  const position = clampPlaybackPosition(playback.positionSeconds, duration);
+  const position = clampPlaybackPosition(scrub ?? playback.positionSeconds, duration);
   const percent = duration && duration > 0 ? (position / duration) * 100 : 0;
   const bufferedPercent = duration && duration > 0
     ? Math.min(100, (playback.bufferedSeconds / duration) * 100)
@@ -54,9 +107,19 @@ export function MediaDock({ onExpand }: { onExpand: (installationId: string) => 
   const wrapsVideoPlaylist = session.action === "play_video"
     && session.repeatMode === "all"
     && playback.items.length > 1;
+  const commitScrub = (value: number) => {
+    if (!pressRef.current.changed) return;
+    pressRef.current.changed = false;
+    setScrub(value);
+    playback.seek(value);
+  };
+  // In fullscreen the dock lies over the picture and leaves with the player's
+  // controls.
+  const overlay = isVideo && playback.videoDisplay?.fullscreen === true;
+  const hidden = overlay && !playback.videoDisplay?.controlsVisible;
   return (
     <section
-      className={`media-dock${isVideo ? " is-video" : ""}`}
+      className={`media-dock${isVideo ? " is-video" : ""}${overlay ? " is-overlay" : ""}${hidden ? " is-hidden" : ""}`}
       aria-label={t("media.dock")}
     >
       <div className="media-dock-now">
@@ -64,7 +127,7 @@ export function MediaDock({ onExpand }: { onExpand: (installationId: string) => 
           {session.action === "play_video"
             ? <Video fill="currentColor" />
             : playback.loading
-              ? <LoaderCircle className="library-spin" />
+              ? <LoaderCircle className="app-spin" />
               : <Play fill="currentColor" />}
         </span>
         <span className="media-dock-copy">
@@ -118,7 +181,7 @@ export function MediaDock({ onExpand }: { onExpand: (installationId: string) => 
             onClick={playback.toggle}
           >
             {playback.loading
-              ? <LoaderCircle className="library-spin" aria-hidden="true" />
+              ? <LoaderCircle className="app-spin" aria-hidden="true" />
               : playback.playing
                 ? <Pause fill="currentColor" aria-hidden="true" />
                 : <Play fill="currentColor" aria-hidden="true" />}
@@ -171,10 +234,30 @@ export function MediaDock({ onExpand }: { onExpand: (installationId: string) => 
               "--media-dock-progress": `${percent}%`,
               "--media-dock-buffered": `${bufferedPercent}%`,
             } as CSSProperties}
-            onInput={(event) => playback.seek(Number(event.currentTarget.value), false)}
-            onPointerUp={(event) => playback.seek(Number(event.currentTarget.value))}
-            onKeyUp={(event) => playback.seek(Number(event.currentTarget.value))}
-            onBlur={(event) => playback.seek(Number(event.currentTarget.value))}
+            onPointerDown={() => {
+              pressRef.current = { pressed: true, moved: false, changed: false };
+            }}
+            onPointerMove={() => {
+              if (pressRef.current.pressed) pressRef.current.moved = true;
+            }}
+            onPointerCancel={() => {
+              pressRef.current.pressed = false;
+              setScrub(null);
+            }}
+            onInput={(event) => {
+              const value = Number(event.currentTarget.value);
+              pressRef.current.changed = true;
+              setScrub(value);
+              if (pressRef.current.pressed && pressRef.current.moved) playback.seek(value, false);
+            }}
+            onPointerUp={(event) => {
+              pressRef.current.pressed = false;
+              commitScrub(Number(event.currentTarget.value));
+            }}
+            onKeyUp={(event) => commitScrub(Number(event.currentTarget.value))}
+            onBlur={(event) => {
+              if (!pressRef.current.pressed) commitScrub(Number(event.currentTarget.value));
+            }}
           />
           <span>{formatPlaybackTime(duration)}</span>
         </div>
@@ -205,6 +288,51 @@ export function MediaDock({ onExpand }: { onExpand: (installationId: string) => 
                 />
               ))}
             </MediaDockMenuGroup>
+            <MediaDockMenuGroup labelKey="media.video.subtitleSize">
+              {SUBTITLE_SIZES.map((size) => (
+                <MediaDockMenuItem
+                  active={playback.videoDisplay?.subtitleStyle.size === size}
+                  key={size}
+                  keepOpen
+                  label={`${Math.round(size * 100)}%`}
+                  onSelect={() => setSubtitleStyle({ size })}
+                />
+              ))}
+            </MediaDockMenuGroup>
+            <MediaDockMenuGroup labelKey="media.video.subtitleColor">
+              {SUBTITLE_COLORS.map((color) => (
+                <MediaDockMenuItem
+                  active={playback.videoDisplay?.subtitleStyle.color === color}
+                  key={color}
+                  keepOpen
+                  label={t(subtitleColorKey(color))}
+                  swatch={SUBTITLE_SWATCHES[color]}
+                  onSelect={() => setSubtitleStyle({ color })}
+                />
+              ))}
+            </MediaDockMenuGroup>
+            <MediaDockMenuGroup labelKey="media.video.subtitleOpacity">
+              {SUBTITLE_OPACITIES.map((opacity) => (
+                <MediaDockMenuItem
+                  active={playback.videoDisplay?.subtitleStyle.opacity === opacity}
+                  key={opacity}
+                  keepOpen
+                  label={`${Math.round(opacity * 100)}%`}
+                  onSelect={() => setSubtitleStyle({ opacity })}
+                />
+              ))}
+            </MediaDockMenuGroup>
+            <MediaDockMenuGroup labelKey="media.video.subtitleBackground">
+              {SUBTITLE_BACKGROUNDS.map((background) => (
+                <MediaDockMenuItem
+                  active={playback.videoDisplay?.subtitleStyle.background === background}
+                  key={background}
+                  keepOpen
+                  label={background === 0 ? t("media.video.subtitleBackgroundNone") : `${Math.round(background * 100)}%`}
+                  onSelect={() => setSubtitleStyle({ background })}
+                />
+              ))}
+            </MediaDockMenuGroup>
           </MediaDockMenu>
         ) : null}
         <MediaDockMenu
@@ -226,7 +354,7 @@ export function MediaDock({ onExpand }: { onExpand: (installationId: string) => 
           {playback.videoDisplay ? (
             <MediaDockMenuGroup labelKey="media.video.fit">
               <MediaDockMenuItem
-                active={playback.videoDisplay.fit === "contain"}
+                active={playback.videoDisplay.fit !== "cover"}
                 label={t("media.video.fitContain")}
                 onSelect={() => playback.videoDisplay?.setFit("contain")}
               />
@@ -235,32 +363,58 @@ export function MediaDock({ onExpand }: { onExpand: (installationId: string) => 
                 label={t("media.video.fitCover")}
                 onSelect={() => playback.videoDisplay?.setFit("cover")}
               />
-              <MediaDockMenuItem
-                active={playback.videoDisplay.fit === "original"}
-                label={t("media.video.fitOriginal")}
-                onSelect={() => playback.videoDisplay?.setFit("original")}
-              />
             </MediaDockMenuGroup>
+          ) : null}
+          {playback.videoDisplay ? (
+            <MediaDockMenuToggle
+              label={t("media.video.backgroundAmbient")}
+              checked={playback.videoDisplay.ambient}
+              onToggle={(enabled) => playback.videoDisplay?.setAmbient(enabled)}
+            />
           ) : null}
           {isVideo ? (
-            <MediaDockMenuGroup labelKey="media.menu.playback">
-              <MediaDockMenuItem
-                active={session.repeatMode !== "off"}
-                label={t(repeatLabelKey(session.repeatMode))}
-                onSelect={() => playback.setRepeatMode(nextRepeat(session.repeatMode))}
-              />
-              {playback.videoDisplay ? (
+            <MediaDockMenuGroup labelKey="media.menu.repeat">
+              {(["off", "all", "one"] as const).map((mode) => (
                 <MediaDockMenuItem
-                  active={false}
-                  label={t("media.video.pictureInPicture")}
-                  onSelect={() => playback.videoDisplay?.togglePictureInPicture()}
+                  active={session.repeatMode === mode}
+                  key={mode}
+                  label={t(repeatLabelKey(mode))}
+                  onSelect={() => playback.setRepeatMode(mode)}
                 />
-              ) : null}
+              ))}
             </MediaDockMenuGroup>
           ) : null}
+          {playback.videoDisplay ? (
+            <MediaDockMenuAction
+              label={t(playback.videoDisplay.fullscreen ? "media.video.exitFullscreen" : "media.video.fullscreen")}
+              onSelect={() => playback.videoDisplay?.toggleFullscreen()}
+            />
+          ) : null}
+          {playback.videoDisplay?.canPictureInPicture ? (
+            <MediaDockMenuAction
+              label={t("media.video.pictureInPicture")}
+              onSelect={() => playback.videoDisplay?.togglePictureInPicture()}
+            />
+          ) : null}
         </MediaDockMenu>
-        <label className="media-dock-volume">
-          <Volume2 aria-hidden="true" />
+        <div className="media-dock-volume" ref={volumeControl}>
+          <span className="media-dock-hint-anchor">
+            <button
+              type="button"
+              className="media-dock-volume-toggle"
+              aria-label={t(playback.volume > 0 ? "media.video.mute" : "media.video.unmute")}
+              aria-keyshortcuts={ariaKeyShortcuts(muteBindings)}
+              aria-pressed={playback.volume <= 0}
+              onClick={() => playback.toggleMute()}
+            >
+              {playback.volume > 0 ? <Volume2 aria-hidden="true" /> : <VolumeX aria-hidden="true" />}
+            </button>
+            {/* The hover hint YouTube shows: the action in the user's language and its key. */}
+            <span className="media-dock-hint" aria-hidden="true">
+              {t(playback.volume > 0 ? "media.video.mute" : "media.video.unmute")}
+              {muteBindings[0] ? <kbd>{formatCombo(muteBindings[0])}</kbd> : null}
+            </span>
+          </span>
           <input
             type="range"
             min={0}
@@ -270,7 +424,7 @@ export function MediaDock({ onExpand }: { onExpand: (installationId: string) => 
             aria-label={t("media.volume")}
             onChange={(event) => playback.setVolume(Number(event.target.value))}
           />
-        </label>
+        </div>
         {playback.videoDisplay ? (
           <button
             type="button"
@@ -308,6 +462,18 @@ export function MediaDock({ onExpand }: { onExpand: (installationId: string) => 
         : null}
     </section>
   );
+}
+
+const SUBTITLE_SWATCHES: Record<SubtitleStyle["color"], string> = {
+  white: "#ffffff",
+  yellow: "#ffe44d",
+  cyan: "#7fe9ff",
+};
+
+function subtitleColorKey(color: SubtitleStyle["color"]): MessageKey {
+  if (color === "yellow") return "media.video.subtitleColorYellow";
+  if (color === "cyan") return "media.video.subtitleColorCyan";
+  return "media.video.subtitleColorWhite";
 }
 
 export function nextRepeat(mode: MediaRepeatMode): MediaRepeatMode {

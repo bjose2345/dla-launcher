@@ -5,6 +5,7 @@ import type {
   MediaSessionItem,
   PreparedPackageInstallation,
 } from "./types";
+import { basename } from "../../basename";
 
 const mediaActions = new Set<LaunchActionKind>([
   "play_audio",
@@ -68,7 +69,7 @@ export function mediaStatusMessageKey(status: MediaSession["status"]) {
 }
 
 export function mediaItemName(item: MediaSessionItem): string {
-  return item.relativePath.split(/[\\/]/).filter(Boolean).at(-1) ?? item.relativePath;
+  return basename(item.relativePath);
 }
 
 export function mediaProgressPercent(session: MediaSession): number | null {

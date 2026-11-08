@@ -1,8 +1,9 @@
 import { Archive, ArrowRight, CircleAlert, Eye, EyeOff, KeyRound, LoaderCircle, UserRound, X } from "lucide-react";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 
-import { usePresentation } from "../../preferences";
+import { useModalDialog } from "../../app/useModalDialog";
+import { usePresentation } from "../../preferences/PresentationProvider";
 import { patronPlansUrl, problemText } from "./deliveryText";
 import { deliveryFailure, type DeliveryGateway, type DeliveryProblem, type DeliveryView } from "./types";
 
@@ -29,15 +30,8 @@ export function DeliverySignIn({
   const [showPassword, setShowPassword] = useState(false);
   const [problem, setProblem] = useState<DeliveryProblem | null>(null);
   const usernameField = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    usernameField.current?.focus();
-    const close = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", close);
-    return () => document.removeEventListener("keydown", close);
-  }, [onClose]);
+  const dialogRef = useRef<HTMLElement>(null);
+  useModalDialog({ dialog: dialogRef, onClose, initialFocus: () => usernameField.current });
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -61,6 +55,7 @@ export function DeliverySignIn({
   return createPortal(
     <div className="delivery-dialog-backdrop">
       <section
+        ref={dialogRef}
         className="delivery-dialog"
         role="dialog"
         aria-modal="true"
@@ -129,11 +124,11 @@ export function DeliverySignIn({
               </p>
             )}
             <div className="delivery-dialog-actions">
-              <button className="delivery-button" type="button" onClick={onClose} disabled={pending}>
+              <button className="app-button is-quiet" type="button" onClick={onClose} disabled={pending}>
                 {t("common.cancel")}
               </button>
               <button className="delivery-sign-in-submit" type="submit" disabled={pending}>
-                {pending && <LoaderCircle className="delivery-spin" aria-hidden="true" />}
+                {pending && <LoaderCircle className="app-spin delivery-spin" aria-hidden="true" />}
                 {pending ? t("delivery.signingIn") : t("delivery.signIn")}
                 {!pending && <ArrowRight className="delivery-sign-in-arrow" aria-hidden="true" />}
               </button>

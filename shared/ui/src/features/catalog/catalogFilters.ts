@@ -6,6 +6,7 @@ import {
   type CatalogFacetSelection,
   type CatalogFacetState,
 } from "./types";
+import { readStoredText, writeStoredJson } from "../../preferences/browserStorage";
 
 export const CATALOG_FILTERS_STORAGE_KEY = "dla-launcher:catalog-filters:v1";
 
@@ -87,21 +88,11 @@ export function catalogFacetFilterKey(filters: CatalogFacetFilters): string {
 }
 
 export function readCatalogFacetFilters(): CatalogFacetFilters {
-  if (typeof window === "undefined") return emptyCatalogFacetFilters();
-  try {
-    return decodeCatalogFacetFilters(window.localStorage.getItem(CATALOG_FILTERS_STORAGE_KEY));
-  } catch {
-    return emptyCatalogFacetFilters();
-  }
+  return decodeCatalogFacetFilters(readStoredText(CATALOG_FILTERS_STORAGE_KEY));
 }
 
 export function writeCatalogFacetFilters(filters: CatalogFacetFilters): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(CATALOG_FILTERS_STORAGE_KEY, JSON.stringify(filters));
-  } catch {
-    return;
-  }
+  writeStoredJson(CATALOG_FILTERS_STORAGE_KEY, filters);
 }
 
 export function decodeCatalogFacetFilters(value: string | null): CatalogFacetFilters {

@@ -166,7 +166,7 @@
   padding: 20px 24px 40px;
 }
 
-.library-manage-body > .library-callout {
+.library-manage-body > .app-callout {
   margin: 0 0 14px;
 }
 
@@ -192,7 +192,7 @@
   display: block;
 }
 
-.library-manage-field > .library-manage-button {
+.library-manage-field > .app-button {
   justify-self: start;
 }
 
@@ -216,20 +216,6 @@
 .library-manage-note svg {
   width: 14px;
   height: 14px;
-}
-
-.library-manage-value {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  font-size: 0.86rem;
-}
-
-.library-manage-value span {
-  color: var(--app-muted);
-  font-size: 0.78rem;
 }
 
 .library-manage-work {
@@ -345,53 +331,23 @@
   color: var(--app-subtle);
 }
 
+select.library-manage-input {
+  padding-right: 40px;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  background-size: 16px 16px;
+  cursor: pointer;
+}
+
+select.library-manage-input:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 .library-manage-input:focus {
   box-shadow: inset 0 0 0 1px var(--color-primary);
-}
-
-.library-manage-button {
-  display: inline-flex;
-  min-height: 34px;
-  align-items: center;
-  gap: 7px;
-  padding: 0 14px;
-  border: 0;
-  box-shadow: inset 0 0 0 1px var(--app-border);
-  clip-path: var(--app-chip);
-  background: var(--app-panel-raised);
-  color: var(--color-base-content);
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.78rem;
-  font-weight: 800;
-  white-space: nowrap;
-}
-
-.library-manage-button svg {
-  width: 15px;
-  height: 15px;
-}
-
-.library-manage-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.library-manage-button.is-primary {
-  box-shadow: none;
-  background: var(--color-primary);
-  color: var(--color-primary-content);
-}
-
-.library-manage-button.is-danger {
-  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-error) 55%, transparent);
-  color: var(--color-error);
-}
-
-.library-manage-button.is-solid-danger {
-  box-shadow: none;
-  background: var(--color-error);
-  color: var(--color-error-content);
 }
 
 .library-manage-link {
@@ -418,95 +374,6 @@
 .library-manage-link:disabled {
   cursor: not-allowed;
   opacity: 0.5;
-}
-
-.library-manage-choices {
-  display: grid;
-  gap: 8px;
-}
-
-.library-manage-choice {
-  display: grid;
-  align-items: center;
-  gap: 12px;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
-  padding: 11px 13px;
-  border: 0;
-  box-shadow: inset 0 0 0 1px var(--app-border);
-  background: var(--app-panel-raised);
-  color: var(--color-base-content);
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.library-manage-choice.is-static {
-  cursor: default;
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.library-manage-choice.is-selected {
-  box-shadow: inset 0 0 0 2px var(--color-primary);
-  background: color-mix(in oklch, var(--color-primary) 9%, var(--app-panel-raised));
-}
-
-.library-manage-radio {
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--app-subtle);
-  border-radius: 50%;
-}
-
-.library-manage-choice.is-selected .library-manage-radio {
-  border-color: var(--color-primary);
-  background: radial-gradient(circle, var(--color-primary) 0 3.5px, transparent 4px);
-}
-
-.library-manage-choice-copy {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.library-manage-choice-copy strong {
-  font-size: 0.84rem;
-}
-
-.library-manage-choice-copy code {
-  overflow: hidden;
-  color: var(--app-muted);
-  font-size: 0.74rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.library-manage-badge {
-  padding: 2px 8px;
-  clip-path: var(--app-chip-sm);
-  background: color-mix(in oklch, var(--color-success) 18%, transparent);
-  color: var(--color-success);
-  font-size: 0.68rem;
-  font-weight: 800;
-  white-space: nowrap;
-}
-
-.library-manage-chip {
-  padding: 2px 9px;
-  clip-path: var(--app-chip-sm);
-  background: var(--app-panel-raised);
-  color: var(--app-muted);
-  font-size: 0.72rem;
-  font-weight: 800;
-}
-
-.library-manage-chip.is-ok {
-  background: color-mix(in oklch, var(--color-success) 16%, transparent);
-  color: var(--color-success);
-}
-
-.library-manage-chip.is-warn {
-  background: color-mix(in oklch, var(--color-warning) 16%, transparent);
-  color: var(--color-warning);
 }
 
 .library-manage-path {
@@ -536,110 +403,387 @@
   height: 14px;
 }
 
-.library-manage-progress progress {
-  width: 100%;
-  height: 5px;
-  accent-color: var(--color-primary);
+/* ── Installed files: tree, editor, changed by hand ──────── */
+
+.library-manage-subhead {
+  margin: 8px 0 0;
+  font-size: 0.8rem;
+  font-weight: 750;
 }
 
-.library-manage-issues {
+.library-file-tree {
   display: grid;
-  gap: 4px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  font-size: 0.76rem;
+  gap: 8px;
 }
 
-.library-manage-issues li {
+.library-file-tree-tools {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 8px;
+  align-items: center;
+  gap: 8px;
 }
 
-.library-manage-issues code {
-  color: var(--app-muted);
-  overflow-wrap: anywhere;
-}
-
-.library-manage-advanced {
-  display: grid;
-  gap: 12px;
-  padding: 12px 14px;
+.library-file-tree-search {
+  display: flex;
+  min-width: 180px;
+  min-height: 34px;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border-radius: 8px;
   box-shadow: inset 0 0 0 1px var(--app-border);
   background: var(--app-backdrop);
-}
-
-.library-manage-advanced > summary {
-  cursor: pointer;
-  font-size: 0.84rem;
-  font-weight: 800;
-}
-
-.library-manage-advanced[open] > summary {
-  margin-bottom: 12px;
-}
-
-.library-manage-advanced > * + * {
-  margin-top: 12px;
-}
-
-.library-manage-table-wrap {
-  overflow-x: auto;
-}
-
-.library-manage-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.76rem;
-}
-
-.library-manage-table th {
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--app-border);
   color: var(--app-muted);
-  font-weight: 750;
-  text-align: left;
-  white-space: nowrap;
 }
 
-.library-manage-table td {
-  padding: 6px 8px;
-  border-bottom: 1px solid color-mix(in oklch, var(--app-border) 60%, transparent);
-  vertical-align: middle;
+.library-file-tree-search:focus-within {
+  box-shadow: inset 0 0 0 1px var(--color-primary);
 }
 
-.library-manage-table td code {
-  display: block;
-  max-width: 240px;
+.library-file-tree-search > svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.library-file-tree-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-base-content);
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+.library-file-tree-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.library-file-tree-search button {
+  display: inline-flex;
+  padding: 2px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--app-muted);
+  cursor: pointer;
+}
+
+.library-file-tree-search button:hover {
+  color: var(--color-base-content);
+}
+
+.library-file-tree-search button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.library-file-tree-box {
+  padding: 4px;
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  background: color-mix(in oklch, var(--color-base-content) 3%, transparent);
+  font-size: 0.82rem;
+}
+
+/* react-arborist gives each row min-width: max-content, which would let a
+   long name push the tree sideways instead of shortening it. */
+.library-file-tree-box div:has(> .library-file-row) {
+  min-width: 0 !important;
+}
+
+/* A thin rounded thumb inset from the box's edge, no track. Only the
+   -webkit- rules: WebView2 ignores them once scrollbar-color is set, and
+   WebKitGTK draws them alike. */
+.library-file-tree-box *::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.library-file-tree-box *::-webkit-scrollbar-track,
+.library-file-tree-box *::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.library-file-tree-box *::-webkit-scrollbar-thumb {
+  border: 4px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--color-base-content) 26%, transparent) padding-box;
+}
+
+.library-file-tree-box *::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
+}
+
+.library-file-tree-box [role="treeitem"]:focus {
+  outline: none;
+}
+
+.library-file-row {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.library-file-row:hover {
+  background: color-mix(in oklch, var(--color-base-content) 7%, transparent);
+}
+
+.library-file-tree-box [role="treeitem"]:focus-visible .library-file-row {
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 60%, transparent);
+}
+
+.library-file-row.is-selected {
+  background: color-mix(in oklch, var(--color-primary) 16%, transparent);
+}
+
+.library-file-row.is-hidden .library-file-name {
+  color: var(--app-muted);
+}
+
+.library-file-chevron {
+  display: inline-flex;
+  width: 14px;
+  flex: none;
+  justify-content: center;
+  color: var(--app-muted);
+  transition: transform 120ms ease;
+}
+
+.library-file-chevron.is-open {
+  transform: rotate(90deg);
+}
+
+.library-file-chevron svg {
+  width: 13px;
+  height: 13px;
+}
+
+.library-file-icon,
+.library-file-folder {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.library-file-icon {
+  color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+}
+
+.library-file-folder {
+  color: #3b9bf4;
+  fill: color-mix(in oklch, #3b9bf4 40%, transparent);
+}
+
+.library-file-name {
+  min-width: 4.5rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.library-manage-table td small {
-  display: block;
-  color: var(--color-warning);
+.library-file-meta {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--app-muted);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
 }
 
-.library-manage-table tr.is-ignored td {
-  opacity: 0.55;
+.library-file-meta svg {
+  width: 13px;
+  height: 13px;
 }
 
-.library-manage-table select,
-.library-manage-table input[type="number"] {
-  max-width: 130px;
-  min-height: 28px;
+.library-file-meta .is-changed {
+  color: var(--color-primary);
+}
+
+.library-file-editor {
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 40%, var(--app-border));
+  background: color-mix(in oklch, var(--color-primary) 5%, transparent);
+}
+
+.library-file-editor-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.library-file-editor-head code {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-file-editor-head .library-manage-close {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+}
+
+.library-file-editor-head .library-manage-close svg {
+  width: 15px;
+  height: 15px;
+}
+
+.library-file-editor-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--app-muted);
+  font-size: 0.78rem;
+}
+
+.library-file-editor-field select,
+.library-file-editor-field input {
+  min-height: 32px;
+  padding: 0 8px;
   border: 0;
+  border-radius: 6px;
   box-shadow: inset 0 0 0 1px var(--app-border);
-  background: var(--app-panel);
+  background: var(--app-backdrop);
   color: var(--color-base-content);
   font: inherit;
+  font-size: 0.8rem;
 }
 
-.library-manage-table input[type="number"] {
-  width: 64px;
-  padding: 0 6px;
+.library-file-editor-field input {
+  width: 72px;
+}
+
+.library-file-editor-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.library-changed-files {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.library-changed-files li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.library-changed-name {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.library-changed-name strong,
+.library-changed-name small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-changed-name strong {
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.library-changed-name small {
+  color: var(--app-muted);
+  font-size: 0.72rem;
+}
+
+.library-changed-name:hover strong {
+  color: var(--color-primary);
+}
+
+.library-changed-what {
+  flex: none;
+  color: var(--app-muted);
+  font-size: 0.76rem;
+}
+
+/* ── Edit details' own look ───────────────────────────────── */
+/* The owner chose a simpler look for a work's panel (2026-10-30): rounded
+   outline buttons with a leading icon, thin lines between sections. The rest
+   of the app keeps its chip buttons. */
+
+.library-manage .library-manage-stack {
+  gap: 18px;
+}
+
+.library-manage .library-manage-stack > section + section {
+  padding-top: 18px;
+  border-top: 1px solid var(--app-border);
+}
+
+.library-manage .library-manage-field h3 {
+  font-weight: 750;
+}
+
+.library-manage .app-button {
+  border-radius: 8px;
+  clip-path: none;
+  background: transparent;
+  font-weight: 650;
+}
+
+.library-manage .app-button:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-base-content) 35%, transparent);
+  background: color-mix(in oklch, var(--color-base-content) 5%, transparent);
+}
+
+.library-manage .app-button.is-primary,
+.library-manage .app-button.is-primary:hover:not(:disabled) {
+  box-shadow: none;
+  background: var(--color-primary);
+}
+
+.library-manage .app-button.is-danger:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 1px var(--color-error);
+  background: color-mix(in oklch, var(--color-error) 8%, transparent);
+}
+
+.library-manage .app-button.is-solid-danger,
+.library-manage .app-button.is-solid-danger:hover:not(:disabled) {
+  box-shadow: none;
+  background: var(--color-error);
+}
+
+.library-manage .library-manage-confirm,
+.library-manage .library-manage-path,
+.library-manage .library-manage-input {
+  border-radius: 8px;
 }
 
 .library-manage-confirm {
@@ -1034,4 +1178,3 @@
 .own-work-description p {
   white-space: pre-line;
 }
-

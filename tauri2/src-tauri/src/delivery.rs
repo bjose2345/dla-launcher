@@ -72,7 +72,7 @@ impl Forward {
         Arc::new(move || forward.connector.get().and_then(Connector::local_address))
     }
 
-    fn ensure(&self) -> Result<(), DeliveryError> {
+    pub(crate) fn ensure(&self) -> Result<(), DeliveryError> {
         let connector = self.connector.get_or_init(|| {
             Connector::start(
                 ConnectorConfig {
@@ -97,13 +97,20 @@ impl Forward {
     }
 }
 
-/// The sidecar beside the launcher's own executable.
 pub fn cloudflared_sidecar() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(Path::to_path_buf))
-        .unwrap_or_default()
-        .join(format!("dla-cloudflared{}", std::env::consts::EXE_SUFFIX))
+    sidecar_program(std::env::current_exe().ok().as_deref(), "dla-cloudflared")
+}
+
+/// The sidecar beside the launcher's own executable, or its bare name for
+/// `PATH` when nothing is there: the deb keeps the launcher under /usr/share
+/// and the sidecars in /usr/bin.
+fn sidecar_program(launcher: Option<&Path>, name: &str) -> PathBuf {
+    let file = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+    launcher
+        .and_then(Path::parent)
+        .map(|folder| folder.join(&file))
+        .filter(|program| program.is_file())
+        .unwrap_or_else(|| PathBuf::from(file))
 }
 
 #[derive(Default)]
@@ -242,7 +249,10 @@ fn stops_the_queue(problem: Option<DeliveryProblem>) -> bool {
     !matches!(
         problem,
         None | Some(
-            DeliveryProblem::NotInArchive | DeliveryProblem::Corrupt | DeliveryProblem::Install
+            DeliveryProblem::NotInArchive
+                | DeliveryProblem::Forbidden
+                | DeliveryProblem::Corrupt
+                | DeliveryProblem::Install
         )
     )
 }
@@ -768,6 +778,26 @@ impl LocalInstaller for ShellInstaller {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sidecar_falls_back_to_path_when_not_beside_the_launcher() {
+        let folder = tempfile::tempdir().unwrap();
+        let launcher = folder.path().join("dla-launcher");
+        assert_eq!(
+            sidecar_program(Some(&launcher), "dla-cloudflared"),
+            PathBuf::from(format!("dla-cloudflared{}", std::env::consts::EXE_SUFFIX))
+        );
+
+        let beside = folder
+            .path()
+            .join(format!("dla-cloudflared{}", std::env::consts::EXE_SUFFIX));
+        std::fs::write(&beside, b"").unwrap();
+        assert_eq!(sidecar_program(Some(&launcher), "dla-cloudflared"), beside);
+        assert_eq!(
+            sidecar_program(None, "dla-cloudflared"),
+            PathBuf::from(format!("dla-cloudflared{}", std::env::consts::EXE_SUFFIX))
+        );
+    }
 
     #[test]
     fn install_folders_drop_only_the_windows_drive_prefix() {

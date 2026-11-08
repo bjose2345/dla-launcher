@@ -1,5 +1,6 @@
 .import-page {
   --import-gutter: max(16px, calc((100% - 1040px) / 2));
+  --page-gutter: var(--import-gutter);
 
   min-height: 0;
   width: 100%;
@@ -16,52 +17,10 @@
 
 /* ── masthead ─────────────────────────────────────────────── */
 
-.import-masthead {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 22px;
-  padding: 34px var(--import-gutter) 26px;
-  border-bottom: 1px solid var(--app-border);
-  background-color: var(--app-backdrop);
-  background-image: radial-gradient(color-mix(in oklch, var(--color-base-content) 13%, transparent) 0.8px, transparent 0.8px);
-  background-size: 17px 17px;
-}
-
-.import-masthead-title {
-  min-width: 0;
-}
-
-.import-eyebrow {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-bottom: 6px;
-  color: var(--color-primary);
-  font-size: 0.62rem;
-  font-weight: 850;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-}
-
-.import-eyebrow svg {
-  width: 13px;
-  height: 13px;
-}
-
 .import-masthead-heading {
   display: flex;
   align-items: center;
   gap: 14px;
-}
-
-.import-masthead h1 {
-  margin: 0;
-  font-size: clamp(1.7rem, 3.4vw, 2.5rem);
-  font-weight: 850;
-  letter-spacing: -0.045em;
-  line-height: 1;
 }
 
 .import-count {
@@ -79,14 +38,6 @@
   font-variant-numeric: tabular-nums;
   text-transform: uppercase;
   white-space: nowrap;
-}
-
-.import-masthead p {
-  max-width: 62ch;
-  margin: 8px 0 0;
-  color: var(--app-muted);
-  font-size: 0.78rem;
-  line-height: 1.55;
 }
 
 /* ── stepper ──────────────────────────────────────────────── */
@@ -677,48 +628,6 @@
   outline-offset: 3px;
 }
 
-.import-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 18px;
-  border: 0;
-  box-shadow: inset 0 0 0 1px var(--app-border);
-  clip-path: var(--app-chip);
-  background: var(--app-panel-raised);
-  color: var(--app-muted);
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-
-.import-button svg {
-  width: 15px;
-  height: 15px;
-}
-
-.import-button:hover:not(:disabled) {
-  color: var(--color-base-content);
-}
-
-.import-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-.import-button-danger {
-  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-error) 45%, transparent);
-  background: color-mix(in oklch, var(--color-error) 12%, transparent);
-  color: var(--color-error);
-}
-
-.import-button-solid-danger {
-  background: var(--color-error);
-  box-shadow: none;
-  color: var(--color-error-content);
-}
-
 /* ── run panel ────────────────────────────────────────────── */
 
 .import-run-head {
@@ -752,53 +661,7 @@
 }
 
 .import-run-bar {
-  position: relative;
-  height: 8px;
   margin-top: 14px;
-  overflow: hidden;
-  background: color-mix(in oklch, var(--color-base-content) 10%, transparent);
-}
-
-.import-run-bar i {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  display: block;
-  overflow: hidden;
-  background: var(--color-primary);
-  transition: width 400ms cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.import-run-bar i::after {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(115deg, transparent 34%, rgb(255 255 255 / 40%) 50%, transparent 66%);
-  content: "";
-  transform: translateX(-130%);
-  animation: import-sheen 1.9s linear infinite;
-}
-
-.import-run-bar.is-indeterminate i {
-  width: 34%;
-  transition: none;
-  animation: import-pingpong 1.5s cubic-bezier(0.45, 0, 0.55, 1) infinite alternate;
-}
-
-@keyframes import-sheen {
-  to {
-    transform: translateX(130%);
-  }
-}
-
-@keyframes import-pingpong {
-  from {
-    transform: translateX(0);
-  }
-
-  to {
-    transform: translateX(194%);
-  }
 }
 
 .import-run-metrics {
@@ -1193,61 +1056,6 @@
 
 /* ── callout ──────────────────────────────────────────────── */
 
-.import-callout {
-  display: flex;
-  align-items: flex-start;
-  gap: 11px;
-  padding: 13px 15px;
-  border-left: 2px solid var(--color-error);
-  background: color-mix(in oklch, var(--color-error) 10%, transparent);
-  font-size: 0.8rem;
-  line-height: 1.45;
-}
-
-.import-callout svg {
-  width: 16px;
-  height: 16px;
-  flex: none;
-  margin-top: 1px;
-}
-
-.import-callout small {
-  display: block;
-  margin-top: 4px;
-  color: var(--app-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.7rem;
-  overflow-wrap: anywhere;
-}
-
-.import-callout-error {
-  color: var(--color-error);
-}
-
-.import-callout-error svg {
-  color: var(--color-error);
-}
-
-.import-callout-warning {
-  border-left-color: var(--color-warning);
-  background: color-mix(in oklch, var(--color-warning) 10%, transparent);
-  color: var(--color-warning);
-}
-
-.import-callout-warning svg {
-  color: var(--color-warning);
-}
-
-.import-spin {
-  animation: import-spin 900ms linear infinite;
-}
-
-@keyframes import-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 @media (max-width: 720px) {
   .import-catalog,
   .import-skeleton {
@@ -1313,21 +1121,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .import-spin,
   .import-shimmer,
-  .import-run-bar i::after,
   .import-phase.is-current .import-phase-bar {
     animation: none;
-  }
-
-  .import-run-bar.is-indeterminate i {
-    width: 40%;
-    animation: none;
-    transform: translateX(75%);
-  }
-
-  .import-run-bar i {
-    transition: none;
   }
 
   .import-pair-secondary:hover:not(:disabled),

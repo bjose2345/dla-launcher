@@ -23,7 +23,10 @@ import {
 import { createPortal } from "react-dom";
 
 import { errorMessage } from "../../app/errorMessage";
-import { useDocumentScrollLock } from "../../app/useDocumentScrollLock";
+import { operationIsTerminal } from "../../app/operationStage";
+import { ProgressBar } from "../../app/ProgressBar";
+import { useModalDialog } from "../../app/useModalDialog";
+import { useGatewaySubscription } from "../../app/useGatewaySubscription";
 import type { MessageKey } from "../../i18n/catalogs";
 import {
   CatalogFilterChip,
@@ -36,6 +39,8 @@ import {
   useCatalogFacetFilters,
   type CatalogFacetGroup,
 } from "../catalog";
+import { catalogKeys } from "../catalog/catalogQueryKeys";
+import { localizedName } from "../catalog/localizedNames";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import {
   clearRecentSearches,
@@ -50,11 +55,10 @@ import type {
   SearchShortcut,
   SearchShortcutKind,
 } from "./types";
-import { searchRebuildIsTerminal } from "./types";
 
 const SEARCH_PAGE_SIZE = 24;
-const SEARCH_INDEX_QUERY_KEY = ["catalog-search-index"] as const;
-const SEARCH_REBUILD_QUERY_KEY = ["catalog-search-rebuild"] as const;
+const SEARCH_INDEX_QUERY_KEY = catalogKeys.searchIndex;
+const SEARCH_REBUILD_QUERY_KEY = catalogKeys.searchRebuild;
 
 export function SearchModal({
   open,
@@ -77,7 +81,8 @@ export function SearchModal({
   const [page, setPage] = useState(1);
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [recent, setRecent] = useState(readRecentSearches);
-  useDocumentScrollLock(open);
+  const modalRef = useRef<HTMLElement>(null);
+  useModalDialog({ open, dialog: modalRef, onClose, initialFocus: () => input.current });
 
   const indexStatus = useQuery({
     queryKey: SEARCH_INDEX_QUERY_KEY,
@@ -89,7 +94,7 @@ export function SearchModal({
     queryKey: SEARCH_REBUILD_QUERY_KEY,
     queryFn: () => gateway.readRebuildProgress(),
     enabled: open,
-    refetchInterval: (query) => query.state.data && !searchRebuildIsTerminal(query.state.data.stage) ? 500 : false,
+    refetchInterval: (query) => query.state.data && !operationIsTerminal(query.state.data.stage) ? 500 : false,
   });
   const rebuild = useMutation({
     mutationFn: () => gateway.rebuild(),
@@ -113,14 +118,6 @@ export function SearchModal({
   });
 
   useEffect(() => {
-    if (!open) return;
-    const frame = window.requestAnimationFrame(() => input.current?.focus());
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
-  }, [open]);
-
-  useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedText(text.trim()), 160);
     return () => window.clearTimeout(timer);
   }, [text]);
@@ -133,7 +130,7 @@ export function SearchModal({
 
   const status = indexStatus.data;
   const currentRebuild = rebuildProgress.data;
-  const rebuildActive = Boolean(currentRebuild && !searchRebuildIsTerminal(currentRebuild.stage));
+  const rebuildActive = Boolean(currentRebuild && !operationIsTerminal(currentRebuild.stage));
   useEffect(() => {
     if (!open || !status || rebuild.isPending || rebuildActive) return;
     if (status.state !== "missing" && status.state !== "stale") return;
@@ -143,30 +140,22 @@ export function SearchModal({
     rebuild.mutate();
   }, [open, rebuild, rebuildActive, status]);
 
-  useEffect(() => {
-    if (!open) return;
-    let unsubscribe: (() => void) | undefined;
-    let disposed = false;
-    void gateway.subscribeRebuildProgress((progress) => {
+  useGatewaySubscription(
+    open ? gateway.subscribeRebuildProgress.bind(gateway) : null,
+    (progress) => {
       queryClient.setQueryData<SearchRebuildProgress | null>(SEARCH_REBUILD_QUERY_KEY, progress);
-      if (searchRebuildIsTerminal(progress.stage)) {
+      if (operationIsTerminal(progress.stage)) {
         void queryClient.invalidateQueries({ queryKey: SEARCH_INDEX_QUERY_KEY });
       }
-    }).then((listener) => {
-      if (disposed) listener();
-      else unsubscribe = listener;
-    });
-    return () => {
-      disposed = true;
-      unsubscribe?.();
-    };
-  }, [gateway, open, queryClient]);
+    },
+    [gateway, open],
+  );
 
   const archiveHash = isArchiveHash(debouncedText);
   const textSearchReady = status?.state === "ready";
   const canSearch = debouncedText.length > 0 && (archiveHash || textSearchReady);
   const results = useQuery({
-    queryKey: ["catalog-search", debouncedText, filterKey, page],
+    queryKey: catalogKeys.search(debouncedText, filterKey, page),
     queryFn: () => gateway.search({
       text: debouncedText,
       facets: filters,
@@ -177,7 +166,7 @@ export function SearchModal({
     placeholderData: (previous) => previous,
   });
   const shortcuts = useQuery({
-    queryKey: ["catalog-search-shortcuts", debouncedText],
+    queryKey: catalogKeys.searchShortcuts(debouncedText),
     queryFn: () => gateway.shortcuts(debouncedText, 6),
     enabled: open && debouncedText.length >= 2,
     placeholderData: (previous) => previous,
@@ -202,11 +191,6 @@ export function SearchModal({
     void onOpenWork(item.work.code);
   };
   const handleInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      onClose();
-      return;
-    }
     if (items.length === 0) return;
     if (event.key === "ArrowDown" || event.key === "ArrowRight") {
       event.preventDefault();
@@ -228,7 +212,7 @@ export function SearchModal({
   };
 
   return createPortal(
-    <section className="search-modal" role="dialog" aria-modal="true" aria-label={t("search.title")}>
+    <section ref={modalRef} className="search-modal" role="dialog" aria-modal="true" aria-label={t("search.title")}>
       <header className="search-modal-header">
         <div className="search-modal-heading">
           <Search aria-hidden="true" />
@@ -458,7 +442,7 @@ function ShortcutGroup({
       <div>
         {shortcuts.map((shortcut) => (
           <CatalogFilterChip
-            label={englishLabels && shortcut.labelEnglish ? shortcut.labelEnglish : shortcut.label}
+            label={localizedName(shortcut.label, shortcut.labelEnglish, englishLabels)}
             count={shortcut.count}
             state={catalogFacetState(filters, group, shortcut.key)}
             onCycle={() => onCycle(shortcut)}
@@ -514,7 +498,7 @@ function SearchIndexStatePanel({
   cancelling: boolean;
 }) {
   const { locale, t } = usePresentation();
-  const active = Boolean(progress && !searchRebuildIsTerminal(progress.stage));
+  const active = Boolean(progress && !operationIsTerminal(progress.stage));
   const cancelled = progress?.stage === "cancelled";
   const failed = progress?.stage === "failed" || status?.state === "failed" || Boolean(error);
   const state = active || loading ? "building" : status?.state;
@@ -530,16 +514,12 @@ function SearchIndexStatePanel({
         {active && progress && (
           <>
             <span>{t(`search.rebuildStage.${progress.stage}` as MessageKey)}</span>
-            <div
-              className={`search-index-progress${percent === null ? " is-indeterminate" : ""}`}
-              role="progressbar"
-              aria-label={t("search.indexProgressLabel")}
-              aria-valuemin={0}
-              aria-valuemax={progress.totalDocuments || undefined}
-              aria-valuenow={progress.totalDocuments > 0 ? progress.indexedDocuments : undefined}
-            >
-              <i style={percent === null ? undefined : { width: `${percent}%` }} />
-            </div>
+            <ProgressBar
+              className="search-index-progress"
+              percent={percent}
+              size="slim"
+              label={t("search.indexProgressLabel")}
+            />
             {progress.totalDocuments > 0 && (
               <span>{t("search.indexProgress", {
                 current: progress.indexedDocuments.toLocaleString(locale),

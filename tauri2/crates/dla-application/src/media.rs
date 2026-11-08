@@ -1,7 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use dla_detection::classify_package_media_files;
@@ -33,6 +33,9 @@ const PERSONALIZED_VOICE_MINIMUM_WORKS: usize = 2;
 const CLASSIFIED_PDF_REASONS: [&str; 2] = ["single_pdf", "pdf_document"];
 const IMAGES_RULE_CHECKED: &str = "images_rule_checked";
 const PERSONALIZED_VOICE_QUEUE_LIMIT: usize = 200;
+// Sessions whose assets stay resolved in memory; `close` drops a session, this
+// bounds the ones a crashed page never closed.
+const RESOLVED_SESSION_LIMIT: usize = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OpenMediaSessionRequest {
@@ -208,6 +211,15 @@ pub struct MediaService {
     audio_tracks: Arc<dyn AudioTrackStore>,
     inventory: Arc<dyn MediaInventoryReader>,
     waveforms: Arc<dyn AudioWaveformReader>,
+    // The media protocol asks for an asset on every range request, thumbnail
+    // and page, and playback saves its position every second; an open session
+    // is read once and kept here, with the roots its items resolve to.
+    resolved: Mutex<HashMap<MediaSessionId, ResolvedSession>>,
+}
+
+struct ResolvedSession {
+    session: MediaSession,
+    roots: HashMap<InstallationId, String>,
 }
 
 impl MediaService {
@@ -226,10 +238,12 @@ impl MediaService {
             audio_tracks,
             inventory,
             waveforms,
+            resolved: Mutex::new(HashMap::new()),
         }
     }
 
     pub fn reconcile_after_restart(&self, interrupted_at: &str) -> Result<u64, MediaError> {
+        self.lock_resolved()?.clear();
         self.sessions.interrupt_open_media_sessions(
             interrupted_at,
             "the launcher restarted before the media session was closed",
@@ -386,13 +400,25 @@ impl MediaService {
         installation_id: &InstallationId,
         indexed_at: &str,
     ) -> Result<Vec<MediaSessionItem>, MediaError> {
+        self.list_items_in_root(installation_id, indexed_at)
+            .map(|(_, items)| items)
+    }
+
+    /// The work's media items and the folder their paths are relative to:
+    /// the installed copy when there is one, the work's own folder otherwise.
+    pub fn list_items_in_root(
+        &self,
+        installation_id: &InstallationId,
+        indexed_at: &str,
+    ) -> Result<(String, Vec<MediaSessionItem>), MediaError> {
         let installation = self
             .installations
             .read(installation_id)?
             .ok_or_else(|| MediaError::InstallationNotFound(installation_id.0.clone()))?;
         validate_installation(&installation)?;
         let selection = self.resolve_selection(&installation)?;
-        self.resolve_items(&installation, &selection, indexed_at, false)
+        let items = self.resolve_items(&installation, &selection, indexed_at, false)?;
+        Ok((selection.root_path, items))
     }
 
     pub fn read_audio_waveform(
@@ -430,7 +456,7 @@ impl MediaService {
         if request.updated_at.trim().is_empty() {
             return Err(MediaError::InvalidRequest("updated timestamp"));
         }
-        let mut session = self.read(&request.session_id)?;
+        let mut session = self.open_session(&request.session_id)?;
         if !session.status.is_open() {
             return Err(MediaError::SessionClosed);
         }
@@ -438,6 +464,7 @@ impl MediaService {
         session.shuffle = request.shuffle;
         session.updated_at = request.updated_at;
         self.sessions.save_media_session(&session)?;
+        self.remember(session.clone())?;
         Ok(session)
     }
 
@@ -463,7 +490,7 @@ impl MediaService {
         if request.completed != (request.status == MediaSessionStatus::Completed) {
             return Err(MediaError::InvalidProgressState);
         }
-        let mut session = self.read(&request.session_id)?;
+        let mut session = self.open_session(&request.session_id)?;
         // A reader finishes a work at its last page but stays open on it;
         // turning back keeps the session completed and its place saved.
         let stays_completed = session.status == MediaSessionStatus::Completed
@@ -494,6 +521,7 @@ impl MediaService {
             session.ended_at = Some(request.updated_at);
         }
         self.sessions.save_media_session(&session)?;
+        self.remember(session.clone())?;
         Ok(session)
     }
 
@@ -505,6 +533,7 @@ impl MediaService {
         if closed_at.trim().is_empty() {
             return Err(MediaError::InvalidRequest("closed timestamp"));
         }
+        self.lock_resolved()?.remove(session_id);
         let mut session = self.read(session_id)?;
         if session.status.is_open() {
             session.status = MediaSessionStatus::Closed;
@@ -520,29 +549,119 @@ impl MediaService {
         session_id: &MediaSessionId,
         ordinal: u32,
     ) -> Result<MediaAssetDescriptor, MediaError> {
+        let (item, root_path) = match self.resolved_item(session_id, ordinal)? {
+            Some(resolved) => resolved,
+            None => {
+                let session = self.open_session(session_id)?;
+                if matches!(
+                    session.status,
+                    MediaSessionStatus::Closed
+                        | MediaSessionStatus::Interrupted
+                        | MediaSessionStatus::Failed
+                ) {
+                    return Err(MediaError::SessionClosed);
+                }
+                let item = session
+                    .items
+                    .into_iter()
+                    .find(|item| item.ordinal == ordinal)
+                    .ok_or(MediaError::ItemNotFound(ordinal))?;
+                (item, None)
+            }
+        };
+        let root_path = match root_path {
+            Some(root_path) => root_path,
+            None => {
+                let installation =
+                    self.installations
+                        .read(&item.installation_id)?
+                        .ok_or_else(|| {
+                            MediaError::InstallationNotFound(item.installation_id.0.clone())
+                        })?;
+                let root_path = self
+                    .preparations
+                    .read_prepared_package(&installation.id)?
+                    .map_or(installation.root_path, |prepared| prepared.destination_root);
+                if let Some(resolved) = self.lock_resolved()?.get_mut(session_id) {
+                    resolved
+                        .roots
+                        .insert(item.installation_id.clone(), root_path.clone());
+                }
+                root_path
+            }
+        };
+        Ok(MediaAssetDescriptor { root_path, item })
+    }
+
+    fn resolved_item(
+        &self,
+        session_id: &MediaSessionId,
+        ordinal: u32,
+    ) -> Result<Option<(MediaSessionItem, Option<String>)>, MediaError> {
+        let resolved = self.lock_resolved()?;
+        let Some(entry) = resolved.get(session_id) else {
+            return Ok(None);
+        };
+        let item = entry
+            .session
+            .items
+            .iter()
+            .find(|item| item.ordinal == ordinal)
+            .ok_or(MediaError::ItemNotFound(ordinal))?;
+        let root_path = entry.roots.get(&item.installation_id).cloned();
+        Ok(Some((item.clone(), root_path)))
+    }
+
+    /// The session as last written, from memory once it has been read while
+    /// open; closed sessions are read from the store every time.
+    fn open_session(&self, session_id: &MediaSessionId) -> Result<MediaSession, MediaError> {
+        if let Some(entry) = self.lock_resolved()?.get(session_id) {
+            return Ok(entry.session.clone());
+        }
         let session = self.read(session_id)?;
-        if matches!(
+        if !matches!(
             session.status,
             MediaSessionStatus::Closed
                 | MediaSessionStatus::Interrupted
                 | MediaSessionStatus::Failed
         ) {
-            return Err(MediaError::SessionClosed);
+            self.remember(session.clone())?;
         }
-        let item = session
-            .items
-            .into_iter()
-            .find(|item| item.ordinal == ordinal)
-            .ok_or(MediaError::ItemNotFound(ordinal))?;
-        let installation = self
-            .installations
-            .read(&item.installation_id)?
-            .ok_or_else(|| MediaError::InstallationNotFound(item.installation_id.0.clone()))?;
-        let root_path = self
-            .preparations
-            .read_prepared_package(&installation.id)?
-            .map_or(installation.root_path, |prepared| prepared.destination_root);
-        Ok(MediaAssetDescriptor { root_path, item })
+        Ok(session)
+    }
+
+    // Progress writes overlap only with each other; the later state stays.
+    fn remember(&self, session: MediaSession) -> Result<(), MediaError> {
+        let mut resolved = self.lock_resolved()?;
+        match resolved.get_mut(&session.id) {
+            Some(entry) => {
+                if session.updated_at >= entry.session.updated_at {
+                    entry.session = session;
+                }
+            }
+            None => {
+                if resolved.len() >= RESOLVED_SESSION_LIMIT {
+                    resolved.clear();
+                }
+                resolved.insert(
+                    session.id.clone(),
+                    ResolvedSession {
+                        session,
+                        roots: HashMap::new(),
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn lock_resolved(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, HashMap<MediaSessionId, ResolvedSession>>, MediaError>
+    {
+        self.resolved
+            .lock()
+            .map_err(|_| MediaError::persistence("the resolved media sessions lock is poisoned"))
     }
 
     fn resolve_selection(&self, installation: &Installation) -> Result<MediaSelection, MediaError> {
@@ -1300,6 +1419,7 @@ mod tests {
     struct MemorySessionStore {
         session: Mutex<Option<MediaSession>>,
         resume: Option<MediaResume>,
+        reads: AtomicUsize,
     }
 
     impl MediaSessionStore for MemorySessionStore {
@@ -1317,6 +1437,7 @@ mod tests {
             &self,
             session_id: &MediaSessionId,
         ) -> Result<Option<MediaSession>, MediaError> {
+            self.reads.fetch_add(1, AtomicOrdering::SeqCst);
             Ok(self
                 .session
                 .lock()
@@ -1508,6 +1629,7 @@ mod tests {
             Arc::new(MemoryInstallationStore { installation }),
             Arc::new(MemoryPreparationStore),
             Arc::new(MemorySessionStore {
+                reads: AtomicUsize::new(0),
                 session: Mutex::new(None),
                 resume,
             }),
@@ -1515,6 +1637,125 @@ mod tests {
             Arc::new(UnusedInventory),
             Arc::new(UnusedWaveforms),
         )
+    }
+
+    #[test]
+    fn resolves_assets_from_one_session_read_until_the_session_closes() {
+        let installation = installation_fixture();
+        let sessions = Arc::new(MemorySessionStore {
+            reads: AtomicUsize::new(0),
+            session: Mutex::new(None),
+            resume: None,
+        });
+        let service = MediaService::new(
+            Arc::new(MemoryInstallationStore {
+                installation: installation.clone(),
+            }),
+            Arc::new(MemoryPreparationStore),
+            Arc::clone(&sessions) as Arc<dyn MediaSessionStore>,
+            Arc::new(MemoryAudioTrackStore),
+            Arc::new(UnusedInventory),
+            Arc::new(UnusedWaveforms),
+        );
+        let session_id = MediaSessionId("media-audio".to_owned());
+        service
+            .open(OpenMediaSessionRequest {
+                installation_id: installation.id.clone(),
+                session_id: session_id.clone(),
+                opened_at: "2026-08-09T12:00:00Z".to_owned(),
+            })
+            .expect("open media session");
+        let reads_after_open = sessions.reads.load(AtomicOrdering::SeqCst);
+
+        let first = service.resolve_asset(&session_id, 0).expect("first asset");
+        let second = service.resolve_asset(&session_id, 1).expect("second asset");
+        service
+            .resolve_asset(&session_id, 0)
+            .expect("first asset again");
+
+        assert_eq!(first.root_path, installation.root_path);
+        assert_eq!(first.item.relative_path.as_str(), "disc/02.flac");
+        assert_eq!(second.item.relative_path.as_str(), "disc/01.flac");
+        assert_eq!(
+            sessions.reads.load(AtomicOrdering::SeqCst),
+            reads_after_open + 1
+        );
+        assert!(matches!(
+            service.resolve_asset(&session_id, 7),
+            Err(MediaError::ItemNotFound(7))
+        ));
+
+        service
+            .close(&session_id, "2026-08-09T13:00:00Z".to_owned())
+            .expect("close media session");
+        assert!(matches!(
+            service.resolve_asset(&session_id, 0),
+            Err(MediaError::SessionClosed)
+        ));
+    }
+
+    #[test]
+    fn saves_progress_from_the_session_kept_in_memory() {
+        let installation = installation_fixture();
+        let sessions = Arc::new(MemorySessionStore {
+            reads: AtomicUsize::new(0),
+            session: Mutex::new(None),
+            resume: None,
+        });
+        let service = MediaService::new(
+            Arc::new(MemoryInstallationStore {
+                installation: installation.clone(),
+            }),
+            Arc::new(MemoryPreparationStore),
+            Arc::clone(&sessions) as Arc<dyn MediaSessionStore>,
+            Arc::new(MemoryAudioTrackStore),
+            Arc::new(UnusedInventory),
+            Arc::new(UnusedWaveforms),
+        );
+        let session_id = MediaSessionId("media-audio".to_owned());
+        service
+            .open(OpenMediaSessionRequest {
+                installation_id: installation.id.clone(),
+                session_id: session_id.clone(),
+                opened_at: "2026-08-09T12:00:00Z".to_owned(),
+            })
+            .expect("open media session");
+        let reads_after_open = sessions.reads.load(AtomicOrdering::SeqCst);
+        let progress = |second: u64| UpdateMediaProgressRequest {
+            session_id: session_id.clone(),
+            item_ordinal: 1,
+            position_ms: second * 1_000,
+            duration_ms: Some(180_000),
+            completed: false,
+            status: MediaSessionStatus::Active,
+            updated_at: format!("2026-08-09T12:00:{second:02}Z"),
+        };
+
+        service
+            .update_progress(progress(1))
+            .expect("first progress");
+        service
+            .update_progress(progress(2))
+            .expect("second progress");
+        let updated = service
+            .update_progress(progress(3))
+            .expect("third progress");
+        service.resolve_asset(&session_id, 1).expect("asset");
+
+        assert_eq!(updated.progress.position_ms, 3_000);
+        assert_eq!(updated.progress.item_ordinal, 1);
+        assert_eq!(
+            sessions.reads.load(AtomicOrdering::SeqCst),
+            reads_after_open + 1
+        );
+        let stored = sessions
+            .session
+            .lock()
+            .expect("session")
+            .clone()
+            .expect("stored");
+        assert_eq!(stored.progress.position_ms, 3_000);
+        assert_eq!(stored.updated_at, "2026-08-09T12:00:03Z");
     }
 
     #[test]
@@ -1575,6 +1816,7 @@ mod tests {
             Arc::new(MemoryInstallationStore { installation }),
             Arc::new(FixedPreparationStore { prepared }),
             Arc::new(MemorySessionStore {
+                reads: AtomicUsize::new(0),
                 session: Mutex::new(None),
                 resume: None,
             }),
@@ -1656,6 +1898,7 @@ mod tests {
             Arc::new(MemoryInstallationStore { installation }),
             Arc::new(FixedPreparationStore { prepared }),
             Arc::new(MemorySessionStore {
+                reads: AtomicUsize::new(0),
                 session: Mutex::new(None),
                 resume: None,
             }),
@@ -1791,6 +2034,7 @@ mod tests {
             }),
             preparations,
             Arc::new(MemorySessionStore {
+                reads: AtomicUsize::new(0),
                 session: Mutex::new(None),
                 resume: None,
             }),

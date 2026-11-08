@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ImagePlus, Images, LoaderCircle, X } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 
+import { basename } from "../../basename";
 import type { MessageKey } from "../../i18n/catalogs";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import { OWN_WORK_DETAILS_KEY } from "./ownWorkDetails";
@@ -146,14 +147,14 @@ export function OwnWorkDetailsEditor({
             <p className="library-manage-help">{t("library.own.coverHelp")}</p>
             <div className="library-manage-row">
               <button
-                className="library-manage-button"
+                className="app-button"
                 type="button"
                 aria-expanded={picker === "cover"}
                 onClick={() => setPicker((current) => (current === "cover" ? null : "cover"))}
               >
                 {t(picker === "cover" ? "library.own.hideImages" : "library.own.fromWork")}
               </button>
-              <button className="library-manage-button" type="button" onClick={() => void pickFile()}>
+              <button className="app-button" type="button" onClick={() => void pickFile()}>
                 <ImagePlus aria-hidden="true" />{t("library.own.fromFile")}
               </button>
               {draft.cover ? (
@@ -343,14 +344,14 @@ function ImageChoices({
 }) {
   const { t } = usePresentation();
   if (loading) {
-    return <p className="library-manage-note"><LoaderCircle className="library-spin" aria-hidden="true" />{t("library.own.imagesLoading")}</p>;
+    return <p className="library-manage-note"><LoaderCircle className="app-spin" aria-hidden="true" />{t("library.own.imagesLoading")}</p>;
   }
   if (!total) return <p className="library-manage-help">{t("library.own.noImages")}</p>;
   return (
     <div className="library-own-choices">
       <div className="library-own-grid">
         {images.map((image) => {
-          const name = image.relativePath.split("/").at(-1) ?? image.relativePath;
+          const name = basename(image.relativePath);
           return (
             <button
               className="library-own-tile"
@@ -362,7 +363,7 @@ function ImageChoices({
               onClick={() => onPick(image.relativePath)}
             >
               <img src={imageUrl(image.relativePath)} alt="" loading="lazy" decoding="async" />
-              {importing === image.relativePath ? <LoaderCircle className="library-spin" aria-hidden="true" /> : null}
+              {importing === image.relativePath ? <LoaderCircle className="app-spin" aria-hidden="true" /> : null}
             </button>
           );
         })}

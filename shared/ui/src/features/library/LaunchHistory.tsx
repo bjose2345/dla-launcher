@@ -74,7 +74,7 @@ export function LaunchActivityList({
                 onClick={() => onStop(activity.id)}
               >
                 {stoppingActivityId === activity.id
-                  ? <LoaderCircle className="library-spin" aria-hidden="true" />
+                  ? <LoaderCircle className="app-spin" aria-hidden="true" />
                   : <Square aria-hidden="true" />}
                 {t("library.stopLaunch")}
               </button>
@@ -118,7 +118,7 @@ export function formatDuration(
 
 function LaunchStatusIcon({ status }: { status: LaunchActivityStatus }) {
   if (status === "starting" || status === "running" || status === "stopping") {
-    return <LoaderCircle className="library-spin" />;
+    return <LoaderCircle className="app-spin" />;
   }
   if (status === "exited") return <CheckCircle2 />;
   if (status === "failed") return <OctagonX />;

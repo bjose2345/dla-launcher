@@ -5,6 +5,7 @@ import {
   type LocaleId,
   type MessageKey,
 } from "../i18n/catalogs";
+import { readStoredRecord, writeStoredJson } from "./browserStorage";
 
 export { loadLocaleCatalog, localeIds, translate };
 export type { LocaleId, MessageKey };
@@ -70,34 +71,24 @@ export const defaultPresentationPreferences: PresentationPreferences = {
 };
 
 export function readPresentationPreferences(): PresentationPreferences {
-  if (typeof window === "undefined") return defaultPresentationPreferences;
-  try {
-    const stored = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "{}") as Record<string, unknown>;
-    return {
-      theme: isThemeId(stored.theme) ? stored.theme : defaultTheme,
-      locale: isLocaleId(stored.locale) ? stored.locale : defaultLocale,
-      showPlayTime: typeof stored.showPlayTime === "boolean"
-        ? stored.showPlayTime
-        : defaultPresentationPreferences.showPlayTime,
-      includeUnreviewed: typeof stored.includeUnreviewed === "boolean"
-        ? stored.includeUnreviewed
-        : defaultPresentationPreferences.includeUnreviewed,
-      sidebarCollapsed: typeof stored.sidebarCollapsed === "boolean"
-        ? stored.sidebarCollapsed
-        : defaultPresentationPreferences.sidebarCollapsed,
-    };
-  } catch {
-    return defaultPresentationPreferences;
-  }
+  const stored = readStoredRecord(STORAGE_KEY);
+  return {
+    theme: isThemeId(stored.theme) ? stored.theme : defaultTheme,
+    locale: isLocaleId(stored.locale) ? stored.locale : defaultLocale,
+    showPlayTime: typeof stored.showPlayTime === "boolean"
+      ? stored.showPlayTime
+      : defaultPresentationPreferences.showPlayTime,
+    includeUnreviewed: typeof stored.includeUnreviewed === "boolean"
+      ? stored.includeUnreviewed
+      : defaultPresentationPreferences.includeUnreviewed,
+    sidebarCollapsed: typeof stored.sidebarCollapsed === "boolean"
+      ? stored.sidebarCollapsed
+      : defaultPresentationPreferences.sidebarCollapsed,
+  };
 }
 
 export function writePresentationPreferences(preferences: PresentationPreferences): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences));
-  } catch {
-    return;
-  }
+  writeStoredJson(STORAGE_KEY, preferences);
 }
 
 export function applyPresentationPreferences(preferences: PresentationPreferences): void {

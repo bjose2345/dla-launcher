@@ -14,6 +14,12 @@ import {
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
+import { Minimap } from "../../app/Minimap";
+import { renderingCapabilities } from "../../app/renderingCapabilities";
+import { useImageSourceChain } from "../../app/useImageSourceChain";
+import { useResizeObserver } from "../../app/useResizeObserver";
+
+import { browserStorage, readStoredText, writeStoredText } from "../../preferences/browserStorage";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import { ArchiveImagePlaceholder } from "./ArchiveImagePlaceholder";
 
@@ -174,15 +180,8 @@ export function ImageGalleryModal({
   }, [open]);
 
   // The zoomed card fills the stage, so the stage box itself is tracked.
-  useEffect(() => {
-    if (!open) return undefined;
-    const element = stageRef.current;
-    if (!element || typeof ResizeObserver === "undefined") return undefined;
-    const observer = new ResizeObserver(([entry]) => {
-      if (entry) setStage({ width: entry.contentRect.width, height: entry.contentRect.height });
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
+  useResizeObserver(stageRef, (_, entry) => {
+    if (entry) setStage({ width: entry.contentRect.width, height: entry.contentRect.height });
   }, [open]);
 
   // Every image opens at fit; closing ends the slideshow and the overview.
@@ -229,13 +228,9 @@ export function ImageGalleryModal({
       setLegendOpen(false);
       return undefined;
     }
-    let seen = true;
-    try {
-      seen = window.localStorage.getItem(legendSeenKey) === "1";
-      window.localStorage.setItem(legendSeenKey, "1");
-    } catch {
-      seen = true;
-    }
+    const storage = browserStorage();
+    const seen = !storage || readStoredText(legendSeenKey, storage) === "1";
+    writeStoredText(legendSeenKey, "1", storage);
     if (seen) return undefined;
     setLegendOpen(true);
     const timer = window.setTimeout(() => setLegendOpen(false), legendMs);
@@ -764,7 +759,7 @@ export function ImageGalleryModal({
               )}
             </AnimatePresence>
             {multiple && (
-              <div className="gallery-filmstrip" ref={railRef}>
+              <div className="gallery-filmstrip scrollbar-hidden" ref={railRef}>
                 {images.map((chain, index) => (
                   <button
                     type="button"
@@ -859,66 +854,36 @@ function GalleryMinimap({
   const frameHeight = size.height / zoom;
   const centreX = size.width / 2 - (pan.x / (zoom * box.width)) * size.width;
   const centreY = size.height / 2 - (pan.y / (zoom * box.height)) * size.height;
-  const dragging = useRef(false);
-  const panTo = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const area = event.currentTarget.getBoundingClientRect();
-    const x = event.clientX - area.left;
-    const y = event.clientY - area.top;
-    onPan({
-      x: ((size.width / 2 - x) / size.width) * zoom * box.width,
-      y: ((size.height / 2 - y) / size.height) * zoom * box.height,
-    });
-  };
   return (
-    <div className="gallery-minimap">
-      <div
-        role="img"
-        aria-label={label}
-        style={{ width: size.width, height: size.height }}
-        onPointerDown={(event) => {
-          event.stopPropagation();
-          dragging.current = true;
-          event.currentTarget.setPointerCapture?.(event.pointerId);
-          panTo(event);
-        }}
-        onPointerMove={(event) => {
-          if (dragging.current) panTo(event);
-        }}
-        onPointerUp={() => {
-          dragging.current = false;
-        }}
-        onPointerCancel={() => {
-          dragging.current = false;
-        }}
-      >
-        <GalleryCardImage chain={chain} alt="" unavailableLabel="" />
-        <span
-          aria-hidden="true"
-          style={{
-            width: frameWidth,
-            height: frameHeight,
-            left: centreX - frameWidth / 2,
-            top: centreY - frameHeight / 2,
-          }}
-        />
-      </div>
-    </div>
+    <Minimap
+      className="gallery-minimap"
+      size={size}
+      label={label}
+      frame={{
+        width: frameWidth,
+        height: frameHeight,
+        left: centreX - frameWidth / 2,
+        top: centreY - frameHeight / 2,
+      }}
+      onPoint={(point) => onPan({
+        x: (0.5 - point.x) * zoom * box.width,
+        y: (0.5 - point.y) * zoom * box.height,
+      })}
+    >
+      <GalleryCardImage chain={chain} alt="" unavailableLabel="" />
+    </Minimap>
   );
 }
 
 function GalleryBackdrop({ chain, reduceMotion }: { chain: string[]; reduceMotion: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [sourceIndex, setSourceIndex] = useState(0);
+  const { source, advance } = useImageSourceChain(chain);
   const [ready, setReady] = useState(false);
-  const source = chain[sourceIndex];
+  const cssBlur = renderingCapabilities().cssBlur;
+  useEffect(() => setReady(false), [chain]);
 
   useEffect(() => {
-    setSourceIndex(0);
-    setReady(false);
-  }, [chain]);
-
-  useEffect(() => {
-    if (!source) return;
+    if (!source || cssBlur) return;
     let active = true;
     const image = new Image();
     image.decoding = "async";
@@ -972,11 +937,7 @@ function GalleryBackdrop({ chain, reduceMotion }: { chain: string[]; reduceMotio
       setReady(true);
     };
     image.onerror = () => {
-      if (!active) return;
-      setSourceIndex((value) => {
-        const next = value + 1;
-        return next < chain.length ? next : value;
-      });
+      if (active) advance();
     };
     image.src = source;
     return () => {
@@ -984,18 +945,29 @@ function GalleryBackdrop({ chain, reduceMotion }: { chain: string[]; reduceMotio
       image.onload = null;
       image.onerror = null;
     };
-  }, [chain.length, source]);
+  }, [chain.length, cssBlur, source]);
 
-  return (
-    <motion.canvas
-      ref={canvasRef}
-      className="gallery-modal-backdrop-art"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: ready ? 0.52 : 0 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: reduceMotion ? 0 : 0.6 }}
-    />
-  );
+  const fade = {
+    initial: { opacity: 0 },
+    animate: { opacity: ready ? 0.52 : 0 },
+    exit: { opacity: 0 },
+    transition: { duration: reduceMotion ? 0 : 0.6 },
+  };
+  if (cssBlur) {
+    return source ? (
+      <motion.img
+        className="gallery-modal-backdrop-art is-filtered"
+        src={source}
+        alt=""
+        decoding="async"
+        draggable={false}
+        onLoad={() => setReady(true)}
+        onError={advance}
+        {...fade}
+      />
+    ) : null;
+  }
+  return <motion.canvas ref={canvasRef} className="gallery-modal-backdrop-art" {...fade} />;
 }
 
 function GalleryCardImage({
@@ -1012,14 +984,8 @@ function GalleryCardImage({
   /** The chain entry that actually loaded. */
   onResolved?: (source: string) => void;
 }) {
-  const [sourceIndex, setSourceIndex] = useState(0);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    setSourceIndex(0);
-    setFailed(false);
-  }, [chain]);
-  const source = chain[sourceIndex];
-  if (failed || !source) {
+  const { source, advance } = useImageSourceChain(chain);
+  if (!source) {
     return <ArchiveImagePlaceholder className="gallery-image-unavailable" label={unavailableLabel} />;
   }
   return (
@@ -1034,12 +1000,7 @@ function GalleryCardImage({
         if (image.naturalWidth && image.naturalHeight) onRatio?.(image.naturalWidth / image.naturalHeight);
         onResolved?.(source);
       }}
-      onError={() => setSourceIndex((value) => {
-        const next = value + 1;
-        if (next < chain.length) return next;
-        setFailed(true);
-        return value;
-      })}
+      onError={advance}
     />
   );
 }

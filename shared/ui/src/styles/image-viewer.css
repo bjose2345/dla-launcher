@@ -202,47 +202,11 @@
 }
 
 .image-viewer-minimap {
-  position: absolute;
   z-index: 2;
-  right: 18px;
-  bottom: 18px;
-  padding: 6px;
-  background: color-mix(in oklch, var(--app-panel) 82%, transparent);
-  box-shadow: inset 0 0 0 1px var(--app-border), 0 12px 30px -10px rgb(0 0 0 / 90%);
-  backdrop-filter: blur(12px);
-  clip-path: var(--app-notch-sm);
 }
 
 .reader.has-chrome .image-viewer-minimap {
   bottom: 150px;
-}
-
-.image-viewer-minimap > div {
-  position: relative;
-  overflow: hidden;
-  cursor: grab;
-  touch-action: none;
-}
-
-.image-viewer-minimap > div:active {
-  cursor: grabbing;
-}
-
-.image-viewer-minimap img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  pointer-events: none;
-  user-select: none;
-}
-
-.image-viewer-minimap span {
-  position: absolute;
-  box-sizing: border-box;
-  border: 2px solid var(--color-primary);
-  box-shadow: 0 0 0 999px rgb(0 0 0 / 50%);
-  pointer-events: none;
 }
 
 .image-viewer-scope-anchor {

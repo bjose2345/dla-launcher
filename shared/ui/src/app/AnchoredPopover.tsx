@@ -13,6 +13,8 @@ import { createPortal } from "react-dom";
 export type AnchoredPopoverSide = "top" | "bottom";
 export type AnchoredPopoverAlign = "start" | "center" | "end";
 
+const PRESS_BLUR_GRACE_MS = 250;
+
 interface Rectangle {
   top: number;
   right: number;
@@ -179,7 +181,9 @@ export function AnchoredPopover({
   }, [anchorRef, updatePosition]);
 
   useEffect(() => {
+    let pointerDownAt = Number.NEGATIVE_INFINITY;
     const closeOutside = (event: PointerEvent) => {
+      pointerDownAt = performance.now();
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (anchorRef.current?.contains(target) || popoverRef.current?.contains(target)) return;
@@ -188,16 +192,27 @@ export function AnchoredPopover({
     const closeWithEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
+    const closeWhenLeft = () => {
+      // Chromium embedded under GTK (the CEF runtime) blurs the page for a
+      // moment on every press while X11 focus moves between its windows. A
+      // blur right after a press in the page is that, not the user leaving.
+      if (performance.now() - pointerDownAt < PRESS_BLUR_GRACE_MS) return;
+      onClose();
+    };
     document.addEventListener("pointerdown", closeOutside, true);
     window.addEventListener("keydown", closeWithEscape, true);
-    window.addEventListener("blur", onClose);
+    window.addEventListener("blur", closeWhenLeft);
     return () => {
       document.removeEventListener("pointerdown", closeOutside, true);
       window.removeEventListener("keydown", closeWithEscape, true);
-      window.removeEventListener("blur", onClose);
+      window.removeEventListener("blur", closeWhenLeft);
     };
   }, [anchorRef, onClose]);
 
+  // While an element is fullscreen the top layer paints it over the rest of
+  // the document, so a popover for a control inside it must mount inside it
+  // too, or it is neither visible nor clickable.
+  const container = document.fullscreenElement instanceof HTMLElement ? document.fullscreenElement : document.body;
   return createPortal(
     <div
       ref={popoverRef}
@@ -210,7 +225,7 @@ export function AnchoredPopover({
     >
       {children}
     </div>,
-    document.body,
+    container,
   );
 }
 

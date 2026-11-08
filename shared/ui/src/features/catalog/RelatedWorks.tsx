@@ -15,7 +15,7 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useImageSourceChain } from "../../app/useImageSourceChain";
 
 import { usePresentation } from "../../preferences/PresentationProvider";
 import { ArchiveImagePlaceholder } from "./ArchiveImagePlaceholder";
@@ -120,9 +120,7 @@ export function RelatedWorks({
 }
 
 function RelatedImage({ urls }: { urls: string[] }) {
-  const [index, setIndex] = useState(0);
-  useEffect(() => setIndex(0), [urls]);
-  const source = urls[index];
+  const { source, advance } = useImageSourceChain(urls);
   if (!source) return <ArchiveImagePlaceholder className="related-image-placeholder" label="" />;
-  return <img src={source} alt="" loading="lazy" decoding="async" onError={() => setIndex((value) => value + 1)} />;
+  return <img src={source} alt="" loading="lazy" decoding="async" onError={advance} />;
 }

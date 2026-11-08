@@ -1,0 +1,41 @@
+/* The notice box for an error or a warning: a tinted strip with a left border,
+   an optional icon, the message, and an optional detail line. */
+.app-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  margin: 0;
+  padding: 13px 15px;
+  border-left: 2px solid var(--color-error);
+  background: color-mix(in oklch, var(--color-error) 10%, transparent);
+  color: var(--color-error);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.app-callout svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin-top: 1px;
+}
+
+.app-callout small {
+  display: block;
+  margin-top: 4px;
+  color: var(--app-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.7rem;
+}
+
+.app-callout details {
+  margin-top: 6px;
+  color: var(--app-muted);
+}
+
+.app-callout.is-warning {
+  border-left-color: var(--color-warning);
+  background: color-mix(in oklch, var(--color-warning) 10%, transparent);
+  color: var(--color-warning);
+}

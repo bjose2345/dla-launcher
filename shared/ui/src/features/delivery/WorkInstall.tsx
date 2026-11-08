@@ -1,6 +1,6 @@
 import { CloudDownload, LoaderCircle } from "lucide-react";
 
-import { usePresentation } from "../../preferences";
+import { usePresentation } from "../../preferences/PresentationProvider";
 import { DeliveryJobControls } from "./DeliveryJobControls";
 import { DeliverySignIn } from "./DeliverySignIn";
 import { problemText } from "./deliveryText";
@@ -69,7 +69,7 @@ export function WorkInstall({
         onClick={() => install.start(workCode)}
       >
         <span className="work-local-button-delivery-label">
-          {install.pending ? <LoaderCircle className="delivery-spin" aria-hidden="true" /> : <CloudDownload aria-hidden="true" />}
+          {install.pending ? <LoaderCircle className="app-spin delivery-spin" aria-hidden="true" /> : <CloudDownload aria-hidden="true" />}
           {t("delivery.install")}
           <span aria-hidden="true">→</span>
         </span>

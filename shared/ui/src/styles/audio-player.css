@@ -1,0 +1,300 @@
+/* The full-screen audio player (AudioPlayer.tsx): the work's artwork with the
+   waveform or the analyser over it, and the track list beside it. */
+.audio-player {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  background: #08080c;
+}
+
+.audio-player-topbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+}
+
+.audio-player-title {
+  min-width: 0;
+}
+
+.audio-player-title > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-primary);
+  font-size: 0.58rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.audio-player-title > span svg {
+  width: 13px;
+  height: 13px;
+}
+
+.audio-player-title strong,
+.audio-player-title small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audio-player-title strong {
+  font-size: 1.02rem;
+}
+
+.audio-player-title small {
+  color: var(--app-muted);
+  font-size: 0.72rem;
+}
+
+.audio-player-position {
+  color: var(--app-muted);
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.audio-player-position strong {
+  margin-right: 4px;
+  color: var(--color-base-content);
+}
+
+.audio-player-workspace {
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
+  gap: 18px;
+  padding: 0 18px 18px;
+}
+
+.audio-player-stage {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-base-300);
+  clip-path: var(--app-notch);
+}
+
+.audio-player-stage .library-artwork .work-card-image img {
+  object-position: center 28%;
+}
+
+.audio-player-shade {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(to top, rgb(0 0 0 / 74%), transparent 45%),
+    linear-gradient(to bottom, rgb(0 0 0 / 30%), transparent 30%);
+  pointer-events: none;
+}
+
+.audio-player-error {
+  position: absolute;
+  z-index: 8;
+  right: 16px;
+  bottom: 16px;
+  left: 16px;
+}
+
+.audio-player-visualizer-stage {
+  --library-visualizer-time-row: calc(0.66rem + 7px);
+
+  position: absolute;
+  z-index: 5;
+  right: 24px;
+  bottom: clamp(26px, 6%, 54px);
+  left: 24px;
+  height: clamp(110px, 24%, 168px);
+}
+
+.audio-player-visualizer-layer {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px) scaleY(0.92);
+  transform-origin: bottom;
+  filter: blur(1.5px);
+  transition:
+    opacity 220ms ease,
+    transform 280ms cubic-bezier(0.2, 0.75, 0.25, 1),
+    filter 220ms ease;
+}
+
+.audio-player-visualizer-layer.is-active {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0) scaleY(1);
+  filter: blur(0);
+}
+
+.audio-player-stage .now-playing-eq {
+  inset: 0;
+  z-index: 1;
+  height: auto;
+  padding: 0 0 var(--library-visualizer-time-row);
+  gap: 3px;
+  background: transparent;
+}
+
+.audio-player-visualizer-toggle {
+  position: absolute;
+  z-index: 7;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid color-mix(in oklch, var(--color-base-content) 18%, transparent);
+  background: color-mix(in oklch, var(--color-base-200) 84%, transparent);
+  box-shadow: 0 10px 28px -18px rgb(0 0 0 / 90%);
+  backdrop-filter: blur(16px);
+  clip-path: var(--app-chip-sm);
+}
+
+.audio-player-visualizer-toggle button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 9px;
+  border: 0;
+  background: transparent;
+  color: color-mix(in oklch, var(--color-base-content) 68%, transparent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  transition: background 140ms ease, color 140ms ease;
+  clip-path: var(--app-chip-sm);
+}
+
+.audio-player-visualizer-toggle button:hover {
+  color: var(--color-base-content);
+}
+
+.audio-player-visualizer-toggle button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.audio-player-visualizer-toggle svg {
+  width: 14px;
+  height: 14px;
+}
+
+.audio-player-visualizer-toggle button.is-active {
+  background: color-mix(in oklch, var(--color-primary) 18%, var(--color-base-300));
+  color: color-mix(in oklch, var(--color-primary) 84%, var(--color-base-content));
+}
+
+.audio-player-queue {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--app-border);
+  background: var(--app-panel);
+  clip-path: var(--app-notch-sm);
+}
+
+.audio-player-queue > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 13px 15px 11px;
+  border-bottom: 1px solid var(--app-border);
+  color: var(--app-subtle);
+  font-size: 0.6rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.audio-player-queue > header strong {
+  color: var(--color-base-content);
+}
+
+.audio-player-queue ol {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.audio-player-queue li button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--color-base-content);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.74rem;
+  text-align: left;
+  clip-path: var(--app-chip-sm);
+}
+
+.audio-player-queue li button:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--color-base-content) 7%, transparent);
+}
+
+.audio-player-queue li button:disabled {
+  cursor: default;
+}
+
+.audio-player-queue li button.is-active {
+  background: color-mix(in oklch, var(--color-primary) 16%, transparent);
+  color: color-mix(in oklch, var(--color-primary) 84%, var(--color-base-content));
+}
+
+.audio-player-queue li button > span {
+  flex: none;
+  color: var(--app-subtle);
+  font-size: 0.62rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.audio-player-queue li button > strong {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audio-player-queue li button > i {
+  display: grid;
+  flex: none;
+  place-items: center;
+}
+
+.audio-player-queue li button > i svg {
+  width: 13px;
+  height: 13px;
+}
+
+@media (max-width: 960px) {
+  .audio-player-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(260px, 1fr) minmax(0, 38vh);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .audio-player-visualizer-layer {
+    transition-duration: 0ms;
+  }
+}

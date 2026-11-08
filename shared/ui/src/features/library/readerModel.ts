@@ -1,4 +1,4 @@
-import { browserStorage, type PreferenceStorage } from "../../preferences/browserStorage";
+import { browserStorage, readStoredRecord, writeStoredJson, type PreferenceStorage } from "../../preferences/browserStorage";
 import type { CatalogCategory } from "../catalog";
 
 export type ReaderLayout = "single" | "double" | "strip";
@@ -43,20 +43,15 @@ export function readReaderPreferences(
   defaults: ReaderPreferences,
   storage: PreferenceStorage | undefined = browserStorage(),
 ): ReaderPreferences {
-  if (!storage) return defaults;
-  try {
-    const value = JSON.parse(storage.getItem(storageKey(installationId)) ?? "{}") as Record<string, unknown>;
-    return {
-      layout: oneOf(value.layout, READER_LAYOUTS, defaults.layout),
-      direction: oneOf(value.direction, ["ltr", "rtl"] as const, defaults.direction),
-      fit: oneOf(value.fit, ["height", "width", "original"] as const, defaults.fit),
-      background: oneOf(value.background, ["black", "gray", "paper"] as const, defaults.background),
-      hideControls: typeof value.hideControls === "boolean" ? value.hideControls : defaults.hideControls,
-      zoom: typeof value.zoom === "number" ? clampReaderZoom(value.zoom) : defaults.zoom,
-    };
-  } catch {
-    return defaults;
-  }
+  const value = readStoredRecord(storageKey(installationId), storage);
+  return {
+    layout: oneOf(value.layout, READER_LAYOUTS, defaults.layout),
+    direction: oneOf(value.direction, ["ltr", "rtl"] as const, defaults.direction),
+    fit: oneOf(value.fit, ["height", "width", "original"] as const, defaults.fit),
+    background: oneOf(value.background, ["black", "gray", "paper"] as const, defaults.background),
+    hideControls: typeof value.hideControls === "boolean" ? value.hideControls : defaults.hideControls,
+    zoom: typeof value.zoom === "number" ? clampReaderZoom(value.zoom) : defaults.zoom,
+  };
 }
 
 export function writeReaderPreferences(
@@ -64,12 +59,7 @@ export function writeReaderPreferences(
   preferences: ReaderPreferences,
   storage: PreferenceStorage | undefined = browserStorage(),
 ): void {
-  if (!storage) return;
-  try {
-    storage.setItem(storageKey(installationId), JSON.stringify(preferences));
-  } catch {
-    return;
-  }
+  writeStoredJson(storageKey(installationId), preferences, storage);
 }
 
 export function nextReaderLayout(layout: ReaderLayout): ReaderLayout {

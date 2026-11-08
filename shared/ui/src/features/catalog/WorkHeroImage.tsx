@@ -1,5 +1,4 @@
-import { useState } from "react";
-
+import { useImageSourceChain } from "../../app/useImageSourceChain";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import { ArchiveImagePlaceholder } from "./ArchiveImagePlaceholder";
 
@@ -11,8 +10,7 @@ interface WorkHeroImageProps {
 
 export function WorkHeroImage({ title, urls, onOpen }: WorkHeroImageProps) {
   const { t } = usePresentation();
-  const [index, setIndex] = useState(0);
-  const source = urls[index];
+  const { source, advance } = useImageSourceChain(urls);
 
   if (!source) {
     return <ArchiveImagePlaceholder className="work-hero-image-missing" label={t("image.noCover", { title })} />;
@@ -29,7 +27,7 @@ export function WorkHeroImage({ title, urls, onOpen }: WorkHeroImageProps) {
       <img
         src={source}
         alt={t("image.cover", { title })}
-        onError={() => setIndex((current) => current + 1)}
+        onError={advance}
       />
       <span className="work-hero-scanline" aria-hidden="true" />
       <span className="work-hero-overlay" aria-hidden="true" />

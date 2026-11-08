@@ -78,6 +78,3 @@ export interface SearchGateway {
   shortcuts(text: string, limit: number): Promise<SearchShortcut[]>;
 }
 
-export function searchRebuildIsTerminal(stage: SearchRebuildStage | undefined): boolean {
-  return stage === "completed" || stage === "cancelled" || stage === "failed";
-}

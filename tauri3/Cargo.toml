@@ -1,0 +1,167 @@
+# The experimental Chromium build of the launcher: the code in tauri2/ built
+# with Tauri 3 and its CEF runtime instead of the system webview, for Linux.
+# See README.md. Only the app crate and the Android package plugin (which
+# depend on Tauri) are built from here; every other crate is tauri2/'s.
+[workspace]
+resolver = "2"
+members = [
+  "crates/dla-android-package-tauri",
+  "src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95.0"
+license = "AGPL-3.0-only"
+authors = ["DLA Project"]
+
+[workspace.dependencies]
+dla-archive = { path = "../tauri2/crates/dla-archive" }
+dla-application = { path = "../tauri2/crates/dla-application" }
+dla-android-package-tauri = { path = "crates/dla-android-package-tauri" }  # this folder's copy, on Tauri 3
+dla-catalog-import = { path = "../tauri2/crates/dla-catalog-import" }
+dla-catalog = { path = "../tauri2/crates/dla-catalog" }
+dla-connector = { path = "../tauri2/crates/dla-connector" }
+dla-delivery = { path = "../tauri2/crates/dla-delivery" }
+dla-cover-cache = { path = "../tauri2/crates/dla-cover-cache" }
+dla-detection = { path = "../tauri2/crates/dla-detection" }
+dla-domain = { path = "../tauri2/crates/dla-domain" }
+dla-game-translation = { path = "../tauri2/crates/dla-game-translation" }
+dla-launch = { path = "../tauri2/crates/dla-launch" }
+dla-media = { path = "../tauri2/crates/dla-media" }
+dla-scanner = { path = "../tauri2/crates/dla-scanner" }
+dla-search-tantivy = { path = "../tauri2/crates/dla-search-tantivy" }
+dla-sqlite = { path = "../tauri2/crates/dla-sqlite" }
+dla-translation-relay = { path = "../tauri2/crates/dla-translation-relay" }
+dla-translator = { path = "../tauri2/crates/dla-translator" }
+base64 = "=0.22.1"
+encoding_rs = "=0.8.42"
+flate2 = { version = "=1.1.10", default-features = false, features = ["zlib-rs"] }
+lindera = { version = "=5.2.0", default-features = false, features = ["embed-ipadic"] }
+lindera-tantivy = { version = "=5.0.1", default-features = false, features = ["embed-ipadic"] }
+libc = "=0.2.190"
+md-5 = "=0.11.0"
+percent-encoding = "=2.3.2"
+rayon = "=1.12.0"
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled-full", "cache"] }
+rusqlite_migration = "=2.6.0"
+fs2 = "=0.4.3"
+hex = "=0.4.3"
+# Verifies the signatures `cargo tauri signer` makes, as in DLA Collab.
+image = { version = "=0.25.9", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
+quick-xml = "=0.41.0"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+sha1 = "=0.11.0"
+sha2 = "=0.11.0"
+symphonia = { version = "=0.6.1", features = ["all"] }
+tar = "=0.4.46"
+tantivy = { version = "=0.26.2", default-features = true }
+thiserror = "=2.0.21"
+tiny_http = "=0.12.0"
+time = { version = "=0.3.55", features = ["formatting"] }
+ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
+url = "=2.5.8"
+uuid = { version = "=1.27.0", features = ["v4"] }
+walkdir = "=2.5.0"
+zeroize = "=1.9.0"
+zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zstd = "=0.13.3"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
+
+# The crates on the catalog, search, archive, hashing, audio, and image data paths
+# are optimized for speed; everything else keeps the size optimization.
+[profile.release.package]
+libsqlite3-sys = { opt-level = 3 }
+rusqlite = { opt-level = 3 }
+tantivy = { opt-level = 3 }
+tantivy-bitpacker = { opt-level = 3 }
+tantivy-columnar = { opt-level = 3 }
+tantivy-common = { opt-level = 3 }
+tantivy-fst = { opt-level = 3 }
+tantivy-query-grammar = { opt-level = 3 }
+tantivy-sstable = { opt-level = 3 }
+tantivy-stacker = { opt-level = 3 }
+tantivy-tokenizer-api = { opt-level = 3 }
+lindera = { opt-level = 3 }
+lindera-analysis = { opt-level = 3 }
+lindera-dictionary = { opt-level = 3 }
+lindera-ipadic = { opt-level = 3 }
+lindera-tantivy = { opt-level = 3 }
+zstd = { opt-level = 3 }
+zstd-safe = { opt-level = 3 }
+zstd-sys = { opt-level = 3 }
+flate2 = { opt-level = 3 }
+zlib-rs = { opt-level = 3 }
+zip = { opt-level = 3 }
+sha1 = { opt-level = 3 }
+sha2 = { opt-level = 3 }
+md-5 = { opt-level = 3 }
+symphonia = { opt-level = 3 }
+symphonia-bundle-flac = { opt-level = 3 }
+symphonia-bundle-mp3 = { opt-level = 3 }
+symphonia-codec-aac = { opt-level = 3 }
+symphonia-codec-adpcm = { opt-level = 3 }
+symphonia-codec-alac = { opt-level = 3 }
+symphonia-codec-pcm = { opt-level = 3 }
+symphonia-codec-vorbis = { opt-level = 3 }
+symphonia-common = { opt-level = 3 }
+symphonia-core = { opt-level = 3 }
+symphonia-format-caf = { opt-level = 3 }
+symphonia-format-isomp4 = { opt-level = 3 }
+symphonia-format-mkv = { opt-level = 3 }
+symphonia-format-ogg = { opt-level = 3 }
+symphonia-format-riff = { opt-level = 3 }
+symphonia-metadata = { opt-level = 3 }
+image = { opt-level = 3 }
+png = { opt-level = 3 }
+fdeflate = { opt-level = 3 }
+miniz_oxide = { opt-level = 3 }
+simd-adler32 = { opt-level = 3 }
+crc32fast = { opt-level = 3 }
+zune-core = { opt-level = 3 }
+zune-jpeg = { opt-level = 3 }
+image-webp = { opt-level = 3 }
+gif = { opt-level = 3 }
+weezl = { opt-level = 3 }
+color_quant = { opt-level = 3 }
+moxcms = { opt-level = 3 }
+pxfm = { opt-level = 3 }
+dla-sqlite = { opt-level = 3 }
+dla-search-tantivy = { opt-level = 3 }
+dla-archive = { opt-level = 3 }
+dla-scanner = { opt-level = 3 }
+dla-media = { opt-level = 3 }
+dla-catalog-import = { opt-level = 3 }
+
+# Gallery thumbnails decode full-size images; unoptimized decoders make a
+# debug build take seconds per image.
+[profile.dev.package]
+image = { opt-level = 3 }
+png = { opt-level = 3 }
+fdeflate = { opt-level = 3 }
+miniz_oxide = { opt-level = 3 }
+simd-adler32 = { opt-level = 3 }
+crc32fast = { opt-level = 3 }
+zune-core = { opt-level = 3 }
+zune-jpeg = { opt-level = 3 }
+image-webp = { opt-level = 3 }
+gif = { opt-level = 3 }
+weezl = { opt-level = 3 }
+color_quant = { opt-level = 3 }
+moxcms = { opt-level = 3 }
+pxfm = { opt-level = 3 }
+
+# The CEF runtime with the launcher's patches (patches/), vendored by
+# scripts/prepare-runtime-cef.sh: its resource handler cannot skip to a
+# requested byte range, so audio seeks and the reader's PDF ranges failed
+# (ADR 0028). Run the script before building.
+[patch.crates-io]
+tauri-runtime-cef = { path = "vendor/tauri-runtime-cef" }

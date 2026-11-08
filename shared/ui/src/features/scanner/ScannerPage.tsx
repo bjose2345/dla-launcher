@@ -12,17 +12,23 @@ import {
 import { useEffect, useMemo, useState } from "react";
 
 import { Notice, type NoticeAction } from "../../app/Notice";
+import { useGatewaySubscription } from "../../app/useGatewaySubscription";
 import { PathText } from "../../app/PathText";
+import { ProgressBar } from "../../app/ProgressBar";
 import { displayPath } from "../../displayPath";
 import { evidenceReasonMessageKey } from "../../i18n/domainLabels";
 import type { MessageKey } from "../../i18n/catalogs";
 import { usePresentation } from "../../preferences/PresentationProvider";
+import { catalogKeys } from "../catalog/catalogQueryKeys";
+import { workTitle } from "../catalog/localizedNames";
 import type { CatalogDetailGateway, CatalogWork } from "../catalog/types";
 import { LibraryManageDrawer, type ManageTab } from "../library/LibraryManageDrawer";
 import type { LibraryGateway } from "../library/types";
 import { usePackagePreparationProgress } from "../library/usePackagePreparationProgress";
 import type { SearchGateway } from "../search/types";
-import { ScanFindingRow, workTitle, type RowOutcome } from "./ScanFindingRow";
+import type { DeliveryGateway } from "../delivery/types";
+import type { TranslationGateway } from "../translation/types";
+import { ScanFindingRow, type RowOutcome } from "./ScanFindingRow";
 import {
   findingName,
   findingWorkCodes,
@@ -41,7 +47,6 @@ import { scanInstallIsActive, scannerRootPreferenceKey } from "./types";
 import { acceptScanInstallView, useScanInstalls } from "./useScanInstalls";
 
 const latestKey = ["scanner", "latest"] as const;
-const terminalStatuses = new Set(["completed", "cancelled", "interrupted", "failed"]);
 
 interface ScannerNotice {
   tone: "success" | "progress" | "problem";
@@ -65,6 +70,10 @@ export function ScannerPage({
   onShowInLibrary,
   onOpenLibrary,
   onOpenWork,
+  translationGateway,
+  deliveryGateway,
+  onOpenTranslationSettings,
+  onOpenExternal,
 }: {
   gateway: ScannerGateway;
   libraryGateway: LibraryGateway;
@@ -74,6 +83,12 @@ export function ScannerPage({
   onShowInLibrary: (installationId: string) => void;
   onOpenLibrary: () => void;
   onOpenWork?: (code: string) => void;
+  /** Game translation, where the launcher can start games. */
+  translationGateway?: TranslationGateway;
+  /** Signs in to DLA for the Archive's translations, where downloads work. */
+  deliveryGateway?: DeliveryGateway;
+  onOpenTranslationSettings?: () => void;
+  onOpenExternal?: (url: string) => Promise<void>;
 }) {
   const { locale, t } = usePresentation();
   const queryClient = useQueryClient();
@@ -116,7 +131,7 @@ export function ScannerPage({
     )),
   ])].sort(), [list, outcomes]);
   const works = useQuery({
-    queryKey: ["catalog-works", codes],
+    queryKey: catalogKeys.works(codes),
     queryFn: () => catalogGateway.readWorks(codes),
     enabled: codes.length > 0,
     staleTime: 5 * 60_000,
@@ -160,24 +175,17 @@ export function ScannerPage({
   });
   const cancel = useMutation({ mutationFn: (id: string) => gateway.cancel(id) });
 
-  useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
-    let disposed = false;
-    void gateway.subscribeProgress((update) => {
+  useGatewaySubscription(
+    gateway.subscribeProgress.bind(gateway),
+    (update) => {
       queryClient.setQueryData<ScanSessionView | null>(latestKey, (current) => mergeProgress(current, update));
-      setCurrentPath(terminalStatuses.has(update.status) ? null : update.currentRelativePath);
-      if (terminalStatuses.has(update.status)) {
+      setCurrentPath(isActive(update.status) ? update.currentRelativePath : null);
+      if (!isActive(update.status)) {
         void queryClient.invalidateQueries({ queryKey: latestKey });
       }
-    }).then((listener) => {
-      if (disposed) listener();
-      else unsubscribe = listener;
-    });
-    return () => {
-      disposed = true;
-      unsubscribe?.();
-    };
-  }, [gateway, queryClient]);
+    },
+    [gateway],
+  );
 
   const refreshLibrary = async () => {
     await Promise.all([
@@ -396,35 +404,35 @@ export function ScannerPage({
 
   return (
     <main className="scanner-page">
-      <section className="scanner-masthead">
-        <div className="scanner-masthead-title">
-          <span className="scanner-eyebrow"><FolderSearch2 aria-hidden="true" />{t("scanner.eyebrow")}</span>
+      <section className="page-masthead has-actions scanner-masthead">
+        <div className="page-masthead-title">
+          <span className="page-eyebrow"><FolderSearch2 aria-hidden="true" />{t("scanner.eyebrow")}</span>
           <h1>{t("scanner.heading")}</h1>
         </div>
         <div className="scanner-actions">
           {active && view ? (
             <button
-              className="scanner-button scanner-button-danger"
+              className="app-button is-quiet is-danger"
               type="button"
               disabled={cancel.isPending}
               onClick={() => cancel.mutate(view.session.id)}
             >
-              {cancel.isPending ? <LoaderCircle className="scanner-spin" aria-hidden="true" /> : <Square aria-hidden="true" />}
+              {cancel.isPending ? <LoaderCircle className="app-spin" aria-hidden="true" /> : <Square aria-hidden="true" />}
               {t("scanner.cancel")}
             </button>
           ) : (
             <>
-              <button className="scanner-button" type="button" disabled={starting} onClick={() => startSelected.mutate()}>
-                {startSelected.isPending ? <LoaderCircle className="scanner-spin" aria-hidden="true" /> : <FolderOpen aria-hidden="true" />}
+              <button className="app-button is-quiet" type="button" disabled={starting} onClick={() => startSelected.mutate()}>
+                {startSelected.isPending ? <LoaderCircle className="app-spin" aria-hidden="true" /> : <FolderOpen aria-hidden="true" />}
                 {t("scanner.chooseFolder")}
               </button>
               <button
-                className="scanner-button scanner-button-primary"
+                className="app-button is-quiet is-primary"
                 type="button"
                 disabled={!canScanDefault}
                 onClick={() => startPreferred.mutate()}
               >
-                {startPreferred.isPending ? <LoaderCircle className="scanner-spin" aria-hidden="true" /> : <FolderCog aria-hidden="true" />}
+                {startPreferred.isPending ? <LoaderCircle className="app-spin" aria-hidden="true" /> : <FolderCog aria-hidden="true" />}
                 {t("scanner.scanDefault")}
               </button>
             </>
@@ -434,7 +442,7 @@ export function ScannerPage({
 
       <div className="scanner-body">
         {requestError ? (
-          <div className="scanner-callout" role="alert">
+          <div className="app-callout" role="alert">
             <OctagonAlert aria-hidden="true" />
             <span>{t("common.requestFailed", { error: String(requestError) })}</span>
           </div>
@@ -456,7 +464,7 @@ export function ScannerPage({
 
         {view && active ? (
           <section className="scan-progress" aria-live="polite">
-            <LoaderCircle className="scanner-spin" aria-hidden="true" />
+            <LoaderCircle className="app-spin" aria-hidden="true" />
             <div>
               <strong><PathText text={(path) => t("scanner.progress.title", { path })} path={view.root.displayPath} /></strong>
               <span>{t("scanner.progress.files", {
@@ -464,12 +472,12 @@ export function ScannerPage({
               })}</span>
               {currentPath ? <code title={currentPath}>{currentPath}</code> : null}
             </div>
-            <i className="scan-progress-bar" aria-hidden="true" />
+            <ProgressBar className="scan-progress-bar" percent={null} size="slim" />
           </section>
         ) : null}
 
         {view && !active && !completed ? (
-          <div className="scanner-callout is-notice" role="status">
+          <div className="app-callout is-warning" role="status">
             <AlertTriangle aria-hidden="true" />
             <span>
               {t("scanner.stopped")}
@@ -528,7 +536,7 @@ export function ScannerPage({
                     <span className={`scan-count is-${section}`}>{groups[section].length.toLocaleString(locale)}</span>
                     {section === "ready" && readyToAdd.length > 1 ? (
                       <button
-                        className="scan-button"
+                        className="app-button"
                         type="button"
                         disabled={busy}
                         onClick={() => add.mutate(readyToAdd.map((finding) => ({ key: finding.key })))}
@@ -582,8 +590,12 @@ export function ScannerPage({
           catalogGateway={catalogGateway}
           searchGateway={searchGateway}
           installs={gateway}
+          translationGateway={translationGateway}
+          deliveryGateway={deliveryGateway}
           onClose={() => void closeManaging()}
           onOpenWork={onOpenWork}
+          onOpenTranslationSettings={onOpenTranslationSettings}
+          onOpenExternal={onOpenExternal}
         />
       ) : null}
 
@@ -604,7 +616,7 @@ function ScannerLoading() {
   const { t } = usePresentation();
   return (
     <div className="scanner-loading">
-      <LoaderCircle className="scanner-spin" aria-hidden="true" /><span>{t("scanner.loading")}</span>
+      <LoaderCircle className="app-spin" aria-hidden="true" /><span>{t("scanner.loading")}</span>
     </div>
   );
 }

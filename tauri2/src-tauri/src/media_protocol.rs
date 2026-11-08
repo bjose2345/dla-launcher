@@ -1,3 +1,4 @@
+use dla_application::paths::{PathEscape, resolve_within};
 use std::{
     fs::File,
     io::{self, Read, Seek, SeekFrom},
@@ -60,6 +61,7 @@ pub fn respond_subtitle(app: &AppHandle, request: Request<Vec<u8>>) -> Response<
     }
 }
 
+#[cfg(all(desktop, native_video_backend = "surface"))]
 pub(crate) fn validate_video_asset(
     app: &AppHandle,
     session_id: &MediaSessionId,
@@ -78,6 +80,43 @@ pub(crate) fn video_subtitles(
 ) -> Result<Vec<SidecarSubtitle>, String> {
     let asset = resolve_video_asset(app, session_id, ordinal).map_err(protocol_error_message)?;
     Ok(find_sidecar_subtitles(&asset.path))
+}
+
+/// The video's own file, for players outside the webview: the system's video
+/// player, and the Chromium build's GStreamer surface.
+#[cfg(desktop)]
+pub(crate) fn video_asset_path(
+    app: &AppHandle,
+    session_id: &MediaSessionId,
+    ordinal: u32,
+) -> Result<PathBuf, String> {
+    let asset = resolve_video_asset(app, session_id, ordinal).map_err(protocol_error_message)?;
+    File::open(&asset.path)
+        .map_err(|error| protocol_error_message(map_asset_io_error(error, &asset.path)))?;
+    Ok(asset.path)
+}
+
+/// One of the video's sidecar subtitle files, inside the video's folder, and
+/// its format.
+#[cfg(native_video_backend = "gstreamer")]
+pub(crate) fn video_subtitle_path(
+    app: &AppHandle,
+    session_id: &MediaSessionId,
+    ordinal: u32,
+    track_index: u32,
+) -> Result<(PathBuf, dla_media::SubtitleFormat), String> {
+    let asset = resolve_video_asset(app, session_id, ordinal).map_err(protocol_error_message)?;
+    let track = find_sidecar_subtitles(&asset.path)
+        .into_iter()
+        .find(|track| track.index == track_index)
+        .ok_or_else(|| "the subtitle track is unavailable".to_owned())?;
+    let directory = asset
+        .path
+        .parent()
+        .and_then(Path::to_str)
+        .ok_or_else(|| protocol_error_message(ProtocolError::Forbidden))?;
+    let path = resolve_path(directory, &track.relative_path).map_err(protocol_error_message)?;
+    Ok((path, track.format))
 }
 
 fn response(
@@ -112,6 +151,10 @@ fn response(
         .header(CACHE_CONTROL, "private, no-store")
         .header("X-Content-Type-Options", "nosniff");
 
+    // WebKitGTK and WebView2 honour this partial response. CEF serves a range
+    // by skipping to `range.start` through the handler's body; the Tauri 3
+    // runtime's skip (tauri3/patches) reads from Content-Range that this body
+    // already starts there (ADR 0028).
     if let Some(value) = request.headers().get("range") {
         let value = value
             .to_str()
@@ -440,7 +483,7 @@ fn subtitle_response_for(
     builder.body(body).map_err(ProtocolError::response)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(feature = "chromium")))]
 fn video_source_url(
     path: &Path,
     _session_id: &MediaSessionId,
@@ -451,7 +494,9 @@ fn video_source_url(
         .map_err(|_| ProtocolError::Internal)
 }
 
-#[cfg(target_os = "windows")]
+// Chromium (WebView2, and the experimental Chromium build on Linux) gives every
+// scheme an http origin and does not load file: URLs into these pages.
+#[cfg(any(target_os = "windows", feature = "chromium"))]
 fn video_source_url(
     _path: &Path,
     session_id: &MediaSessionId,
@@ -463,7 +508,7 @@ fn video_source_url(
     ))
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+#[cfg(not(any(target_os = "linux", target_os = "windows", feature = "chromium")))]
 fn video_source_url(
     _path: &Path,
     session_id: &MediaSessionId,
@@ -474,7 +519,7 @@ fn video_source_url(
 
 // WebView2 gives every scheme its own http origin and loads a text track in
 // same-origin mode, so the track must come from the video document's origin.
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", feature = "chromium"))]
 fn subtitle_source_url(session_id: &MediaSessionId, ordinal: u32, track_index: u32) -> String {
     format!(
         "http://dla-video.localhost/{}/{ordinal}/subtitle/{track_index}",
@@ -482,7 +527,7 @@ fn subtitle_source_url(session_id: &MediaSessionId, ordinal: u32, track_index: u
     )
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", feature = "chromium")))]
 fn subtitle_source_url(session_id: &MediaSessionId, ordinal: u32, track_index: u32) -> String {
     format!(
         "dla-subtitle://localhost/{}/{ordinal}/{track_index}",
@@ -521,8 +566,9 @@ const VIDEO_DOCUMENT: &str = r##"<!doctype html>
 <style>
 :root{color-scheme:dark;font-family:Inter,"Noto Sans JP",system-ui,sans-serif;background:#050508;color:#f5f0ed}
 *{box-sizing:border-box}html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#050508}
-body{display:grid;place-items:center;cursor:default}video{display:block;width:100%;height:100%;background:#000;object-fit:fill}
-video::cue{color:#fff;background:rgba(5,5,8,.82);font-family:Inter,"Noto Sans JP",system-ui,sans-serif;font-size:clamp(16px,2.4vw,34px);line-height:1.35;text-shadow:0 2px 5px #000}
+body{display:grid;place-items:center;cursor:default}video{position:relative;z-index:1;display:block;width:100%;height:100%;background:#000;object-fit:fill}
+#ambient{position:fixed;z-index:0;inset:-12%;width:124%;height:124%;opacity:0;filter:blur(48px) saturate(1.35) brightness(.5);transition:opacity .8s ease-out;pointer-events:none}#ambient.is-live{opacity:1}
+video::cue{color:var(--cue-color,#fff);background:var(--cue-background,rgba(0,0,0,.75));font-family:Inter,"Noto Sans JP",system-ui,sans-serif;font-size:var(--cue-size,clamp(16px,2.4vw,34px));line-height:1.35;text-shadow:0 2px 5px #000}
 #chromeShade{position:fixed;z-index:18;top:0;right:0;left:0;height:140px;background:linear-gradient(to bottom,rgba(0,0,0,.72),rgba(0,0,0,.34) 52%,transparent);opacity:1;pointer-events:none;transition:opacity .24s ease-out}
 #chrome{position:fixed;z-index:20;top:16px;right:16px;left:16px;min-height:66px;overflow:hidden;border:1px solid rgba(255,255,255,.16);border-radius:15px;background:rgba(20,18,27,.76);box-shadow:0 22px 58px rgba(0,0,0,.5);backdrop-filter:blur(22px) saturate(1.2);transition:opacity .2s ease-out,transform .28s cubic-bezier(.2,.8,.2,1),box-shadow .24s ease-out}
 #chromeMain{display:grid;min-height:66px;grid-template-columns:auto minmax(0,1fr) auto auto;align-items:center;gap:12px;padding:9px 10px;transition:opacity .16s ease-out,transform .22s ease-out}
@@ -534,12 +580,15 @@ video::cue{color:#fff;background:rgba(5,5,8,.82);font-family:Inter,"Noto Sans JP
 #videoTitle,#videoItem{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#videoTitle{margin-top:4px;font-size:16px}#videoItem{margin-top:3px;color:#aaa4ad;font-size:11px}
 #position{display:flex;min-width:70px;align-items:baseline;justify-content:center;gap:4px;padding:8px 12px;border-right:1px solid rgba(255,255,255,.14);border-left:1px solid rgba(255,255,255,.14);color:#aaa4ad;font-size:12px;font-variant-numeric:tabular-nums}#position strong{color:#f5f0ed;font-size:20px}
 #playlistToggle{width:44px;padding:0!important}
+#back{width:40px;min-height:36px!important;padding:0!important;border:0!important;border-radius:0;background:rgba(62,57,70,.9);clip-path:polygon(5px 0,100% 0,calc(100% - 5px) 100%,0 100%)}#back svg{width:18px;height:18px}
+body[data-fullscreen="true"] #chrome,body[data-fullscreen="true"] #chromeShade{display:none}
+#exitFullscreen{position:fixed;z-index:20;top:16px;right:16px;display:none;width:36px;height:36px;place-items:center;padding:0;border:0;border-radius:999px;background:rgba(0,0,0,.58);color:rgba(255,255,255,.86);cursor:pointer;transition:opacity .2s ease-out,background .15s ease-out}#exitFullscreen svg{width:16px;height:16px}#exitFullscreen:hover{background:rgba(0,0,0,.78);color:#fff}body[data-fullscreen="true"] #exitFullscreen{display:grid}body[data-chrome="hidden"] #exitFullscreen{opacity:0;pointer-events:none}
 #playlistPanel{position:absolute;inset:0;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;background:rgba(20,18,27,.97);opacity:0;pointer-events:none;transform:translateX(32px);transition:opacity .18s ease-out,transform .24s cubic-bezier(.2,.8,.2,1)}
 #playlistPanel header{display:flex;height:100%;align-items:center;gap:10px;padding:8px 10px;border-right:1px solid rgba(255,255,255,.14)}#playlistPanel header strong{font-size:14px}#playlistCount{display:grid;min-width:24px;height:22px;place-items:center;padding:0 6px;border-radius:999px;background:rgba(241,80,121,.14);color:#ff648b;font-size:10px}#playlistClose{width:44px;min-height:44px!important;margin-right:10px;padding:0!important;border-color:rgba(241,80,121,.42)!important;color:#ff648b!important}
 #playlist{display:flex;min-width:0;align-items:center;gap:6px;margin:0;padding:7px 10px;overflow-x:auto;overflow-y:hidden;list-style:none;scrollbar-width:thin}#playlist li{min-width:min(300px,32vw)}#playlist button{display:grid;width:100%;min-height:48px;grid-template-columns:26px minmax(0,1fr) auto;gap:9px;padding:8px 10px;text-align:left}#playlist button.is-active{border-color:rgba(241,80,121,.5);background:rgba(241,80,121,.12)}#playlist button span{color:#88818c;font-size:10px;font-variant-numeric:tabular-nums}#playlist button strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}#playlist button i{color:#ff648b;font-size:10px;font-style:normal;text-transform:uppercase}
 #chrome[data-drawer="open"] #chromeMain{opacity:0;pointer-events:none;transform:translateX(-32px)}#chrome[data-drawer="open"] #playlistPanel{opacity:1;pointer-events:auto;transform:none}
 body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacity:0;pointer-events:none;transform:translateY(calc(-100% - 24px));box-shadow:none}body[data-chrome="hidden"] #chromeShade{opacity:0}
-#poster,#error{position:fixed;inset:0}
+#poster,#error{position:fixed;z-index:2;inset:0}
 #poster{display:grid;place-items:center;overflow:hidden;background:radial-gradient(circle at 50% 35%,rgba(238,72,126,.22),transparent 46%),linear-gradient(145deg,#15131e,#07070b 70%);pointer-events:none}
 #poster img{width:100%;height:100%;object-fit:cover;filter:brightness(.66) saturate(.9)}
 #poster .copy{position:absolute;z-index:2;display:grid;max-width:min(560px,80%);justify-items:center;gap:8px;text-align:center;text-shadow:0 3px 18px #000}
@@ -547,18 +596,24 @@ body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacit
 #error{display:none;place-items:center;padding:28px;background:#050508}
 #error>div{display:grid;width:min(470px,90%);justify-items:center;gap:12px;padding:28px;border:1px solid rgba(255,255,255,.15);border-radius:18px;background:#15131e;text-align:center}
 #error strong{font-size:16px}#error small{color:#aaa2ad}#error button{padding:10px 16px;border:0;border-radius:10px;background:#f15079;color:#251018;font-weight:800;cursor:pointer}
+#badge{--badge-size:clamp(52px,10vmin,104px);position:fixed;z-index:5;top:calc(50% - var(--badge-size)/2);left:calc(50% - var(--badge-size)/2);display:none;width:var(--badge-size);height:var(--badge-size);place-items:center;border-radius:50%;background:rgba(0,0,0,.5);color:#fff;pointer-events:none}
+#badge.is-live{display:grid;animation:badge .5s linear forwards}#badge svg{width:46%;height:46%;fill:currentColor}#badge[data-kind="play"] .pause,#badge[data-kind="pause"] .play{display:none}
+@keyframes badge{from{opacity:1;transform:scale(1)}to{opacity:0;transform:scale(2)}}@keyframes badge-fade{from{opacity:1}to{opacity:0}}
 [hidden]{display:none!important}
-@media(max-width:980px){#chromeMain{grid-template-columns:auto minmax(0,1fr) auto}#position{display:none}#back span:last-child{display:none}#back{width:44px;padding:0!important}}
-@media(max-width:680px){#chrome{top:8px;right:8px;left:8px;min-height:56px;border-radius:12px}#chromeMain{min-height:56px;gap:7px;padding:6px}#playerLabel,#videoItem{display:none}#videoTitle{margin:0;font-size:13px}#back,#playlistToggle{width:40px;min-height:40px}#playlistPanel header strong{display:none}#playlist li{min-width:min(260px,58vw)}}
-@media(prefers-reduced-motion:reduce){#chrome,#chromeShade,#chromeMain,#playlistPanel{transition:none}}
+@media(max-width:980px){#chromeMain{grid-template-columns:auto minmax(0,1fr) auto}#position{display:none}}
+@media(max-width:680px){#chrome{top:8px;right:8px;left:8px;min-height:56px;border-radius:12px}#chromeMain{min-height:56px;gap:7px;padding:6px}#playerLabel,#videoItem{display:none}#videoTitle{margin:0;font-size:13px}#playlistToggle{width:40px;min-height:40px}#playlistPanel header strong{display:none}#playlist li{min-width:min(260px,58vw)}}
+@media(prefers-reduced-motion:reduce){#chrome,#chromeShade,#chromeMain,#playlistPanel{transition:none}#badge.is-live{animation-name:badge-fade}}
 </style>
 </head>
 <body data-fit="contain" data-chrome="visible">
+<canvas id="ambient" width="32" height="18" aria-hidden="true"></canvas>
 <video id="video" preload="metadata" playsinline></video>
+<div id="badge" aria-hidden="true"><svg class="play" viewBox="0 0 24 24"><path d="M8 5l11 7-11 7z"/></svg><svg class="pause" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></div>
 <div id="chromeShade"></div>
+<button id="exitFullscreen" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
 <section id="chrome" data-drawer="closed">
   <div id="chromeMain">
-    <button id="back" type="button"><span class="glyph">←</span><span id="backLabel"></span></button>
+    <button id="back" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg></button>
     <div id="videoIdentity"><span id="playerLabel"></span><strong id="videoTitle"></strong><small id="videoItem"></small></div>
     <div id="position"><strong id="positionCurrent">0</strong><span>/ <span id="positionTotal">0</span></span></div>
     <button id="playlistToggle" type="button"><span class="glyph">▤</span></button>
@@ -576,10 +631,33 @@ body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacit
   const source = __DLA_VIDEO_SOURCE__;
   const subtitles = __DLA_VIDEO_SUBTITLES__;
   const video = document.querySelector("#video");
+  const ambient = document.querySelector("#ambient");
+  const ambientContext = ambient.getContext("2d", { alpha: false });
+  let ambientTimer = 0;
+  let ambientNeeded = false;
+  let ambientEnabled = true;
+  const paintAmbient = () => {
+    if (!ambientContext || !ambientNeeded || !ambientEnabled || video.readyState < 2) return;
+    try { ambientContext.drawImage(video, 0, 0, ambient.width, ambient.height); ambient.classList.add("is-live"); }
+    catch { /* a frame the webview cannot hand over keeps the previous one */ }
+  };
+  const setAmbient = enabled => {
+    ambientEnabled = enabled !== false;
+    if (!ambientEnabled) ambient.classList.remove("is-live");
+    scheduleAmbient();
+  };
+  const scheduleAmbient = () => {
+    clearTimeout(ambientTimer);
+    if (!ambientNeeded || !ambientEnabled) return;
+    paintAmbient();
+    ambientTimer = setTimeout(scheduleAmbient, video.paused ? 1500 : 250);
+  };
   const poster = document.querySelector("#poster");
   const posterImage = document.querySelector("#posterImage");
   const error = document.querySelector("#error");
   const chrome = document.querySelector("#chrome");
+  const back = document.querySelector("#back");
+  const exitFullscreen = document.querySelector("#exitFullscreen");
   const playlist = document.querySelector("#playlist");
   let configured = false;
   let pendingPosition = 0;
@@ -588,6 +666,7 @@ body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacit
   let chromeTimer = 0;
   let drawerOpen = false;
   let labels = {};
+  let fullscreen = false;
   const trackElements = subtitles.map(track => {
     const element = document.createElement("track");
     element.kind = "subtitles";
@@ -614,6 +693,7 @@ body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacit
       errorCode,
       subtitleTrack: activeSubtitle(),
       actionOrdinal,
+      volume: video.volume,
       nonce: Date.now(),
     });
   };
@@ -625,6 +705,10 @@ body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacit
   const revealChrome = () => {
     document.body.dataset.chrome = "visible";
     scheduleChromeHide();
+  };
+  const applyFullscreen = enabled => {
+    fullscreen = Boolean(enabled);
+    document.body.dataset.fullscreen = fullscreen ? "true" : "false";
   };
   const setDrawerOpen = open => {
     drawerOpen = Boolean(open);
@@ -672,12 +756,28 @@ body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacit
     const scale = fit === "cover"
       ? Math.max(viewportWidth / sourceWidth, viewportHeight / sourceHeight)
       : Math.min(fit === "original" ? 1 : Number.POSITIVE_INFINITY, viewportWidth / sourceWidth, viewportHeight / sourceHeight);
-    video.style.width = Math.max(1, Math.round(sourceWidth * scale)) + "px";
-    video.style.height = Math.max(1, Math.round(sourceHeight * scale)) + "px";
+    const width = Math.max(1, Math.round(sourceWidth * scale));
+    const height = Math.max(1, Math.round(sourceHeight * scale));
+    video.style.width = width + "px";
+    video.style.height = height + "px";
+    ambientNeeded = width < viewportWidth - 1 || height < viewportHeight - 1;
+    if (!ambientNeeded) ambient.classList.remove("is-live");
+    scheduleAmbient();
   };
   const setVideoFit = fit => {
     document.body.dataset.fit = fit || "contain";
     applyVideoFit();
+  };
+  const setSubtitleStyle = style => {
+    if (!style) return;
+    const size = Math.max(.25, Math.min(4, Number(style.size) || 1));
+    const colors = { white: "255 255 255", yellow: "255 228 77", cyan: "127 233 255" };
+    const background = Math.max(0, Math.min(1, Number(style.background) || 0));
+    const opacity = Math.max(0, Math.min(1, Number(style.opacity) || 1));
+    const root = document.documentElement.style;
+    root.setProperty("--cue-size", "calc(clamp(16px,2.4vw,34px) * " + size + ")");
+    root.setProperty("--cue-color", "rgb(" + (colors[style.color] || colors.white) + " / " + opacity + ")");
+    root.setProperty("--cue-background", "rgba(0,0,0," + background + ")");
   };
   const applyPosition = () => {
     if (!Number.isFinite(pendingPosition) || pendingPosition <= 0 || !Number.isFinite(video.duration)) return;
@@ -699,9 +799,15 @@ body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacit
       video.volume = Math.max(0, Math.min(1, Number(next.volume) || 0));
       video.muted = Boolean(next.muted);
       setVideoFit(next.fit);
+      setSubtitleStyle(next.subtitleStyle);
+      setAmbient(next.ambient);
       document.querySelector("#title").textContent = next.title || "";
       document.querySelector("#itemName").textContent = next.itemName || "";
-      document.querySelector("#backLabel").textContent = next.labels?.back || "";
+      back.setAttribute("aria-label", next.labels?.back || "");
+      back.title = next.labels?.back || "";
+      exitFullscreen.setAttribute("aria-label", next.labels?.exitFullscreen || "");
+      exitFullscreen.title = next.labels?.exitFullscreen || "";
+      applyFullscreen(next.fullscreen);
       document.querySelector("#playerLabel").textContent = next.labels?.player || "";
       document.querySelector("#videoTitle").textContent = next.title || "";
       document.querySelector("#videoItem").textContent = next.itemName || "";
@@ -727,6 +833,7 @@ body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacit
       if (video.readyState >= 1) applyPosition();
       if (autoPlay && video.readyState >= 3) void play();
     },
+    setFullscreen(enabled) { applyFullscreen(enabled); },
     command(request) {
       switch (request.command) {
         case "play": void play(); break;
@@ -734,14 +841,28 @@ body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacit
         case "seek": video.currentTime = Math.max(0, Math.min(Number(request.value) || 0, Number.isFinite(video.duration) ? video.duration : Number.MAX_SAFE_INTEGER)); break;
         case "volume": video.volume = Math.max(0, Math.min(1, Number(request.value) || 0)); break;
         case "muted": video.muted = Boolean(request.enabled); break;
+        case "rate": video.playbackRate = Math.max(.25, Math.min(4, Number(request.value) || 1)); break;
         case "fit": setVideoFit(request.fit); break;
         case "subtitle": selectSubtitle(request.subtitleTrack); break;
+        case "subtitle_style": setSubtitleStyle(request.subtitleStyle); break;
+        case "ambient": setAmbient(request.enabled); break;
         case "retry": error.style.display = "none"; video.load(); break;
       }
     }
   };
+  document.addEventListener("contextmenu", event => event.preventDefault());
+  document.addEventListener("wheel", event => {
+    if (event.deltaY === 0 || event.target.closest("button, input, #playlist")) return;
+    event.preventDefault();
+    video.volume = Math.max(0, Math.min(1, Math.round((video.volume + (event.deltaY < 0 ? .05 : -.05)) * 100) / 100));
+    video.muted = false;
+    snapshot("volume");
+    revealChrome();
+  }, { passive: false });
   video.addEventListener("loadstart", () => snapshot("loading"));
   video.addEventListener("loadedmetadata", () => { applyVideoFit(); applyPosition(); snapshot("metadata"); });
+  video.addEventListener("loadeddata", paintAmbient);
+  video.addEventListener("seeked", paintAmbient);
   video.addEventListener("canplay", () => { snapshot("ready"); if (configured && autoPlay && video.paused) void play(); });
   video.addEventListener("playing", () => { poster.hidden = true; snapshot("playing"); scheduleChromeHide(); });
   video.addEventListener("pause", () => { revealChrome(); snapshot("paused"); });
@@ -750,9 +871,14 @@ body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacit
   video.addEventListener("ended", () => { revealChrome(); snapshot("ended"); });
   video.addEventListener("error", () => { poster.hidden = true; error.style.display = "grid"; revealChrome(); snapshot("error", video.error?.code ?? 4); });
   const toggle = () => video.paused ? void play() : pause();
-  video.addEventListener("click", () => { revealChrome(); toggle(); });
+  // The play or pause badge a click on the picture shows, as YouTube's.
+  const badge = document.querySelector("#badge");
+  const showBadge = kind => { badge.dataset.kind = kind; badge.classList.remove("is-live"); void badge.offsetWidth; badge.classList.add("is-live"); };
+  badge.addEventListener("animationend", () => badge.classList.remove("is-live"));
+  video.addEventListener("click", () => { revealChrome(); showBadge(video.paused ? "play" : "pause"); toggle(); });
   document.querySelector("#retry").addEventListener("click", () => window.__dlaVideo.command({ command: "retry" }));
-  document.querySelector("#back").addEventListener("click", () => snapshot("back"));
+  back.addEventListener("click", () => snapshot("back"));
+  exitFullscreen.addEventListener("click", () => snapshot("fullscreen"));
   document.querySelector("#playlistToggle").addEventListener("click", () => setDrawerOpen(true));
   document.querySelector("#playlistClose").addEventListener("click", () => setDrawerOpen(false));
   chrome.addEventListener("pointermove", revealChrome);
@@ -764,6 +890,7 @@ body[data-chrome="hidden"]{cursor:none}body[data-chrome="hidden"] #chrome{opacit
     revealChrome();
     const key = event.key.toLowerCase();
     if (event.key === "Escape" && drawerOpen) { event.preventDefault(); setDrawerOpen(false); }
+    else if (event.key === "Escape" && fullscreen) { event.preventDefault(); snapshot("fullscreen"); }
     else if (event.key === " " || key === "k") { event.preventDefault(); toggle(); }
     else if (event.key === "ArrowLeft") { event.preventDefault(); video.currentTime = Math.max(0, video.currentTime - 15); }
     else if (event.key === "ArrowRight") { event.preventDefault(); video.currentTime = Math.min(video.duration || Number.MAX_SAFE_INTEGER, video.currentTime + 15); }
@@ -836,19 +963,18 @@ fn parse_subtitle_locator(path: &str) -> Result<(MediaSessionId, u32, u32), Prot
 }
 
 fn resolve_path(root: &str, relative: &str) -> Result<PathBuf, ProtocolError> {
-    let root_path = Path::new(root);
-    let attempted = root_path.join(relative);
-    let canonical_root = root_path
-        .canonicalize()
-        .map_err(|error| map_asset_io_error(error, &attempted))?;
-    let canonical_target = canonical_root
-        .join(relative)
-        .canonicalize()
-        .map_err(|error| map_asset_io_error(error, &canonical_root.join(relative)))?;
-    if !canonical_target.starts_with(&canonical_root) || !canonical_target.is_file() {
+    let target = match resolve_within(Path::new(root), Path::new(relative)) {
+        Ok(target) => target,
+        Err(PathEscape::Target { path, error }) => return Err(map_asset_io_error(error, &path)),
+        Err(PathEscape::Root(error)) => {
+            return Err(map_asset_io_error(error, &Path::new(root).join(relative)));
+        }
+        Err(PathEscape::Outside) => return Err(ProtocolError::Forbidden),
+    };
+    if !target.is_file() {
         return Err(ProtocolError::Forbidden);
     }
-    Ok(canonical_target)
+    Ok(target)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

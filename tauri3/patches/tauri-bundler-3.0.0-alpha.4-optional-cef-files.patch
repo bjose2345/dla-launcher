@@ -1,0 +1,48 @@
+diff -ru tauri-bundler-3.0.0-alpha.4/src/bundle/linux/appimage/sharun_cef.rs patched/src/bundle/linux/appimage/sharun_cef.rs
+--- a/src/bundle/linux/appimage/sharun_cef.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/src/bundle/linux/appimage/sharun_cef.rs	2026-11-01 20:30:43.875952914 +0100
+@@ -165,8 +165,14 @@
+     ];
+ 
+     for f in cef_files {
++      let src = cef_path.join(f);
++      // CEF 154 ships no separate ANGLE libraries on Linux: only the required
++      // entries must exist, the rest are copied when the distribution has them.
++      if !src.exists() && !super::super::debian::CEF_REQUIRED_FILES.contains(&f) {
++        continue;
++      }
+       let dest = app_dir_bin.join(f);
+-      fs::copy(cef_path.join(f), &dest)
++      fs::copy(&src, &dest)
+         .with_context(|| format!("Failed to copy cef file {f} to {}", dest.display()))?;
+       // quick-sharun checks for the NO_STRIP env but libcef.so is 1.5GB so we make sure it's stripped anyway.
+       let _ = Command::new("strip").arg(&dest).output_ok();
+diff -ru tauri-bundler-3.0.0-alpha.4/src/bundle/linux/debian.rs patched/src/bundle/linux/debian.rs
+--- a/src/bundle/linux/debian.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/src/bundle/linux/debian.rs	2026-11-01 20:30:43.875790188 +0100
+@@ -49,6 +49,9 @@
+ 
+ /// Bundles the project.
+ /// Returns a vector of PathBuf that shows where the DEB was created.
++/// The CEF files a Linux distribution always has; the others are optional.
++pub(super) const CEF_REQUIRED_FILES: [&str; 3] = ["libcef.so", "icudtl.dat", "v8_context_snapshot.bin"];
++
+ pub fn bundle_project(settings: &Settings) -> crate::Result<Vec<PathBuf>> {
+   let arch = match settings.binary_arch() {
+     Arch::X86_64 => "amd64",
+@@ -137,8 +140,14 @@
+     ];
+ 
+     for f in cef_files {
++      let file_src = cef_path.join(f);
++      // CEF 154 ships no separate ANGLE libraries on Linux: only the first three
++      // entries must exist, the rest are copied when the distribution has them.
++      if !file_src.exists() && !CEF_REQUIRED_FILES.contains(&f) {
++        continue;
++      }
+       let file_dest = share_dir.join(f);
+-      fs::copy(cef_path.join(f), &file_dest)?;
++      fs::copy(file_src, &file_dest)?;
+       if f.ends_with(".so") {
+         // since libcef.so is 1.5GB unstripped we will error out if strip fails.
+         Command::new("strip").arg(file_dest).output_ok()?;

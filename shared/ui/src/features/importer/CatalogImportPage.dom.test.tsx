@@ -71,7 +71,7 @@ describe("CatalogImportPage feedback", () => {
     fireEvent.click(screen.getByRole("button", { name: "Import catalog" }));
 
     const progressbar = await screen.findByRole("progressbar", { name: "Catalog import progress" });
-    expect(progressbar.classList.contains("is-indeterminate")).toBe(true);
+    expect(progressbar.classList.contains("is-unknown")).toBe(true);
     expect(progressbar.getAttribute("aria-valuenow")).toBeNull();
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
   });

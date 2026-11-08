@@ -76,6 +76,20 @@ describe("AnchoredPopover", () => {
     fireEvent.pointerDown(document.body);
     expect(screen.queryByRole("dialog", { name: "Calendar" })).toBeNull();
   });
+
+  it("mounts inside the fullscreen element, which the top layer paints over the body", () => {
+    const stage = document.createElement("div");
+    document.body.append(stage);
+    Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => stage });
+    try {
+      render(<PopoverHarness />, { container: stage });
+      const popover = screen.getByRole("dialog", { name: "Calendar" });
+      expect(popover.parentElement).toBe(stage);
+    } finally {
+      Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => null });
+      stage.remove();
+    }
+  });
 });
 
 function PopoverHarness() {

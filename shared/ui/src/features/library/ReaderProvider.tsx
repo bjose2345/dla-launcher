@@ -9,6 +9,7 @@ import {
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
+import { errorMessage } from "../../app/errorMessage";
 import type { CatalogDetailGateway, CatalogWork } from "../catalog";
 import { libraryDisplayCode, libraryDisplayCreator, libraryDisplayTitle } from "./libraryHome";
 import { effectiveIdentity } from "./libraryPresentation";
@@ -25,6 +26,7 @@ export type ReaderGateway = Pick<
   | "readOwnWorkDetails"
   | "mediaAssetUrl"
   | "mediaThumbnailUrl"
+  | "documentDelivery"
 >;
 export type ReaderCatalog = Pick<CatalogDetailGateway, "readWorks">;
 
@@ -125,7 +127,7 @@ export function ReaderProvider({
         });
         setSaveError("");
       } catch (cause) {
-        setSaveError(errorText(cause));
+        setSaveError(errorMessage(cause));
       }
     });
     return writeRef.current;
@@ -177,7 +179,7 @@ export function ReaderProvider({
       setClosing(false);
       return opened;
     } catch (cause) {
-      setOpenError(errorText(cause));
+      setOpenError(errorMessage(cause));
       return null;
     }
   }, [catalog, gateway]);
@@ -205,7 +207,7 @@ export function ReaderProvider({
       setFinished(false);
       void queryClient.invalidateQueries({ queryKey: ["library", "shelves"] });
     } catch (cause) {
-      setSaveError(errorText(cause));
+      setSaveError(errorMessage(cause));
     } finally {
       setClosing(false);
     }
@@ -256,6 +258,3 @@ export function useReader(): ReaderValue {
   return context;
 }
 
-function errorText(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
-}

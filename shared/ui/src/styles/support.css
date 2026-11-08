@@ -1,5 +1,6 @@
 .support-page {
   --support-gutter: max(18px, calc((100% - 1000px) / 2));
+  --page-gutter: var(--support-gutter);
 
   min-height: 0;
   width: 100%;
@@ -8,38 +9,15 @@
   padding-bottom: 80px;
 }
 
-.support-page-masthead {
-  padding: 34px var(--support-gutter) 28px;
-  border-bottom: 1px solid var(--app-border);
-  background-color: var(--app-backdrop);
-  background-image: radial-gradient(color-mix(in oklch, var(--color-base-content) 13%, transparent) 0.8px, transparent 0.8px);
-  background-size: 17px 17px;
-}
-
-.support-page-masthead > span {
-  display: block;
-  margin-bottom: 7px;
-  color: var(--color-primary);
-  font-size: 0.62rem;
-  font-weight: 850;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-}
-
 .support-page-masthead h1 {
-  margin: 0;
   font-size: clamp(2rem, 4vw, 3.2rem);
-  font-weight: 850;
   letter-spacing: -0.05em;
-  line-height: 1;
 }
 
 .support-page-masthead p {
   max-width: 720px;
-  margin: 12px 0 0;
-  color: var(--app-muted);
+  margin-top: 12px;
   font-size: 0.84rem;
-  line-height: 1.55;
 }
 
 .support-report {
@@ -204,11 +182,7 @@
 .support-report-loading svg {
   width: 14px;
   height: 14px;
-  animation: support-spin 0.8s linear infinite;
-}
-
-@keyframes support-spin {
-  to { transform: rotate(360deg); }
+  animation: app-spin 0.9s linear infinite;
 }
 
 .support-report-error {
@@ -238,6 +212,12 @@
 
 .app-frame:has(.media-dock) + .support-recovery {
   bottom: 88px;
+}
+
+/* A fullscreen video is cut out around its controls; the notice would show
+   through the cut-out. It waits for the player to leave fullscreen. */
+.app-frame:has(.video-player-page.is-fullscreen) + .support-recovery {
+  display: none;
 }
 
 .support-recovery > svg {

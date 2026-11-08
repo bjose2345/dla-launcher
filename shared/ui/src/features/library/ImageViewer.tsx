@@ -1,6 +1,5 @@
 import {
   AlertTriangle,
-  ArrowLeft,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
@@ -9,7 +8,6 @@ import {
   Image as ImageIcon,
   Keyboard,
   LayoutGrid,
-  LoaderCircle,
   Maximize,
   Minimize,
   Pause,
@@ -27,14 +25,13 @@ import {
   useMemo,
   useRef,
   useState,
-  type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent,
   type RefObject,
-  type WheelEvent as ReactWheelEvent,
 } from "react";
 
+import { Minimap } from "../../app/Minimap";
 import { useBoundKeys } from "../../preferences/KeyBindingsProvider";
 import type { MessageKey } from "../../preferences/preferences";
+import { BackButton } from "../../app/BackButton";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import { FolderChoices, ImageGallery } from "./ImageGallery";
 import {
@@ -67,19 +64,18 @@ import {
   useElementSize,
   useEscapeClosesPanel,
   useFullscreen,
+  usePreloadedImages,
+  useResumeNotice,
+  useStageGestures,
 } from "./readerControls";
 import type { PageBox } from "./readerModel";
 import { ImagePage } from "./ReaderPages";
 import { useReader, type ReaderPosition } from "./ReaderProvider";
 import type { LibraryGateway } from "./types";
+import { pluralText } from "../../i18n/pluralText";
 
 const ZOOM_FACTOR = 1.25;
-const WHEEL_TURN_DELAY_MS = 320;
-const WHEEL_TURN_THRESHOLD = 35;
-const DRAG_THRESHOLD_PX = 6;
-const EDGE_REVEAL_TOP_PX = 90;
 const EDGE_REVEAL_BOTTOM_PX = 170;
-const RESUME_NOTICE_MS = 7_000;
 const COMPACT_STAGE_PX = 640;
 const VIEWER_ACTIONS: ReadonlySet<string> = new Set([
   "readerNextPage",
@@ -101,15 +97,6 @@ const VIEWER_ACTIONS: ReadonlySet<string> = new Set([
 ]);
 
 export type ImageViewerGateway = Pick<LibraryGateway, "mediaAssetUrl" | "mediaThumbnailUrl">;
-
-interface DragState {
-  pointerId: number;
-  x: number;
-  y: number;
-  left: number;
-  top: number;
-  moved: boolean;
-}
 
 interface ZoomFocus {
   x: number;
@@ -142,9 +129,6 @@ export function ImageViewer({
   const rootRef = useRef<HTMLElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<DragState | null>(null);
-  const draggedRef = useRef(false);
-  const wheelAtRef = useRef(0);
   const focusRef = useRef<ZoomFocus | null>(null);
 
   const [preferences, setPreferences] = useState<ImageViewerPreferences>(() => (
@@ -155,7 +139,7 @@ export function ImageViewer({
   const [view, setView] = useState<"viewer" | "gallery">("viewer");
   const [chrome, setChrome] = useState(true);
   const [panel, setPanel] = useState<"settings" | "shortcuts" | "folders" | null>(null);
-  const [resumeNotice, setResumeNotice] = useState(() => reader.resumed && start.page > 0);
+  const [resumeNotice, dismissResumeNotice] = useResumeNotice(reader.resumed && start.page > 0);
   const [endCard, setEndCard] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [zoom, setZoom] = useState<number | null>(null);
@@ -183,12 +167,6 @@ export function ImageViewer({
   }, [preferences, session.installationId]);
 
   useEffect(() => {
-    if (!resumeNotice) return;
-    const timer = window.setTimeout(() => setResumeNotice(false), RESUME_NOTICE_MS);
-    return () => window.clearTimeout(timer);
-  }, [resumeNotice]);
-
-  useEffect(() => {
     if (!count) return;
     const current = { ordinal: items[index]!.ordinal, page: index };
     if (index === count - 1 && !reader.finished) reader.finish(current, count);
@@ -207,7 +185,7 @@ export function ImageViewer({
   const show = useCallback((next: number, hide = false) => {
     setIndex(next);
     setZoom(null);
-    setResumeNotice(false);
+    dismissResumeNotice();
     setEndCard(false);
     if (hide && preferences.hideControls) {
       setChrome(false);
@@ -260,7 +238,7 @@ export function ImageViewer({
     setView("viewer");
     setPanel(null);
     setEndCard(false);
-    setResumeNotice(false);
+    dismissResumeNotice();
     if (preferences.hideControls) setChrome(false);
     setPlaying(true);
   }, [at, playing, preferences.hideControls, sequence, show]);
@@ -269,7 +247,7 @@ export function ImageViewer({
     setPlaying(false);
     setPanel(null);
     setEndCard(false);
-    setResumeNotice(false);
+    dismissResumeNotice();
     setChrome(true);
     setView((current) => (current === "viewer" ? "gallery" : "viewer"));
   }, []);
@@ -379,64 +357,15 @@ export function ImageViewer({
   const closePanel = useCallback(() => setPanel(null), []);
   useEscapeClosesPanel(panel !== null, closePanel);
 
-  const onWheel = (event: ReactWheelEvent<HTMLElement>) => {
-    if (view !== "viewer") return;
-    if (event.ctrlKey || event.metaKey) {
-      event.preventDefault();
-      changeZoom(event.deltaY < 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR, { x: event.clientX, y: event.clientY });
-      return;
-    }
-    const scroller = stageRef.current;
-    if (scroller && (scroller.scrollHeight > scroller.clientHeight + 1 || scroller.scrollWidth > scroller.clientWidth + 1)) {
-      event.preventDefault();
-      scroller.scrollBy({ left: event.deltaX, top: event.deltaY });
-      return;
-    }
-    const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
-    if (Math.abs(delta) < WHEEL_TURN_THRESHOLD || Date.now() - wheelAtRef.current < WHEEL_TURN_DELAY_MS) return;
-    wheelAtRef.current = Date.now();
-    step(delta > 0 ? 1 : -1);
-  };
-
-  const onPointerDown = (event: ReactPointerEvent<HTMLElement>) => {
-    draggedRef.current = false;
-    const scroller = stageRef.current;
-    if (view !== "viewer" || event.button !== 0 || !scroller) return;
-    if ((event.target as Element).closest(".reader-bar, .reader-panel, .reader-card, .image-viewer-minimap")) return;
-    dragRef.current = {
-      pointerId: event.pointerId,
-      x: event.clientX,
-      y: event.clientY,
-      left: scroller.scrollLeft,
-      top: scroller.scrollTop,
-      moved: false,
-    };
-  };
-  const onPointerMove = (event: ReactPointerEvent<HTMLElement>) => {
-    if (view === "viewer" && (event.clientY < EDGE_REVEAL_TOP_PX || event.clientY > window.innerHeight - EDGE_REVEAL_BOTTOM_PX)) {
-      setChrome(true);
-    }
-    const drag = dragRef.current;
-    const scroller = stageRef.current;
-    if (!drag || drag.pointerId !== event.pointerId || !scroller) return;
-    const dx = event.clientX - drag.x;
-    const dy = event.clientY - drag.y;
-    if (!drag.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
-    drag.moved = true;
-    draggedRef.current = true;
-    scroller.scrollLeft = drag.left - dx;
-    scroller.scrollTop = drag.top - dy;
-  };
-  const onPointerUp = () => {
-    dragRef.current = null;
-  };
-  const zone = (action: () => void) => () => {
-    if (draggedRef.current) return;
-    action();
-  };
-  // Clicks on the image leave focus on the viewer, so the arrow keys keep
-  // working and no focus ring lights up on a click area.
-  const keepFocus = (event: ReactMouseEvent) => event.preventDefault();
+  const { onWheel, onPointerDown, onPointerMove, onPointerUp, zone, keepFocus } = useStageGestures({
+    stageRef,
+    enabled: view === "viewer",
+    ignore: ".reader-bar, .reader-panel, .reader-card, .image-viewer-minimap",
+    revealBottomPx: EDGE_REVEAL_BOTTOM_PX,
+    onZoom: (direction, point) => changeZoom(direction > 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR, point),
+    onTurn: (delta) => step(delta),
+    onReveal: view === "viewer" ? () => setChrome(true) : undefined,
+  });
 
   const neighbours = useMemo(
     () => [at + 1, at - 1, at + 2].flatMap((place) => (sequence[place] === undefined ? [] : [sequence[place]!])),
@@ -448,7 +377,7 @@ export function ImageViewer({
   const currentFolder = folderOf.get(index);
   const scopeLabel = scope === null ? t("viewer.allImages") : folderName(folders.find((folder) => folder.key === scope));
   const positionLabel = count ? t("reader.position", { page: at + 1, total: sequence.length }) : "";
-  const countLabel = count === 1 ? t("viewer.imageCountOne") : t("viewer.imageCount", { count });
+  const countLabel = pluralText(t, locale, count, "viewer.imageCountOne", "viewer.imageCount");
   const zoomLabel = zoom !== null
     ? `${Math.round(zoom * 100)}%`
     : t(preferences.fit === "width" ? "media.reader.fitWidth" : preferences.fit === "original" ? "media.reader.originalSize" : "viewer.fitScreen");
@@ -475,16 +404,7 @@ export function ImageViewer({
     </div>
   );
   const libraryButton = (
-    <button
-      className="reader-icon-button reader-back"
-      type="button"
-      aria-label={t("library.back")}
-      title={t("library.back")}
-      disabled={reader.closing}
-      onClick={() => void reader.close()}
-    >
-      {reader.closing ? <LoaderCircle className="library-spin" aria-hidden="true" /> : <ArrowLeft aria-hidden="true" />}
-    </button>
+    <BackButton closing={reader.closing} onClick={() => void reader.close()} />
   );
 
   return (
@@ -533,7 +453,7 @@ export function ImageViewer({
             <div className="image-viewer-ambient" aria-hidden="true" style={{ backgroundImage: `url("${thumbnail}")` }} />
           ) : null}
 
-          <div className="reader-stage" ref={stageRef}>
+          <div className="reader-stage scrollbar-hidden" ref={stageRef}>
             {!count ? (
               <p className="reader-message">{t("media.noItems")}</p>
             ) : !stageReady || !item ? null : (
@@ -779,7 +699,7 @@ export function ImageViewer({
             <div className="reader-toast" role="status">
               <span>{t("viewer.resumed", { image: at + 1 })}</span>
               <button className="reader-chip-button is-outline" type="button" onClick={() => show(sequence[0]!)}>{t("reader.startOver")}</button>
-              <button className="reader-icon-button is-plain" type="button" aria-label={t("notice.close")} onClick={() => setResumeNotice(false)}>
+              <button className="reader-icon-button is-plain" type="button" aria-label={t("notice.close")} onClick={() => dismissResumeNotice()}>
                 <X aria-hidden="true" />
               </button>
             </div>
@@ -951,7 +871,6 @@ function ViewerMinimap({
 }) {
   const size = minimapSize(natural, compact);
   const [region, setRegion] = useState<ImageRegion | null>(null);
-  const dragging = useRef(false);
 
   useLayoutEffect(() => {
     const stage = stageRef.current;
@@ -970,13 +889,12 @@ function ViewerMinimap({
     return () => stage.removeEventListener("scroll", measure);
   }, [box.height, box.width, imageRef, stageRef]);
 
-  const moveTo = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const moveTo = (point: { x: number; y: number }) => {
     const stage = stageRef.current;
     const image = imageRef.current;
     if (!stage || !image) return;
-    const area = event.currentTarget.getBoundingClientRect();
     const scroll = scrollToPoint(
-      { x: (event.clientX - area.left) / area.width, y: (event.clientY - area.top) / area.height },
+      point,
       { width: stage.clientWidth, height: stage.clientHeight },
       { left: image.offsetLeft, top: image.offsetTop, width: image.offsetWidth, height: image.offsetHeight },
     );
@@ -985,69 +903,21 @@ function ViewerMinimap({
   };
 
   return (
-    <div className="image-viewer-minimap">
-      <div
-        role="img"
-        aria-label={label}
-        style={{ width: size.width, height: size.height }}
-        onPointerDown={(event) => {
-          event.stopPropagation();
-          dragging.current = true;
-          event.currentTarget.setPointerCapture?.(event.pointerId);
-          moveTo(event);
-        }}
-        onPointerMove={(event) => {
-          if (dragging.current) moveTo(event);
-        }}
-        onPointerUp={() => {
-          dragging.current = false;
-        }}
-        onPointerCancel={() => {
-          dragging.current = false;
-        }}
-      >
-        <img src={thumbnail} alt="" draggable={false} />
-        {region ? (
-          <span
-            aria-hidden="true"
-            style={{
-              left: region.left * size.width,
-              top: region.top * size.height,
-              width: region.width * size.width,
-              height: region.height * size.height,
-            }}
-          />
-        ) : null}
-      </div>
-    </div>
+    <Minimap
+      className="image-viewer-minimap"
+      size={size}
+      label={label}
+      frame={region && {
+        left: region.left * size.width,
+        top: region.top * size.height,
+        width: region.width * size.width,
+        height: region.height * size.height,
+      }}
+      onPoint={moveTo}
+    >
+      <img src={thumbnail} alt="" draggable={false} />
+    </Minimap>
   );
 }
 
 /** The next images load ahead, and their sizes are known before they are shown. */
-function usePreloadedImages(
-  indexes: number[],
-  items: { ordinal: number }[],
-  gateway: ImageViewerGateway,
-  sessionId: string,
-  onSize: (index: number, size: PageBox) => void,
-) {
-  const latest = useRef(onSize);
-  latest.current = onSize;
-  const key = indexes.join(",");
-  useEffect(() => {
-    if (!key) return;
-    const preloaders = key.split(",").map(Number).flatMap((index) => {
-      const item = items[index];
-      if (!item) return [];
-      const image = new window.Image();
-      image.decoding = "async";
-      image.onload = () => latest.current(index, { width: image.naturalWidth, height: image.naturalHeight });
-      image.src = gateway.mediaAssetUrl(sessionId, item.ordinal);
-      return [image];
-    });
-    return () => preloaders.forEach((image) => {
-      image.onload = null;
-      image.src = "";
-    });
-  }, [gateway, items, key, sessionId]);
-}

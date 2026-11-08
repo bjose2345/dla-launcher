@@ -1,7 +1,9 @@
+import { videoCapabilities } from "../../app/videoCapabilities";
 import { useEffect, useRef } from "react";
 
 import type {
   LibraryGateway,
+  NativeVideoRectangle,
   NativeVideoState,
   NativeVideoViewport,
   OpenNativeVideoRequest,
@@ -20,11 +22,15 @@ export type NativeVideoGateway = Required<Pick<
 export type VideoPlayerGateway = Pick<
   LibraryGateway,
   | "mediaAssetUrl"
+  | "readVideoSubtitles"
+  | "videoSubtitleUrl"
   | "openNativeVideo"
   | "updateNativeVideoViewport"
   | "controlNativeVideo"
   | "closeNativeVideo"
   | "subscribeNativeVideoState"
+  | "nativeVideoChrome"
+  | "openVideoExternally"
 >;
 
 interface NativeVideoSurfaceProps {
@@ -33,7 +39,14 @@ interface NativeVideoSurfaceProps {
   onState: (state: NativeVideoState) => void;
   onOpen: (response: OpenNativeVideoResponse) => void;
   onError: (error: unknown) => void;
+  /** The page's controls lying over the frame right now, which it must show through. */
+  obstructions?: () => NativeVideoRectangle[];
+  /** Changes when controls appear over or leave the frame, for prompt updates. */
+  overlays?: string;
 }
+
+/** How long the frame follows controls sliding over it, every animation frame. */
+const OVERLAY_FOLLOW_MS = 400;
 
 export function NativeVideoSurface({
   gateway,
@@ -41,16 +54,32 @@ export function NativeVideoSurface({
   onState,
   onOpen,
   onError,
+  obstructions,
+  overlays = "",
 }: NativeVideoSurfaceProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef(request);
   const onStateRef = useRef(onState);
   const onOpenRef = useRef(onOpen);
   const onErrorRef = useRef(onError);
+  const obstructionsRef = useRef(obstructions);
+  const updateRef = useRef<() => void>(() => undefined);
   const surfaceIdRef = useRef("");
   onStateRef.current = onState;
   onOpenRef.current = onOpen;
   onErrorRef.current = onError;
+  obstructionsRef.current = obstructions;
+
+  useEffect(() => {
+    const started = performance.now();
+    let frame = 0;
+    const follow = () => {
+      updateRef.current();
+      if (performance.now() - started < OVERLAY_FOLLOW_MS) frame = requestAnimationFrame(follow);
+    };
+    frame = requestAnimationFrame(follow);
+    return () => cancelAnimationFrame(frame);
+  }, [overlays]);
 
   useEffect(() => {
     let disposed = false;
@@ -107,13 +136,15 @@ export function NativeVideoSurface({
       if (!opened || disposed) return;
       const viewport = measure();
       if (!viewport) return;
-      void gateway.updateNativeVideoViewport(requestRef.current.sessionId, surfaceId, viewport)
+      const obstructions = obstructionsRef.current?.() ?? [];
+      void gateway.updateNativeVideoViewport(requestRef.current.sessionId, surfaceId, viewport, obstructions)
         .catch(onErrorRef.current);
     };
     const scheduleUpdate = () => {
       if (resizeFrame) cancelAnimationFrame(resizeFrame);
       resizeFrame = requestAnimationFrame(update);
     };
+    updateRef.current = update;
     const open = async () => {
       if (disposed) return;
       const viewport = measure();
@@ -142,6 +173,12 @@ export function NativeVideoSurface({
       ? null
       : new ResizeObserver(scheduleUpdate);
     observer?.observe(surface);
+    // Menus and dialogs portal to the body; what lies over the frame can
+    // change with them.
+    const portals = typeof MutationObserver === "undefined"
+      ? null
+      : new MutationObserver(scheduleUpdate);
+    portals?.observe(document.body, { childList: true });
     window.addEventListener("resize", scheduleUpdate);
     animationFrame = requestAnimationFrame(() => void open());
     return () => {
@@ -149,7 +186,9 @@ export function NativeVideoSurface({
       cancelAnimationFrame(animationFrame);
       cancelAnimationFrame(resizeFrame);
       window.clearInterval(positionTimer);
+      updateRef.current = () => undefined;
       observer?.disconnect();
+      portals?.disconnect();
       window.removeEventListener("resize", scheduleUpdate);
       if (surfaceId) {
         void gateway.closeNativeVideo(requestRef.current.sessionId, surfaceId).catch(() => undefined);
@@ -163,7 +202,8 @@ export function NativeVideoSurface({
 
 export function resolveNativeVideoGateway(gateway: VideoPlayerGateway): NativeVideoGateway | null {
   if (
-    !gateway.openNativeVideo
+    !videoCapabilities().nativeVideo
+    || !gateway.openNativeVideo
     || !gateway.updateNativeVideoViewport
     || !gateway.controlNativeVideo
     || !gateway.closeNativeVideo

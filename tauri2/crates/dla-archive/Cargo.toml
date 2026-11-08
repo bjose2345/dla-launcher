@@ -8,6 +8,7 @@ authors.workspace = true
 [dependencies]
 dla-application.workspace = true
 dla-domain.workspace = true
+encoding_rs.workspace = true
 fs2.workspace = true
 hex.workspace = true
 libc.workspace = true
@@ -22,4 +23,5 @@ zip.workspace = true
 windows-sys = { version = "=0.61.2", features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
+dla-sqlite.workspace = true
 tempfile = "=3.27.0"

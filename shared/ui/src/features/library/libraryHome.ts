@@ -1,5 +1,7 @@
+import { basename } from "../../basename";
 import type { MessageKey } from "../../i18n/catalogs";
 import type { CatalogWork } from "../catalog";
+import { localizedName, workTitle } from "../catalog/localizedNames";
 import { effectiveIdentity, installationTitle } from "./libraryPresentation";
 import type {
   Installation,
@@ -158,7 +160,7 @@ export function libraryDisplayTitle(
   preferEnglish: boolean,
 ): string {
   if (!work || installation.overrides.customTitle?.trim()) return installationTitle(installation);
-  return preferEnglish && work.titleEnglish.trim() ? work.titleEnglish : work.title;
+  return workTitle(work, preferEnglish);
 }
 
 /** The circle the catalog, or else the user, gives the work; nothing when neither does. */
@@ -168,7 +170,7 @@ export function libraryDisplayCreator(
   own?: OwnWorkDetails,
 ): string {
   const circle = work?.circles[0];
-  if (circle) return preferEnglish && circle.nameEnglish.trim() ? circle.nameEnglish : circle.name;
+  if (circle) return localizedName(circle.name, circle.nameEnglish, preferEnglish);
   return work ? "" : own?.circle ?? "";
 }
 
@@ -191,7 +193,7 @@ export function resumePlaceLabel(
 ): string {
   if (action === "read_images" && durationMs) return t("viewer.imageOf", { image: positionMs, total: durationMs });
   if (action === "open_document" && durationMs) return t("reader.pageOf", { page: positionMs, total: durationMs });
-  const name = relativePath.split(/[\\/]/).filter(Boolean).at(-1) ?? relativePath;
+  const name = basename(relativePath);
   const dot = name.lastIndexOf(".");
   return dot > 0 ? name.slice(0, dot) : name;
 }

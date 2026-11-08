@@ -1,4 +1,4 @@
-use std::io;
+use std::{collections::HashMap, io};
 
 use dla_application::installation::{InstallationLibraryError, InstallationStore};
 use dla_domain::{
@@ -90,26 +90,8 @@ impl InstallationStore for SqliteLibraryStore {
     }
 
     fn list(&self) -> Result<Vec<Installation>, InstallationLibraryError> {
-        self.with_connection(|connection| {
-            let installation_ids = {
-                let mut statement = connection.prepare(
-                    "SELECT installation_id
-                     FROM library_installation
-                     ORDER BY updated_at DESC, installation_id",
-                )?;
-                statement
-                    .query_map([], |row| row.get::<_, String>(0))?
-                    .collect::<rusqlite::Result<Vec<_>>>()?
-            };
-            installation_ids
-                .into_iter()
-                .map(|id| {
-                    read_full_installation(connection, &InstallationId(id))?
-                        .ok_or(rusqlite::Error::QueryReturnedNoRows)
-                })
-                .collect()
-        })
-        .map_err(InstallationLibraryError::persistence)
+        self.with_connection(|connection| read_all_installations(connection))
+            .map_err(InstallationLibraryError::persistence)
     }
 
     fn find_by_work_code(
@@ -118,7 +100,7 @@ impl InstallationStore for SqliteLibraryStore {
     ) -> Result<Vec<Installation>, InstallationLibraryError> {
         self.with_connection(|connection| {
             let installation_ids = {
-                let mut statement = connection.prepare(
+                let mut statement = connection.prepare_cached(
                     "SELECT installation.installation_id
                      FROM library_installation AS installation
                      JOIN library_installation_override AS override
@@ -187,20 +169,27 @@ impl InstallationStore for SqliteLibraryStore {
         overrides.validate()?;
         self.with_connection(|connection| {
             let transaction = connection.transaction()?;
-            let changed = transaction.execute(
-                "UPDATE library_installation SET status = ?2, updated_at = ?3
+            let changed = transaction
+                .prepare_cached(
+                    "UPDATE library_installation SET status = ?2, updated_at = ?3
                  WHERE installation_id = ?1",
-                params![installation_id.0, installation_status(status), updated_at],
-            )?;
+                )?
+                .execute(params![
+                    installation_id.0,
+                    installation_status(status),
+                    updated_at
+                ])?;
             require_changed(changed)?;
-            transaction.execute(
-                "DELETE FROM library_installation_override WHERE installation_id = ?1",
-                params![installation_id.0],
-            )?;
-            transaction.execute(
-                "DELETE FROM library_content_item_override WHERE installation_id = ?1",
-                params![installation_id.0],
-            )?;
+            transaction
+                .prepare_cached(
+                    "DELETE FROM library_installation_override WHERE installation_id = ?1",
+                )?
+                .execute(params![installation_id.0])?;
+            transaction
+                .prepare_cached(
+                    "DELETE FROM library_content_item_override WHERE installation_id = ?1",
+                )?
+                .execute(params![installation_id.0])?;
             insert_overrides(&transaction, installation_id, overrides, updated_at)?;
             transaction.commit()
         })
@@ -213,15 +202,14 @@ fn read_full_installation(
     installation_id: &InstallationId,
 ) -> rusqlite::Result<Option<Installation>> {
     let Some(mut installation) = connection
-        .query_row(
+        .prepare_cached(
             "SELECT installation_id, scan_root_id, source_scan_session_id,
                     root_path, platform, status, work_code, identity_confidence,
                     identity_reason_codes, suggested_status, discovered_at, updated_at
              FROM library_installation
              WHERE installation_id = ?1",
-            params![installation_id.0],
-            read_installation,
-        )
+        )?
+        .query_row(params![installation_id.0], read_installation)
         .optional()?
     else {
         return Ok(None);
@@ -246,8 +234,9 @@ fn replace_detection_in_transaction(
 ) -> rusqlite::Result<()> {
     let (work_code, identity_confidence, identity_reasons) =
         identity_parts(detection.catalog_identity.as_ref())?;
-    let changed = transaction.execute(
-        "UPDATE library_installation SET
+    let changed = transaction
+        .prepare_cached(
+            "UPDATE library_installation SET
             source_scan_session_id = ?2,
             status = ?3,
             work_code = ?4,
@@ -256,7 +245,8 @@ fn replace_detection_in_transaction(
             suggested_status = ?7,
             updated_at = ?8
          WHERE installation_id = ?1",
-        params![
+        )?
+        .execute(params![
             installation_id.0,
             detection
                 .source_scan_session_id
@@ -268,21 +258,17 @@ fn replace_detection_in_transaction(
             identity_reasons,
             installation_status(detection.suggested_status),
             updated_at,
-        ],
-    )?;
+        ])?;
     require_changed(changed)?;
-    transaction.execute(
-        "DELETE FROM library_content_item WHERE installation_id = ?1",
-        params![installation_id.0],
-    )?;
-    transaction.execute(
-        "DELETE FROM library_launch_candidate WHERE installation_id = ?1",
-        params![installation_id.0],
-    )?;
-    transaction.execute(
-        "DELETE FROM library_package_inspection WHERE installation_id = ?1",
-        params![installation_id.0],
-    )?;
+    transaction
+        .prepare_cached("DELETE FROM library_content_item WHERE installation_id = ?1")?
+        .execute(params![installation_id.0])?;
+    transaction
+        .prepare_cached("DELETE FROM library_launch_candidate WHERE installation_id = ?1")?
+        .execute(params![installation_id.0])?;
+    transaction
+        .prepare_cached("DELETE FROM library_package_inspection WHERE installation_id = ?1")?
+        .execute(params![installation_id.0])?;
     insert_detection(transaction, installation_id, detection)
 }
 
@@ -292,13 +278,15 @@ fn insert_installation(
 ) -> rusqlite::Result<()> {
     let (work_code, identity_confidence, identity_reasons) =
         identity_parts(installation.detection.catalog_identity.as_ref())?;
-    transaction.execute(
-        "INSERT INTO library_installation
+    transaction
+        .prepare_cached(
+            "INSERT INTO library_installation
          (installation_id, scan_root_id, source_scan_session_id, root_path, platform, status,
           work_code, identity_confidence, identity_reason_codes, suggested_status,
           discovered_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-        params![
+        )?
+        .execute(params![
             installation.id.0,
             installation.scan_root_id.as_ref().map(|id| id.0.as_str()),
             installation
@@ -315,8 +303,7 @@ fn insert_installation(
             installation_status(installation.detection.suggested_status),
             installation.discovered_at,
             installation.updated_at,
-        ],
-    )?;
+        ])?;
     Ok(())
 }
 
@@ -326,12 +313,14 @@ fn insert_detection(
     detection: &InstallationDetection,
 ) -> rusqlite::Result<()> {
     for item in &detection.content_items {
-        transaction.execute(
-            "INSERT INTO library_content_item
+        transaction
+            .prepare_cached(
+                "INSERT INTO library_content_item
              (installation_id, relative_path, path_key, media_type, size_bytes, modified_at,
               confidence, reason_codes)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![
+            )?
+            .execute(params![
                 installation_id.0,
                 item.relative_path.as_str(),
                 item.path_key,
@@ -340,17 +329,18 @@ fn insert_detection(
                 item.modified_at,
                 inference_confidence(item.confidence),
                 json(&item.reason_codes)?,
-            ],
-        )?;
+            ])?;
     }
     for candidate in &detection.launch_candidates {
         let (target_kind, target_path) = target_parts(&candidate.target);
-        transaction.execute(
-            "INSERT INTO library_launch_candidate
+        transaction
+            .prepare_cached(
+                "INSERT INTO library_launch_candidate
              (installation_id, candidate_id, action_kind, target_kind, target_path,
               supported_platforms, confidence, reason_codes)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![
+            )?
+            .execute(params![
                 installation_id.0,
                 candidate.id.0,
                 launch_action_kind(candidate.action),
@@ -359,20 +349,20 @@ fn insert_detection(
                 json(&candidate.supported_platforms)?,
                 inference_confidence(candidate.confidence),
                 json(&candidate.reason_codes)?,
-            ],
-        )?;
+            ])?;
     }
     if let Some(inspection) = &detection.package_inspection {
-        transaction.execute(
-            "INSERT INTO library_package_inspection
+        transaction
+            .prepare_cached(
+                "INSERT INTO library_package_inspection
              (installation_id, inspection, inspected_at)
              VALUES (?1, ?2, ?3)",
-            params![
+            )?
+            .execute(params![
                 installation_id.0,
                 json(inspection)?,
                 inspection.inspected_at,
-            ],
-        )?;
+            ])?;
     }
     Ok(())
 }
@@ -395,13 +385,15 @@ fn insert_overrides(
         }
         None => (None, None, None),
     };
-    transaction.execute(
-        "INSERT INTO library_installation_override
+    transaction
+        .prepare_cached(
+            "INSERT INTO library_installation_override
          (installation_id, identity_override_kind, identity_work_code, custom_title,
           preferred_action_kind, preferred_target_kind, preferred_target_path, reviewed_at,
           updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        params![
+        )?
+        .execute(params![
             installation_id.0,
             identity_kind,
             identity_work_code,
@@ -411,23 +403,128 @@ fn insert_overrides(
             target_path,
             overrides.reviewed_at,
             updated_at,
-        ],
-    )?;
+        ])?;
     for item in &overrides.content_items {
-        transaction.execute(
-            "INSERT INTO library_content_item_override
+        transaction
+            .prepare_cached(
+                "INSERT INTO library_content_item_override
              (installation_id, relative_path, media_type, ignored, sequence_order)
              VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![
+            )?
+            .execute(params![
                 installation_id.0,
                 item.relative_path.as_str(),
                 item.media_type.map(media_type),
                 item.ignored,
                 item.order.map(i64::from),
-            ],
-        )?;
+            ])?;
     }
     Ok(())
+}
+
+// Reads every installation with six statements instead of six per
+// installation. Each child table's rows carry the installation id as their last
+// column, so the per-installation row readers keep their column positions.
+fn read_all_installations(
+    connection: &rusqlite::Connection,
+) -> rusqlite::Result<Vec<Installation>> {
+    let mut statement = connection.prepare_cached(
+        "SELECT installation_id, scan_root_id, source_scan_session_id,
+                root_path, platform, status, work_code, identity_confidence,
+                identity_reason_codes, suggested_status, discovered_at, updated_at
+         FROM library_installation
+         ORDER BY updated_at DESC, installation_id",
+    )?;
+    let mut installations = statement
+        .query_map([], read_installation)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let positions: HashMap<String, usize> = installations
+        .iter()
+        .enumerate()
+        .map(|(index, installation)| (installation.id.0.clone(), index))
+        .collect();
+
+    let mut statement = connection.prepare_cached(
+        "SELECT relative_path, path_key, media_type, size_bytes, modified_at,
+                confidence, reason_codes, installation_id
+         FROM library_content_item
+         ORDER BY installation_id, relative_path",
+    )?;
+    for row in statement.query_map([], |row| {
+        Ok((row.get::<_, String>(7)?, read_content_item(row)?))
+    })? {
+        let (installation_id, item) = row?;
+        if let Some(&index) = positions.get(&installation_id) {
+            installations[index].detection.content_items.push(item);
+        }
+    }
+
+    let mut statement = connection.prepare_cached(
+        "SELECT candidate_id, action_kind, target_kind, target_path,
+                supported_platforms, confidence, reason_codes, installation_id
+         FROM library_launch_candidate
+         ORDER BY installation_id, candidate_id",
+    )?;
+    for row in statement.query_map([], |row| {
+        Ok((row.get::<_, String>(7)?, read_launch_candidate(row)?))
+    })? {
+        let (installation_id, candidate) = row?;
+        if let Some(&index) = positions.get(&installation_id) {
+            installations[index]
+                .detection
+                .launch_candidates
+                .push(candidate);
+        }
+    }
+
+    let mut statement = connection.prepare_cached(
+        "SELECT inspection, installation_id
+         FROM library_package_inspection",
+    )?;
+    for row in statement.query_map([], |row| {
+        Ok((row.get::<_, String>(1)?, parse_json(row, 0)?))
+    })? {
+        let (installation_id, inspection) = row?;
+        if let Some(&index) = positions.get(&installation_id) {
+            installations[index].detection.package_inspection = Some(inspection);
+        }
+    }
+
+    let mut statement = connection.prepare_cached(
+        "SELECT identity_override_kind, identity_work_code, custom_title,
+                preferred_action_kind, preferred_target_kind, preferred_target_path,
+                reviewed_at, installation_id
+         FROM library_installation_override",
+    )?;
+    for row in statement.query_map([], |row| {
+        Ok((row.get::<_, String>(7)?, read_override_base(row)?))
+    })? {
+        let (installation_id, overrides) = row?;
+        if let Some(&index) = positions.get(&installation_id) {
+            installations[index].overrides = overrides;
+        }
+    }
+
+    let mut statement = connection.prepare_cached(
+        "SELECT relative_path, media_type, ignored, sequence_order, installation_id
+         FROM library_content_item_override
+         ORDER BY installation_id, relative_path",
+    )?;
+    for row in statement.query_map([], |row| {
+        Ok((row.get::<_, String>(4)?, read_content_item_override(row)?))
+    })? {
+        let (installation_id, item) = row?;
+        if let Some(&index) = positions.get(&installation_id) {
+            installations[index].overrides.content_items.push(item);
+        }
+    }
+
+    for installation in &installations {
+        installation
+            .validate()
+            .map_err(|error| conversion_error(0, error))?;
+    }
+    Ok(installations)
 }
 
 fn read_installation(row: &Row<'_>) -> rusqlite::Result<Installation> {
@@ -476,13 +573,12 @@ fn read_package_inspection(
     installation_id: &InstallationId,
 ) -> rusqlite::Result<Option<PackageInspection>> {
     connection
-        .query_row(
+        .prepare_cached(
             "SELECT inspection
              FROM library_package_inspection
              WHERE installation_id = ?1",
-            params![installation_id.0],
-            |row| parse_json(row, 0),
-        )
+        )?
+        .query_row(params![installation_id.0], |row| parse_json(row, 0))
         .optional()
 }
 
@@ -490,7 +586,7 @@ fn read_content_items(
     connection: &rusqlite::Connection,
     installation_id: &InstallationId,
 ) -> rusqlite::Result<Vec<ContentItem>> {
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT relative_path, path_key, media_type, size_bytes, modified_at,
                 confidence, reason_codes
          FROM library_content_item
@@ -498,30 +594,32 @@ fn read_content_items(
          ORDER BY relative_path",
     )?;
     statement
-        .query_map(params![installation_id.0], |row| {
-            let relative_path = row.get::<_, String>(0)?;
-            let media_type_value = row.get::<_, String>(2)?;
-            let confidence = row.get::<_, String>(5)?;
-            let size = row.get::<_, Option<i64>>(3)?;
-            Ok(ContentItem {
-                relative_path: RelativePath::parse(relative_path)
-                    .map_err(|error| conversion_error(0, error))?,
-                path_key: row.get(1)?,
-                media_type: parse_media_type(2, &media_type_value)?,
-                size_bytes: size.map(|value| numeric_conversion(3, value)).transpose()?,
-                modified_at: row.get(4)?,
-                confidence: parse_inference_confidence(5, &confidence)?,
-                reason_codes: parse_json(row, 6)?,
-            })
-        })?
+        .query_map(params![installation_id.0], read_content_item)?
         .collect()
+}
+
+fn read_content_item(row: &Row<'_>) -> rusqlite::Result<ContentItem> {
+    let relative_path = row.get::<_, String>(0)?;
+    let media_type_value = row.get::<_, String>(2)?;
+    let confidence = row.get::<_, String>(5)?;
+    let size = row.get::<_, Option<i64>>(3)?;
+    Ok(ContentItem {
+        relative_path: RelativePath::parse(relative_path)
+            .map_err(|error| conversion_error(0, error))?,
+        path_key: row.get(1)?,
+        media_type: parse_media_type(2, &media_type_value)?,
+        size_bytes: size.map(|value| numeric_conversion(3, value)).transpose()?,
+        modified_at: row.get(4)?,
+        confidence: parse_inference_confidence(5, &confidence)?,
+        reason_codes: parse_json(row, 6)?,
+    })
 }
 
 fn read_launch_candidates(
     connection: &rusqlite::Connection,
     installation_id: &InstallationId,
 ) -> rusqlite::Result<Vec<LaunchCandidate>> {
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT candidate_id, action_kind, target_kind, target_path,
                 supported_platforms, confidence, reason_codes
          FROM library_launch_candidate
@@ -529,21 +627,23 @@ fn read_launch_candidates(
          ORDER BY candidate_id",
     )?;
     statement
-        .query_map(params![installation_id.0], |row| {
-            let action = row.get::<_, String>(1)?;
-            let target_kind = row.get::<_, String>(2)?;
-            let target_path = row.get::<_, Option<String>>(3)?;
-            let confidence = row.get::<_, String>(5)?;
-            Ok(LaunchCandidate {
-                id: LaunchCandidateId(row.get(0)?),
-                action: parse_launch_action_kind(1, &action)?,
-                target: parse_target(2, &target_kind, target_path)?,
-                supported_platforms: parse_json(row, 4)?,
-                confidence: parse_inference_confidence(5, &confidence)?,
-                reason_codes: parse_json(row, 6)?,
-            })
-        })?
+        .query_map(params![installation_id.0], read_launch_candidate)?
         .collect()
+}
+
+fn read_launch_candidate(row: &Row<'_>) -> rusqlite::Result<LaunchCandidate> {
+    let action = row.get::<_, String>(1)?;
+    let target_kind = row.get::<_, String>(2)?;
+    let target_path = row.get::<_, Option<String>>(3)?;
+    let confidence = row.get::<_, String>(5)?;
+    Ok(LaunchCandidate {
+        id: LaunchCandidateId(row.get(0)?),
+        action: parse_launch_action_kind(1, &action)?,
+        target: parse_target(2, &target_kind, target_path)?,
+        supported_platforms: parse_json(row, 4)?,
+        confidence: parse_inference_confidence(5, &confidence)?,
+        reason_codes: parse_json(row, 6)?,
+    })
 }
 
 fn read_overrides(
@@ -551,77 +651,75 @@ fn read_overrides(
     installation_id: &InstallationId,
 ) -> rusqlite::Result<InstallationOverrides> {
     let base = connection
-        .query_row(
+        .prepare_cached(
             "SELECT identity_override_kind, identity_work_code, custom_title,
                     preferred_action_kind, preferred_target_kind, preferred_target_path,
                     reviewed_at
              FROM library_installation_override
              WHERE installation_id = ?1",
-            params![installation_id.0],
-            |row| {
-                let identity_kind = row.get::<_, Option<String>>(0)?;
-                let identity_work_code = row.get::<_, Option<String>>(1)?;
-                let catalog_identity =
-                    parse_manual_identity(0, identity_kind.as_deref(), identity_work_code)?;
-                let action = row.get::<_, Option<String>>(3)?;
-                let target_kind = row.get::<_, Option<String>>(4)?;
-                let target_path = row.get::<_, Option<String>>(5)?;
-                let preferred_action = match (action, target_kind) {
-                    (Some(action), Some(target_kind)) => Some(ManualLaunchSelection {
-                        action: parse_launch_action_kind(3, &action)?,
-                        target: parse_target(4, &target_kind, target_path)?,
-                    }),
-                    (None, None) => None,
-                    _ => {
-                        return Err(conversion_error(
-                            3,
-                            io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                "incomplete preferred action",
-                            ),
-                        ));
-                    }
-                };
-                Ok(InstallationOverrides {
-                    catalog_identity,
-                    custom_title: row.get(2)?,
-                    preferred_action,
-                    content_items: Vec::new(),
-                    reviewed_at: row.get(6)?,
-                })
-            },
-        )
+        )?
+        .query_row(params![installation_id.0], read_override_base)
         .optional()?
         .unwrap_or_default();
 
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT relative_path, media_type, ignored, sequence_order
          FROM library_content_item_override
          WHERE installation_id = ?1
          ORDER BY relative_path",
     )?;
     let content_items = statement
-        .query_map(params![installation_id.0], |row| {
-            let path = row.get::<_, String>(0)?;
-            let media_type_value = row.get::<_, Option<String>>(1)?;
-            Ok(ContentItemOverride {
-                relative_path: RelativePath::parse(path)
-                    .map_err(|error| conversion_error(0, error))?,
-                media_type: media_type_value
-                    .as_deref()
-                    .map(|value| parse_media_type(1, value))
-                    .transpose()?,
-                ignored: row.get(2)?,
-                order: row
-                    .get::<_, Option<i64>>(3)?
-                    .map(|value| numeric_conversion(3, value))
-                    .transpose()?,
-            })
-        })?
+        .query_map(params![installation_id.0], read_content_item_override)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(InstallationOverrides {
         content_items,
         ..base
+    })
+}
+
+fn read_override_base(row: &Row<'_>) -> rusqlite::Result<InstallationOverrides> {
+    let identity_kind = row.get::<_, Option<String>>(0)?;
+    let identity_work_code = row.get::<_, Option<String>>(1)?;
+    let catalog_identity = parse_manual_identity(0, identity_kind.as_deref(), identity_work_code)?;
+    let action = row.get::<_, Option<String>>(3)?;
+    let target_kind = row.get::<_, Option<String>>(4)?;
+    let target_path = row.get::<_, Option<String>>(5)?;
+    let preferred_action = match (action, target_kind) {
+        (Some(action), Some(target_kind)) => Some(ManualLaunchSelection {
+            action: parse_launch_action_kind(3, &action)?,
+            target: parse_target(4, &target_kind, target_path)?,
+        }),
+        (None, None) => None,
+        _ => {
+            return Err(conversion_error(
+                3,
+                io::Error::new(io::ErrorKind::InvalidData, "incomplete preferred action"),
+            ));
+        }
+    };
+    Ok(InstallationOverrides {
+        catalog_identity,
+        custom_title: row.get(2)?,
+        preferred_action,
+        content_items: Vec::new(),
+        reviewed_at: row.get(6)?,
+    })
+}
+
+fn read_content_item_override(row: &Row<'_>) -> rusqlite::Result<ContentItemOverride> {
+    let path = row.get::<_, String>(0)?;
+    let media_type_value = row.get::<_, Option<String>>(1)?;
+    Ok(ContentItemOverride {
+        relative_path: RelativePath::parse(path).map_err(|error| conversion_error(0, error))?,
+        media_type: media_type_value
+            .as_deref()
+            .map(|value| parse_media_type(1, value))
+            .transpose()?,
+        ignored: row.get(2)?,
+        order: row
+            .get::<_, Option<i64>>(3)?
+            .map(|value| numeric_conversion(3, value))
+            .transpose()?,
     })
 }
 
@@ -990,6 +1088,62 @@ mod tests {
         assert_eq!(
             restored.detection.package_inspection,
             installation.detection.package_inspection
+        );
+    }
+
+    #[test]
+    fn listing_reads_every_installation_as_a_single_read_would() {
+        let directory = tempdir().expect("temporary directory");
+        let store = Arc::new(
+            SqliteLibraryStore::open(&directory.path().join("library.sqlite"))
+                .expect("library store"),
+        );
+        let library = InstallationLibrary::new(store);
+        let mut packaged = detection(&["RJ01326398.zip"]);
+        packaged.package_inspection = Some(package_inspection());
+        let older = Installation {
+            id: InstallationId("installation-older".to_owned()),
+            scan_root_id: None,
+            root_path: "/synthetic/library/older".to_owned(),
+            platform: InstallationPlatform::Linux,
+            status: InstallationStatus::Ready,
+            detection: packaged,
+            overrides: InstallationOverrides::default(),
+            discovered_at: "2026-08-08T00:00:00Z".to_owned(),
+            updated_at: "2026-08-08T00:00:00Z".to_owned(),
+        };
+        let newer = Installation {
+            id: InstallationId("installation-newer".to_owned()),
+            scan_root_id: None,
+            root_path: "/synthetic/library/newer".to_owned(),
+            platform: InstallationPlatform::Windows,
+            status: InstallationStatus::Ready,
+            detection: detection(&["Work/Game.exe", "Work/Readme.txt"]),
+            overrides: InstallationOverrides {
+                custom_title: Some("Renamed".to_owned()),
+                content_items: vec![ContentItemOverride {
+                    relative_path: path("Work/Readme.txt"),
+                    media_type: None,
+                    ignored: true,
+                    order: None,
+                }],
+                ..InstallationOverrides::default()
+            },
+            discovered_at: "2026-08-09T00:00:00Z".to_owned(),
+            updated_at: "2026-08-09T00:00:00Z".to_owned(),
+        };
+        library.create(&older).expect("create older");
+        library.create(&newer).expect("create newer");
+
+        let listed = library.list().expect("installation list");
+
+        let read = |id: &InstallationId| library.read(id).expect("read").expect("stored");
+        assert_eq!(listed, vec![read(&newer.id), read(&older.id)]);
+        assert_eq!(listed[0].overrides.content_items.len(), 1);
+        assert_eq!(listed[0].detection.content_items.len(), 2);
+        assert_eq!(
+            listed[1].detection.package_inspection,
+            Some(package_inspection())
         );
     }
 

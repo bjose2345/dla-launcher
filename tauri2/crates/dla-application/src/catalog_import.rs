@@ -1,7 +1,5 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use crate::cancellation::{CancellationToken, Cancelled};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize, Serializer};
 use thiserror::Error;
@@ -258,18 +256,11 @@ impl CatalogImportError {
     }
 }
 
-#[derive(Clone, Default)]
-pub struct CatalogImportCancellationToken {
-    cancelled: Arc<AtomicBool>,
-}
+pub type CatalogImportCancellationToken = CancellationToken<CatalogImportError>;
 
-impl CatalogImportCancellationToken {
-    pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Release);
-    }
-
-    pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
+impl Cancelled for CatalogImportError {
+    fn cancelled() -> Self {
+        Self::Cancelled
     }
 }
 

@@ -98,8 +98,8 @@ describe("Install from DLA", () => {
     expect(jobStatusText(t, "en-US", job("f", "failed", { problem: "busy" }), null))
       .toBe("Stopped: This account is already downloading on another device.");
     for (const problem of [
-      "sign_in_required", "credentials", "too_many_attempts", "unreachable", "not_in_archive", "allowance",
-      "busy", "disk_space", "corrupt", "install_folder", "install", "unavailable",
+      "sign_in_required", "credentials", "too_many_attempts", "unreachable", "not_in_archive", "forbidden",
+      "allowance", "busy", "disk_space", "corrupt", "install_folder", "install", "unavailable",
     ] as const) {
       expect(problemText(t, problem)).not.toContain("delivery.problem");
     }

@@ -19,15 +19,18 @@ import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { formatByteSize } from "../../formatByteSize";
+import { ProgressBar } from "../../app/ProgressBar";
+import { operationIsTerminal } from "../../app/operationStage";
+import { useGatewaySubscription } from "../../app/useGatewaySubscription";
 import { formatDateTime } from "../../i18n/formatters";
 import {
   catalogProfileMessageKey,
   generationKindMessageKey,
 } from "../../i18n/domainLabels";
 import { usePresentation } from "../../preferences/PresentationProvider";
+import { catalogKeys } from "../catalog/catalogQueryKeys";
 import { formatDuration } from "../library/LaunchHistory";
 import {
-  catalogImportIsTerminal,
   catalogImportPercent,
   catalogImportPhase,
   catalogImportPhases,
@@ -68,7 +71,7 @@ export function CatalogImportPage({
     queryFn: () => gateway.readProgress(),
     refetchInterval: (query) => {
       const current = query.state.data;
-      return current && !catalogImportIsTerminal(current.stage) ? 700 : false;
+      return current && !operationIsTerminal(current.stage) ? 700 : false;
     },
   });
   const generations = useQuery({
@@ -102,26 +105,19 @@ export function CatalogImportPage({
     onSettled: () => queryClient.invalidateQueries({ queryKey: generationKey }),
   });
 
-  useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
-    let disposed = false;
-    void gateway.subscribeProgress((value) => {
+  useGatewaySubscription(
+    gateway.subscribeProgress.bind(gateway),
+    (value) => {
       queryClient.setQueryData(progressKey, value);
-      if (catalogImportIsTerminal(value.stage)) {
+      if (operationIsTerminal(value.stage)) {
         void refreshAfterCatalogOperation(queryClient);
       }
-    }).then((listener) => {
-      if (disposed) listener();
-      else unsubscribe = listener;
-    });
-    return () => {
-      disposed = true;
-      unsubscribe?.();
-    };
-  }, [gateway, queryClient]);
+    },
+    [gateway],
+  );
 
   const current = progress.data;
-  const active = Boolean(current && !catalogImportIsTerminal(current.stage));
+  const active = Boolean(current && !operationIsTerminal(current.stage));
   const finished = current?.stage === "completed";
   const stopped = current?.stage === "cancelled" || current?.stage === "failed";
   const pageError = choose.error ?? progress.error ?? generations.error;
@@ -131,7 +127,7 @@ export function CatalogImportPage({
   useEffect(() => {
     if (
       !current
-      || catalogImportIsTerminal(current.stage)
+      || operationIsTerminal(current.stage)
       || revealedOperationRef.current === current.operationId
     ) return;
     revealedOperationRef.current = current.operationId;
@@ -152,7 +148,7 @@ export function CatalogImportPage({
   const browse = () => {
     start.reset();
     activate.reset();
-    if (current && catalogImportIsTerminal(current.stage)) {
+    if (current && operationIsTerminal(current.stage)) {
       queryClient.setQueryData(progressKey, null);
     }
     choose.mutate();
@@ -165,9 +161,9 @@ export function CatalogImportPage({
 
   return (
     <main className="import-page">
-      <section className="import-masthead">
-        <div className="import-masthead-title">
-          <span className="import-eyebrow"><FileArchive aria-hidden="true" />{t("import.eyebrow")}</span>
+      <section className="page-masthead has-actions import-masthead">
+        <div className="page-masthead-title">
+          <span className="page-eyebrow"><FileArchive aria-hidden="true" />{t("import.eyebrow")}</span>
           <div className="import-masthead-heading">
             <h1>{t("import.title")}</h1>
             {installed.length ? (
@@ -271,7 +267,7 @@ function useImportElapsed(progress: CatalogImportProgress | null | undefined): n
   const operationRef = useRef<string | null>(null);
   const startedAtRef = useRef(0);
   const operationId = progress?.operationId ?? null;
-  const terminal = catalogImportIsTerminal(progress?.stage);
+  const terminal = operationIsTerminal(progress?.stage);
 
   useEffect(() => {
     if (operationId === null) {
@@ -346,7 +342,7 @@ function ChooseStep({ busy, onBrowse }: { busy: boolean; onBrowse: () => void })
       onClick={onBrowse}
     >
       <span className="import-drop-icon">
-        {busy ? <LoaderCircle className="import-spin" aria-hidden="true" /> : <PackageOpen aria-hidden="true" />}
+        {busy ? <LoaderCircle className="app-spin" aria-hidden="true" /> : <PackageOpen aria-hidden="true" />}
       </span>
       <strong>{t(busy ? "import.opening" : "import.dropTitle")}</strong>
       <span className="import-drop-hint">{t(busy ? "import.openingHint" : "import.dropHint")}</span>
@@ -491,7 +487,7 @@ function ReviewStep({
             disabled={!preview.compatible || starting}
             onClick={onStart}
           >
-            {starting ? <LoaderCircle className="import-spin" aria-hidden="true" /> : <PackageOpen aria-hidden="true" />}
+            {starting ? <LoaderCircle className="app-spin" aria-hidden="true" /> : <PackageOpen aria-hidden="true" />}
             {t(starting ? "import.starting" : "import.start")}
           </button>
         </span>
@@ -544,16 +540,11 @@ function ImportRun({
         )}
       </div>
 
-      <div
-        className={`import-run-bar${percent === null ? " is-indeterminate" : ""}`}
-        role="progressbar"
-        aria-label={t(activation ? "import.activationProgress" : "import.progress")}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={percent ?? undefined}
-      >
-        <i style={percent === null ? undefined : { width: `${percent}%` }} />
-      </div>
+      <ProgressBar
+        className="import-run-bar"
+        percent={percent}
+        label={t(activation ? "import.activationProgress" : "import.progress")}
+      />
 
       <div className="import-run-metrics">
         <span>
@@ -603,8 +594,8 @@ function ImportRun({
             ? "import.activationSafety"
             : phase === "finishing" ? "import.finishSafety" : "import.cancelSafety")}
         </span>
-        <button className="import-button import-button-danger" type="button" disabled={cancelling} onClick={onCancel}>
-          {cancelling ? <LoaderCircle className="import-spin" aria-hidden="true" /> : <X aria-hidden="true" />}
+        <button className="app-button is-quiet is-danger" type="button" disabled={cancelling} onClick={onCancel}>
+          {cancelling ? <LoaderCircle className="app-spin" aria-hidden="true" /> : <X aria-hidden="true" />}
           {t("import.cancel")}
         </button>
       </footer>
@@ -659,7 +650,7 @@ function ImportResult({
             </button>
           </span>
         ) : (
-          <button className="import-button" type="button" onClick={onImportAnother}>
+          <button className="app-button is-quiet" type="button" onClick={onImportAnother}>
             {t(activation ? "import.choosePackage" : "import.importAnother")}
           </button>
         )}
@@ -726,12 +717,12 @@ function ImportStopped({
               disabled={retrying}
               onClick={onRetry}
             >
-              {retrying ? <LoaderCircle className="import-spin" aria-hidden="true" /> : <PackageOpen aria-hidden="true" />}
+              {retrying ? <LoaderCircle className="app-spin" aria-hidden="true" /> : <PackageOpen aria-hidden="true" />}
               {t(retrying ? "import.starting" : "import.tryAgain")}
             </button>
           </span>
         ) : (
-          <button className="import-button" type="button" onClick={onLeave}>
+          <button className="app-button is-quiet" type="button" onClick={onLeave}>
             {t(activation ? "common.back" : "import.chooseAnother")}
           </button>
         )}
@@ -872,16 +863,16 @@ function InstalledCatalogs({
                       <strong>{t("import.removeConfirmTitle", { name: label })}</strong>
                       <small>{t("import.removeConfirmHelp", { size: formatByteSize(generation.databaseBytes, locale) })}</small>
                     </span>
-                    <button className="import-button" type="button" disabled={removing} onClick={onCancelRemove}>
+                    <button className="app-button is-quiet" type="button" disabled={removing} onClick={onCancelRemove}>
                       {t("import.removeKeep")}
                     </button>
                     <button
-                      className="import-button import-button-solid-danger"
+                      className="app-button is-quiet is-solid-danger"
                       type="button"
                       disabled={busy || removing}
                       onClick={() => onRemove(generation.id)}
                     >
-                      {removing ? <LoaderCircle className="import-spin" aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
+                      {removing ? <LoaderCircle className="app-spin" aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
                       {t(removing ? "import.removing" : "import.remove")}
                     </button>
                   </div>
@@ -939,7 +930,7 @@ function ImportCallout({
 }) {
   const { t } = usePresentation();
   return (
-    <div className={`import-callout import-callout-${tone}`} role={tone === "error" ? "alert" : undefined}>
+    <div className={tone === "warning" ? "app-callout is-warning" : "app-callout"} role={tone === "error" ? "alert" : undefined}>
       {icon}
       <div>
         <span>{text}</span>
@@ -951,10 +942,9 @@ function ImportCallout({
 
 export { formatByteSize } from "../../formatByteSize";
 
-async function refreshAfterCatalogOperation(queryClient: ReturnType<typeof useQueryClient>): Promise<void> {
+export async function refreshAfterCatalogOperation(queryClient: ReturnType<typeof useQueryClient>): Promise<void> {
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: generationKey }),
-    queryClient.invalidateQueries({ queryKey: ["catalog"] }),
-    queryClient.invalidateQueries({ queryKey: ["search"] }),
+    queryClient.invalidateQueries({ queryKey: catalogKeys.all }),
   ]);
 }

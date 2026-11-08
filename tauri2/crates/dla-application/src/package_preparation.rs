@@ -1,7 +1,5 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use crate::cancellation::{CancellationToken, Cancelled};
+use std::sync::Arc;
 
 use dla_domain::{
     installation::{Installation, InstallationId, ManualCatalogIdentity},
@@ -81,26 +79,11 @@ pub struct PackageExtractionResult {
     pub installed_bytes: u64,
 }
 
-#[derive(Clone, Default)]
-pub struct PackagePreparationCancellationToken {
-    cancelled: Arc<AtomicBool>,
-}
+pub type PackagePreparationCancellationToken = CancellationToken<PackagePreparationError>;
 
-impl PackagePreparationCancellationToken {
-    pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Release);
-    }
-
-    pub fn check(&self) -> Result<(), PackagePreparationError> {
-        if self.cancelled.load(Ordering::Acquire) {
-            Err(PackagePreparationError::Cancelled)
-        } else {
-            Ok(())
-        }
-    }
-
-    pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
+impl Cancelled for PackagePreparationError {
+    fn cancelled() -> Self {
+        Self::Cancelled
     }
 }
 

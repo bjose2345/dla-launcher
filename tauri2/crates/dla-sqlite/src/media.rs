@@ -26,12 +26,14 @@ impl MediaSessionStore for SqliteLibraryStore {
             let transaction = connection.transaction()?;
             insert_session(&transaction, session)?;
             for item in &session.items {
-                transaction.execute(
-                    "INSERT INTO library_media_session_item
+                transaction
+                    .prepare_cached(
+                        "INSERT INTO library_media_session_item
                      (session_id, ordinal, installation_id, work_code, relative_path, media_type,
                       size_bytes, disc_number, track_number, bonus)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                    params![
+                    )?
+                    .execute(params![
                         session.id.0.as_str(),
                         i64::from(item.ordinal),
                         item.installation_id.0.as_str(),
@@ -42,8 +44,7 @@ impl MediaSessionStore for SqliteLibraryStore {
                         item.disc_number.map(i64::from),
                         item.track_number.map(i64::from),
                         item.bonus,
-                    ],
-                )?;
+                    ])?;
             }
             upsert_resume(&transaction, session)?;
             upsert_queue_state(&transaction, session)?;
@@ -55,8 +56,9 @@ impl MediaSessionStore for SqliteLibraryStore {
     fn save_media_session(&self, session: &MediaSession) -> Result<(), MediaError> {
         self.with_connection(|connection| {
             let transaction = connection.transaction()?;
-            let changed = transaction.execute(
-                "UPDATE library_media_session
+            let changed = transaction
+                .prepare_cached(
+                    "UPDATE library_media_session
                  SET status = ?2,
                      repeat_mode = ?3,
                      shuffle_enabled = ?4,
@@ -68,7 +70,8 @@ impl MediaSessionStore for SqliteLibraryStore {
                      ended_at = ?10,
                      error = ?11
                  WHERE session_id = ?1",
-                params![
+                )?
+                .execute(params![
                     session.id.0.as_str(),
                     session_status(session.status),
                     repeat_mode(session.repeat_mode),
@@ -80,8 +83,7 @@ impl MediaSessionStore for SqliteLibraryStore {
                     session.updated_at.as_str(),
                     session.ended_at.as_deref(),
                     session.error.as_deref(),
-                ],
-            )?;
+                ])?;
             if changed == 0 {
                 return Err(rusqlite::Error::QueryReturnedNoRows);
             }
@@ -106,16 +108,15 @@ impl MediaSessionStore for SqliteLibraryStore {
     ) -> Result<Option<MediaSession>, MediaError> {
         self.with_connection(|connection| {
             let session_id = connection
-                .query_row(
+                .prepare_cached(
                     "SELECT session_id
                      FROM library_media_session
                      WHERE session_kind = 'work'
                        AND installation_id = ?1
                        AND status IN ('active', 'paused')
                      LIMIT 1",
-                    [installation_id.0.as_str()],
-                    |row| row.get::<_, String>(0),
-                )
+                )?
+                .query_row([installation_id.0.as_str()], |row| row.get::<_, String>(0))
                 .optional()?;
             session_id
                 .map(|session_id| read_session(connection, &session_id))
@@ -128,15 +129,14 @@ impl MediaSessionStore for SqliteLibraryStore {
     fn read_open_personalized_media_session(&self) -> Result<Option<MediaSession>, MediaError> {
         self.with_connection(|connection| {
             let session_id = connection
-                .query_row(
+                .prepare_cached(
                     "SELECT session_id
                      FROM library_media_session
                      WHERE session_kind = 'personalized_voice'
                        AND status IN ('active', 'paused')
                      LIMIT 1",
-                    [],
-                    |row| row.get::<_, String>(0),
-                )
+                )?
+                .query_row([], |row| row.get::<_, String>(0))
                 .optional()?;
             session_id
                 .map(|session_id| read_session(connection, &session_id))
@@ -154,15 +154,14 @@ impl MediaSessionStore for SqliteLibraryStore {
         let scope_key = queue_scope_key(kind, installation_id)?;
         self.with_connection(|connection| {
             connection
-                .query_row(
+                .prepare_cached(
                     "SELECT session_kind, installation_id, current_installation_id,
                             current_relative_path, position_ms, duration_ms, completed,
                             repeat_mode, shuffle_enabled, updated_at
                      FROM library_media_queue_state
                      WHERE scope_key = ?1",
-                    [scope_key],
-                    queue_state_from_row,
-                )
+                )?
+                .query_row([scope_key], queue_state_from_row)
                 .optional()
         })
         .map_err(MediaError::persistence)
@@ -175,11 +174,13 @@ impl MediaSessionStore for SqliteLibraryStore {
     ) -> Result<Option<MediaResume>, MediaError> {
         self.with_connection(|connection| {
             connection
-                .query_row(
+                .prepare_cached(
                     "SELECT installation_id, action_kind, relative_path, position_ms,
                             duration_ms, completed, updated_at
                      FROM library_media_resume
                      WHERE installation_id = ?1 AND action_kind = ?2",
+                )?
+                .query_row(
                     params![installation_id.0.as_str(), action_kind(action)],
                     resume_from_row,
                 )
@@ -195,12 +196,12 @@ impl MediaSessionStore for SqliteLibraryStore {
     ) -> Result<u64, MediaError> {
         self.with_connection(|connection| {
             connection
-                .execute(
+                .prepare_cached(
                     "UPDATE library_media_session
                      SET status = 'interrupted', updated_at = ?1, ended_at = ?1, error = ?2
                      WHERE status IN ('active', 'paused')",
-                    params![interrupted_at, reason],
-                )
+                )?
+                .execute(params![interrupted_at, reason])
                 .map(|count| count as u64)
         })
         .map_err(MediaError::persistence)
@@ -215,22 +216,23 @@ impl AudioTrackStore for SqliteLibraryStore {
     ) -> Result<(), MediaError> {
         self.with_connection(|connection| {
             let transaction = connection.transaction()?;
-            transaction.execute(
-                "DELETE FROM library_audio_track WHERE installation_id = ?1",
-                [installation_id.0.as_str()],
-            )?;
+            transaction
+                .prepare_cached("DELETE FROM library_audio_track WHERE installation_id = ?1")?
+                .execute([installation_id.0.as_str()])?;
             for track in tracks {
                 if track.installation_id != *installation_id {
                     return Err(rusqlite::Error::InvalidParameterName(
                         "audio track belongs to another installation".to_owned(),
                     ));
                 }
-                transaction.execute(
-                    "INSERT INTO library_audio_track
+                transaction
+                    .prepare_cached(
+                        "INSERT INTO library_audio_track
                      (installation_id, work_code, relative_path, size_bytes, disc_number,
                       track_number, bonus, sort_order, indexed_at)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                    params![
+                    )?
+                    .execute(params![
                         track.installation_id.0.as_str(),
                         track.work_code.as_deref(),
                         track.relative_path.as_str(),
@@ -240,8 +242,7 @@ impl AudioTrackStore for SqliteLibraryStore {
                         track.bonus,
                         i64::from(track.sort_order),
                         track.indexed_at.as_str(),
-                    ],
-                )?;
+                    ])?;
             }
             transaction.commit()
         })
@@ -253,7 +254,7 @@ impl AudioTrackStore for SqliteLibraryStore {
         installation_id: &InstallationId,
     ) -> Result<Vec<IndexedAudioTrack>, MediaError> {
         self.with_connection(|connection| {
-            let mut statement = connection.prepare(
+            let mut statement = connection.prepare_cached(
                 "SELECT installation_id, work_code, relative_path, size_bytes, disc_number,
                         track_number, bonus, sort_order, indexed_at
                  FROM library_audio_track
@@ -269,7 +270,7 @@ impl AudioTrackStore for SqliteLibraryStore {
 
     fn list_all_audio_tracks(&self) -> Result<Vec<IndexedAudioTrack>, MediaError> {
         self.with_connection(|connection| {
-            let mut statement = connection.prepare(
+            let mut statement = connection.prepare_cached(
                 "SELECT installation_id, work_code, relative_path, size_bytes, disc_number,
                         track_number, bonus, sort_order, indexed_at
                  FROM library_audio_track
@@ -316,8 +317,7 @@ fn upsert_resume(transaction: &Transaction<'_>, session: &MediaSession) -> rusql
         .iter()
         .find(|item| item.ordinal == session.progress.item_ordinal)
         .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
-    transaction.execute(
-        "INSERT INTO library_media_resume
+    transaction.prepare_cached("INSERT INTO library_media_resume
          (installation_id, action_kind, relative_path, position_ms, duration_ms, completed, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT(installation_id, action_kind) DO UPDATE SET
@@ -325,7 +325,7 @@ fn upsert_resume(transaction: &Transaction<'_>, session: &MediaSession) -> rusql
              position_ms = excluded.position_ms,
              duration_ms = excluded.duration_ms,
              completed = excluded.completed,
-             updated_at = excluded.updated_at",
+             updated_at = excluded.updated_at")?.execute(
         params![
             item.installation_id.0.as_str(),
             action_kind(session.action),
@@ -352,8 +352,9 @@ fn upsert_queue_state(
         (session.kind == MediaSessionKind::Work).then_some(session.installation_id.0.as_str());
     let scope_key = queue_scope_key(session.kind, Some(&session.installation_id))
         .map_err(|error| rusqlite::Error::InvalidParameterName(error.to_string()))?;
-    transaction.execute(
-        "INSERT INTO library_media_queue_state
+    transaction
+        .prepare_cached(
+            "INSERT INTO library_media_queue_state
          (scope_key, session_kind, installation_id, current_installation_id,
           current_relative_path, position_ms, duration_ms, completed, repeat_mode,
           shuffle_enabled, updated_at)
@@ -367,7 +368,8 @@ fn upsert_queue_state(
              repeat_mode = excluded.repeat_mode,
              shuffle_enabled = excluded.shuffle_enabled,
              updated_at = excluded.updated_at",
-        params![
+        )?
+        .execute(params![
             scope_key,
             session_kind(session.kind),
             installation_id,
@@ -379,8 +381,7 @@ fn upsert_queue_state(
             repeat_mode(session.repeat_mode),
             session.shuffle,
             session.progress.updated_at.as_str(),
-        ],
-    )?;
+        ])?;
     Ok(())
 }
 
@@ -389,20 +390,17 @@ fn read_session(
     session_id: &str,
 ) -> rusqlite::Result<Option<MediaSession>> {
     let stored = connection
-        .query_row(
-            &format!(
-                "SELECT {SESSION_COLUMNS}
+        .prepare_cached(&format!(
+            "SELECT {SESSION_COLUMNS}
                  FROM library_media_session
                  WHERE session_id = ?1"
-            ),
-            [session_id],
-            stored_session_from_row,
-        )
+        ))?
+        .query_row([session_id], stored_session_from_row)
         .optional()?;
     let Some(stored) = stored else {
         return Ok(None);
     };
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT ordinal, installation_id, work_code, relative_path, media_type, size_bytes,
                 disc_number, track_number, bonus
          FROM library_media_session_item

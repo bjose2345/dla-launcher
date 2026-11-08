@@ -66,6 +66,46 @@ describe("NativeVideoSurface", () => {
   });
 });
 
+describe("NativeVideoSurface obstructions", () => {
+  it("reports what lies over the frame again when something portals into the body", async () => {
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => (
+      window.setTimeout(() => callback(0), 0)
+    ));
+    vi.stubGlobal("cancelAnimationFrame", (handle: number) => window.clearTimeout(handle));
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(domRectangle({
+      left: 0, top: 0, width: 800, height: 450,
+    }));
+    const gateway: NativeVideoGateway = {
+      openNativeVideo: vi.fn().mockResolvedValue({ surfaceId: "surface-1", subtitles: [] }),
+      updateNativeVideoViewport: vi.fn().mockResolvedValue(undefined),
+      controlNativeVideo: vi.fn().mockResolvedValue(undefined),
+      closeNativeVideo: vi.fn().mockResolvedValue(undefined),
+      subscribeNativeVideoState: vi.fn().mockResolvedValue(() => {}),
+    };
+    const menu = { x: 100, y: 400, width: 500, height: 44, radius: 22 };
+
+    render(
+      <NativeVideoSurface
+        gateway={gateway}
+        request={request}
+        obstructions={() => [menu]}
+        onState={() => {}}
+        onOpen={() => {}}
+        onError={() => {}}
+      />,
+    );
+    await waitFor(() => expect(gateway.updateNativeVideoViewport).toHaveBeenCalled());
+    const before = vi.mocked(gateway.updateNativeVideoViewport).mock.calls.length;
+
+    act(() => {
+      document.body.appendChild(document.createElement("div"));
+    });
+
+    await waitFor(() => expect(vi.mocked(gateway.updateNativeVideoViewport).mock.calls.length).toBeGreaterThan(before));
+    expect(vi.mocked(gateway.updateNativeVideoViewport).mock.calls.at(-1)?.[3]).toEqual([menu]);
+  });
+});
+
 const request: Omit<OpenNativeVideoRequest, "viewport"> = {
   sessionId: "session-1",
   ordinal: 0,
@@ -80,6 +120,8 @@ const request: Omit<OpenNativeVideoRequest, "viewport"> = {
   completed: false,
   playlist: [{ ordinal: 0, itemName: "video.mp4" }],
   subtitleLabel: null,
+  ambient: true,
+  subtitleStyle: { size: 1, color: "white", opacity: 1, background: 0.75 },
   labels: {
     back: "Back",
     player: "Video player",
@@ -90,6 +132,7 @@ const request: Omit<OpenNativeVideoRequest, "viewport"> = {
     nowPlaying: "Now playing",
     playbackFailed: "Playback failed",
     codecUnsupported: "Codec unsupported",
+    exitFullscreen: "Exit fullscreen",
     retry: "Retry",
   },
 };

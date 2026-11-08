@@ -2,13 +2,18 @@ import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-quer
 import { useEffect } from "react";
 
 import { newestView } from "../../app/revisionedView";
+import { archiveTranslationKey } from "../translation/archiveKeys";
 import type { DeliveryGateway, DeliveryView } from "./types";
 
 export const DELIVERY_QUERY_KEY = ["delivery"] as const;
 
 /** Stores a view from a command or event unless a newer one is already held. */
 export function acceptDeliveryView(queryClient: QueryClient, next: DeliveryView) {
+  const before = queryClient.getQueryData<DeliveryView>(DELIVERY_QUERY_KEY)?.account ?? null;
   queryClient.setQueryData<DeliveryView>(DELIVERY_QUERY_KEY, (current) => newestView(current, next));
+  const after = queryClient.getQueryData<DeliveryView>(DELIVERY_QUERY_KEY)?.account ?? null;
+  // What the Archive offers depends on who is signed in.
+  if (before !== after) void queryClient.invalidateQueries({ queryKey: archiveTranslationKey });
 }
 
 /** The downloads view, kept current by the gateway's change and progress events. */

@@ -16,7 +16,9 @@ import {
 } from "lucide-react";
 import { useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
 
+import { useCopyFeedback } from "../../app/useCopyFeedback";
 import { usePresentation } from "../../preferences/PresentationProvider";
+import { catalogKeys } from "./catalogQueryKeys";
 import type { CatalogDetailGateway, CatalogRomEntry } from "./types";
 
 type HashMode = "off" | "crc32" | "md5" | "sha1" | "sha256";
@@ -64,7 +66,7 @@ export function RomFileTree({
   const [hashMode, setHashMode] = useState<HashMode>("off");
   const searchInput = useRef<HTMLInputElement>(null);
   const result = useQuery({
-    queryKey: ["catalog-rom-contents", workCode, romPosition],
+    queryKey: catalogKeys.romContents(workCode, romPosition),
     queryFn: () => gateway.readRomContents(workCode, romPosition),
     enabled: open,
     retry: false,
@@ -254,7 +256,7 @@ function EntryIcon({ extension }: { extension?: string }) {
 }
 
 function CopyButton({ value, label }: { value: string; label: string }) {
-  const [copied, setCopied] = useState(false);
+  const { result, copy } = useCopyFeedback();
   return (
     <button
       type="button"
@@ -262,13 +264,10 @@ function CopyButton({ value, label }: { value: string; label: string }) {
       aria-label={label}
       onClick={(event) => {
         event.stopPropagation();
-        void navigator.clipboard.writeText(value).then(() => {
-          setCopied(true);
-          window.setTimeout(() => setCopied(false), 1500);
-        });
+        copy(value);
       }}
     >
-      {copied ? <Check className="rft-icon-xs" /> : <Copy className="rft-icon-xs" />}
+      {result === "copied" ? <Check className="rft-icon-xs" /> : <Copy className="rft-icon-xs" />}
     </button>
   );
 }

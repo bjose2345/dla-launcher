@@ -3,8 +3,9 @@ import { CloudDownload, FolderOpen, LogIn, LogOut } from "lucide-react";
 import { useState } from "react";
 
 import { displayPath } from "../../displayPath";
-import { usePresentation } from "../../preferences";
+import { usePresentation } from "../../preferences/PresentationProvider";
 import type { CatalogDetailGateway } from "../catalog/types";
+import { catalogKeys } from "../catalog/catalogQueryKeys";
 import { DeliveryJobControls } from "./DeliveryJobControls";
 import { DeliverySignIn } from "./DeliverySignIn";
 import { problemText } from "./deliveryText";
@@ -34,7 +35,7 @@ export function DownloadsPage({
   const jobs = [...(view?.jobs ?? [])].reverse();
   const codes = [...new Set(jobs.map((job) => job.workCode))];
   const titles = useQuery({
-    queryKey: ["catalog", "works", codes],
+    queryKey: catalogKeys.works(codes),
     queryFn: () => catalogGateway.readWorks(codes),
     enabled: codes.length > 0,
   });
@@ -52,9 +53,9 @@ export function DownloadsPage({
 
   return (
     <main className="downloads-page">
-      <section className="downloads-masthead">
-        <div>
-          <span className="downloads-eyebrow"><CloudDownload aria-hidden="true" />{t("delivery.eyebrow")}</span>
+      <section className="page-masthead has-actions">
+        <div className="page-masthead-title">
+          <span className="page-eyebrow"><CloudDownload aria-hidden="true" />{t("delivery.eyebrow")}</span>
           <h1>{t("delivery.title")}</h1>
         </div>
         {view?.available && (
@@ -62,11 +63,11 @@ export function DownloadsPage({
             <div className="downloads-setting">
               <span>{view.account ? t("delivery.signedInAs", { account: view.account }) : t("delivery.signedOut")}</span>
               {view.account ? (
-                <button className="delivery-button" type="button" onClick={() => void run(gateway.signOut)}>
+                <button className="app-button is-quiet" type="button" onClick={() => void run(gateway.signOut)}>
                   <LogOut aria-hidden="true" />{t("delivery.signOut")}
                 </button>
               ) : (
-                <button className="delivery-button delivery-button-primary" type="button" onClick={() => setSigningIn(true)}>
+                <button className="app-button is-quiet is-primary" type="button" onClick={() => setSigningIn(true)}>
                   <LogIn aria-hidden="true" />{t("delivery.signIn")}
                 </button>
               )}
@@ -75,7 +76,7 @@ export function DownloadsPage({
               <span title={view.installFolder ? displayPath(view.installFolder) : undefined}>
                 {t("delivery.installFolder")}: <code>{view.installFolder ? displayPath(view.installFolder) : t("delivery.installFolderNone")}</code>
               </span>
-              <button className="delivery-button" type="button" onClick={() => void run(gateway.chooseInstallFolder)}>
+              <button className="app-button is-quiet" type="button" onClick={() => void run(gateway.chooseInstallFolder)}>
                 <FolderOpen aria-hidden="true" />{view.installFolder ? t("delivery.changeFolder") : t("delivery.chooseFolder")}
               </button>
             </div>

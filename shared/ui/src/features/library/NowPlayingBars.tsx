@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { useResizeObserver } from "../../app/useResizeObserver";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import { useMediaPlayback } from "./MediaPlaybackProvider";
 
@@ -63,15 +64,8 @@ export function NowPlayingBars({
     if (playing && liveSpectrum) playback.enableAnalyser();
   }, [liveSpectrum, playback.enableAnalyser, playing]);
 
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    const observer = new ResizeObserver(([entry]) => {
-      const width = entry?.contentRect.width ?? container.clientWidth;
-      setBarCount(spectrumBarCount(width));
-    });
-    observer.observe(container);
-    return () => observer.disconnect();
+  useResizeObserver(containerRef, (container, entry) => {
+    setBarCount(spectrumBarCount(entry?.contentRect.width ?? container.clientWidth));
   }, [alwaysVisible, current]);
 
   useEffect(() => {

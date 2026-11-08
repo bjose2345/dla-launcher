@@ -136,13 +136,20 @@ pub fn parse_total_memory_kib(contents: &str) -> u64 {
 }
 
 fn webview_description() -> String {
-    let Ok(version) = tauri::webview_version() else {
+    #[cfg(not(feature = "chromium"))]
+    let version = tauri::webview_version();
+    #[cfg(feature = "chromium")]
+    let version = tauri_runtime_cef::webview_version();
+    let Ok(version) = version else {
         return String::new();
     };
     format!("{} {version}", webview_engine())
 }
 
 fn webview_engine() -> &'static str {
+    if cfg!(feature = "chromium") {
+        return "Chromium";
+    }
     match std::env::consts::OS {
         "linux" => "WebKitGTK",
         "android" => "Android WebView",

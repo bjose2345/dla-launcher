@@ -1,7 +1,5 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use crate::cancellation::{CancellationToken, Cancelled};
+use std::sync::Arc;
 
 use std::collections::HashMap;
 
@@ -139,22 +137,11 @@ pub struct SearchCacheCleanupReport {
     pub retained_complete_generations: usize,
 }
 
-#[derive(Clone, Default)]
-pub struct SearchRebuildCancellationToken {
-    cancelled: Arc<AtomicBool>,
-}
+pub type SearchRebuildCancellationToken = CancellationToken<SearchError>;
 
-impl SearchRebuildCancellationToken {
-    pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Release);
-    }
-
-    pub fn check(&self) -> Result<(), SearchError> {
-        if self.cancelled.load(Ordering::Acquire) {
-            Err(SearchError::Cancelled)
-        } else {
-            Ok(())
-        }
+impl Cancelled for SearchError {
+    fn cancelled() -> Self {
+        Self::Cancelled
     }
 }
 

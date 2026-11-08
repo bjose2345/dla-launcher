@@ -21,7 +21,12 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   COREPACK_ENABLE_DOWNLOAD_PROMPT: 0
-  TAURI_CLI_VERSION: 2.12.1
+  TAURI_CLI_VERSION: 2.12.4
+  # The CEF distribution the Chromium build (tauri3/) runs on: the project's
+  # own build with the H.264 and AAC decoders (tauri3/cef-build/README.md).
+  CEF_ARCHIVE: cef_binary_154.0.34+g14c5a08+chromium-154.0.8037.98_linux64_minimal.tar.bz2
+  CEF_ARCHIVE_SHA1: 2ec13d795c37a6942512549139cc75879c62c509
+  CEF_ARCHIVE_URL: https://downloads.dlsitearchive.com/cef
 
 jobs:
   sidecars:
@@ -60,10 +65,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Linux x86_64 (DEB and RPM)
+          # The WebKitGTK build is not published since 0.1.0-alpha.5 (the
+          # Chromium build below is the Linux release); it is built as a
+          # check that the fallback still bundles. Only artifacts named
+          # dla-launcher-* become release assets.
+          - name: Linux x86_64 WebKitGTK (unpublished check)
             runner: ubuntu-22.04
             bundles: deb,rpm
-            artifact-name: dla-launcher-linux-x86_64
+            artifact-name: webkitgtk-check-linux-x86_64
             artifact-paths: |
               tauri2/target/release/bundle/deb/*.deb
               tauri2/target/release/bundle/rpm/*.rpm
@@ -220,10 +229,149 @@ jobs:
           compression-level: 0
           retention-days: 14
 
+  # The Linux release build: tauri2/'s code on Tauri 3 with the CEF runtime
+  # (tauri3/README.md). Its deb is named like the WebKitGTK one used to be
+  # (package dla-launcher), so an installed WebKitGTK package upgrades in place.
+  build-chromium:
+    name: Build Linux x86_64 Chromium (DEB)
+    needs: sidecars
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CEF_PATH: ${{ github.workspace }}/tauri3/.cef
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install Linux build dependencies
+        run: |
+          # GTK 4.14 or newer for the CEF runtime (Ubuntu 24.04 ships 4.14),
+          # Chromium's host libraries, and CMake with Ninja for the cef crate's
+          # libcef_dll_wrapper.
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            ninja-build \
+            curl \
+            file \
+            pkg-config \
+            libssl-dev \
+            libgtk-4-dev \
+            libasound2-dev \
+            libatk-bridge2.0-dev \
+            libcups2-dev \
+            libdrm-dev \
+            libgbm-dev \
+            libnss3-dev \
+            libudev-dev \
+            libxcomposite-dev \
+            libxdamage-dev \
+            libxkbcommon-dev \
+            libxrandr-dev \
+            libxshmfence-dev
+
+      - name: Download the pinned sidecars
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: desktop-sidecars
+
+      - name: Place the sidecars beside the Tauri project
+        run: tar -C tauri2/src-tauri -xf sidecars.tar && rm sidecars.tar
+
+      - name: Write the launcher access token
+        env:
+          DLA_LAUNCHER_ACCESS_TOKEN: ${{ secrets.DLA_LAUNCHER_ACCESS_TOKEN }}
+        run: |
+          # Same as the other desktop builds: optional, Install from DLA is
+          # unavailable without it.
+          if [[ -n "$DLA_LAUNCHER_ACCESS_TOKEN" ]]; then
+            token_file="$RUNNER_TEMP/launcher-token.json"
+            printf '%s' "$DLA_LAUNCHER_ACCESS_TOKEN" > "$token_file"
+            echo "DLA_LAUNCHER_ACCESS_TOKEN_FILE=$token_file" >> "$GITHUB_ENV"
+            echo "The launcher access token is set for this build."
+          else
+            echo "No DLA_LAUNCHER_ACCESS_TOKEN secret; Install from DLA will be unavailable in this build."
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Enable the pinned pnpm version
+        run: corepack enable
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install the pinned Rust toolchain
+        run: |
+          rustc --version
+          cargo --version
+
+      - name: Cache Rust dependencies and tools
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: tauri3 -> target
+
+      - name: Restore the patched Tauri 3 CLI
+        id: tauri-cli
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: tauri3-cli-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'tauri3/scripts/install-tauri-cli.sh', 'tauri3/patches/tauri-bundler-*.patch') }}
+
+      - name: Build the patched Tauri 3 CLI
+        if: steps.tauri-cli.outputs.cache-hit != 'true'
+        env:
+          TAURI_CLI_WORK: ${{ runner.temp }}/tauri-cli
+        run: bash tauri3/scripts/install-tauri-cli.sh
+
+      - name: Vendor the CEF runtime with the launcher's patches
+        run: bash tauri3/scripts/prepare-runtime-cef.sh
+
+      - name: Restore the CEF distribution
+        id: cef-archive
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/cef/${{ env.CEF_ARCHIVE }}
+          key: cef-archive-${{ env.CEF_ARCHIVE }}
+
+      - name: Download the CEF distribution
+        if: steps.cef-archive.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/cef"
+          curl -fsSL --retry 5 --retry-delay 10 \
+            -o "$RUNNER_TEMP/cef/$CEF_ARCHIVE" \
+            "$CEF_ARCHIVE_URL/$CEF_ARCHIVE"
+
+      - name: Install the CEF distribution where the cef crate looks
+        run: |
+          echo "$CEF_ARCHIVE_SHA1  $RUNNER_TEMP/cef/$CEF_ARCHIVE" | sha1sum -c
+          mkdir -p "$CEF_PATH"
+          bash tauri3/cef-build/install-cef.sh "$RUNNER_TEMP/cef/$CEF_ARCHIVE" "$CEF_PATH"
+
+      - name: Build the Chromium release bundle
+        working-directory: tauri3
+        run: cargo tauri build --ci --bundles deb
+
+      - name: Upload installers
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dla-launcher-linux-x86_64
+          path: tauri3/target/release/bundle/deb/*.deb
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
   release:
     name: Publish GitHub Release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, build-chromium]
     runs-on: ubuntu-22.04
     permissions:
       contents: write

@@ -38,10 +38,6 @@ export function dlsiteWorkUrl(work: CatalogWork): string | null {
   return site ? `https://www.dlsite.com/${site}/work/=/product_id/${encodeURIComponent(work.code)}.html` : null;
 }
 
-export function displayName(name: string, nameEnglish: string, english: boolean): string {
-  return english && nameEnglish ? nameEnglish : name;
-}
-
 function imageAssetKey(value: string): string {
   return imageAssetKeyFromValue(value, true);
 }

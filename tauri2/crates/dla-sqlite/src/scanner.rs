@@ -32,18 +32,17 @@ impl ScanRootPreferenceRepository for SqliteLibraryStore {
     ) -> Result<Option<ScanRootLocation>, ScannerError> {
         self.with_connection(|connection| {
             connection
-                .query_row(
+                .prepare_cached(
                     "SELECT platform, display_path
                      FROM library_scanner_preference
                      WHERE platform = ?1",
-                    [platform],
-                    |row| {
-                        Ok(ScanRootLocation {
-                            platform: row.get(0)?,
-                            display_path: row.get(1)?,
-                        })
-                    },
-                )
+                )?
+                .query_row([platform], |row| {
+                    Ok(ScanRootLocation {
+                        platform: row.get(0)?,
+                        display_path: row.get(1)?,
+                    })
+                })
                 .optional()
         })
         .map_err(ScannerError::persistence)
@@ -51,18 +50,19 @@ impl ScanRootPreferenceRepository for SqliteLibraryStore {
 
     fn save_scan_root_preference(&self, location: &ScanRootLocation) -> Result<(), ScannerError> {
         self.with_connection(|connection| {
-            connection.execute(
-                "INSERT INTO library_scanner_preference (platform, display_path, updated_at)
+            connection
+                .prepare_cached(
+                    "INSERT INTO library_scanner_preference (platform, display_path, updated_at)
                  VALUES (?1, ?2, ?3)
                  ON CONFLICT(platform) DO UPDATE SET
                     display_path = excluded.display_path,
                     updated_at = excluded.updated_at",
-                params![
+                )?
+                .execute(params![
                     location.platform,
                     location.display_path,
                     crate::database::now_rfc3339(),
-                ],
-            )?;
+                ])?;
             Ok(())
         })
         .map_err(ScannerError::persistence)
@@ -70,10 +70,9 @@ impl ScanRootPreferenceRepository for SqliteLibraryStore {
 
     fn clear_scan_root_preference(&self, platform: &str) -> Result<(), ScannerError> {
         self.with_connection(|connection| {
-            connection.execute(
-                "DELETE FROM library_scanner_preference WHERE platform = ?1",
-                [platform],
-            )?;
+            connection
+                .prepare_cached("DELETE FROM library_scanner_preference WHERE platform = ?1")?
+                .execute([platform])?;
             Ok(())
         })
         .map_err(ScannerError::persistence)
@@ -83,8 +82,9 @@ impl ScanRootPreferenceRepository for SqliteLibraryStore {
 impl ScanRepository for SqliteLibraryStore {
     fn save_root(&self, root: &ScanRoot) -> Result<(), ScannerError> {
         self.with_connection(|connection| {
-            connection.execute(
-                "INSERT INTO library_scan_root
+            connection
+                .prepare_cached(
+                    "INSERT INTO library_scan_root
                  (root_id, platform, path_key, display_path, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                  ON CONFLICT(root_id) DO UPDATE SET
@@ -92,15 +92,15 @@ impl ScanRepository for SqliteLibraryStore {
                     path_key = excluded.path_key,
                     display_path = excluded.display_path,
                     updated_at = excluded.updated_at",
-                params![
+                )?
+                .execute(params![
                     root.id.0,
                     root.platform,
                     root.path_key,
                     root.display_path,
                     root.created_at,
                     root.updated_at,
-                ],
-            )?;
+                ])?;
             Ok(())
         })
         .map_err(ScannerError::persistence)
@@ -131,8 +131,9 @@ impl ScanRepository for SqliteLibraryStore {
 
     fn update_session(&self, session: &ScanSession) -> Result<(), ScannerError> {
         self.with_connection(|connection| {
-            let changed = connection.execute(
-                "UPDATE library_scan_session SET
+            let changed = connection
+                .prepare_cached(
+                    "UPDATE library_scan_session SET
                     status = ?2,
                     follow_symlinks = ?3,
                     hash_policy = ?4,
@@ -148,7 +149,8 @@ impl ScanRepository for SqliteLibraryStore {
                     fatal_error_code = ?14,
                     fatal_error_message = ?15
                  WHERE session_id = ?1",
-                params![
+                )?
+                .execute(params![
                     session.id.0,
                     scan_status(session.status),
                     session.options.follow_symlinks,
@@ -164,8 +166,7 @@ impl ScanRepository for SqliteLibraryStore {
                     session.finished_at,
                     session.fatal_error_code.map(scan_issue_code),
                     session.fatal_error_message,
-                ],
-            )?;
+                ])?;
             if changed == 0 {
                 return Err(rusqlite::Error::QueryReturnedNoRows);
             }
@@ -177,22 +178,21 @@ impl ScanRepository for SqliteLibraryStore {
     fn read_root(&self, root_id: &ScanRootId) -> Result<Option<ScanRoot>, ScannerError> {
         self.with_connection(|connection| {
             connection
-                .query_row(
+                .prepare_cached(
                     "SELECT root_id, platform, path_key, display_path, created_at, updated_at
                      FROM library_scan_root
                      WHERE root_id = ?1",
-                    params![root_id.0],
-                    |row| {
-                        Ok(ScanRoot {
-                            id: ScanRootId(row.get(0)?),
-                            platform: row.get(1)?,
-                            path_key: row.get(2)?,
-                            display_path: row.get(3)?,
-                            created_at: row.get(4)?,
-                            updated_at: row.get(5)?,
-                        })
-                    },
-                )
+                )?
+                .query_row(params![root_id.0], |row| {
+                    Ok(ScanRoot {
+                        id: ScanRootId(row.get(0)?),
+                        platform: row.get(1)?,
+                        path_key: row.get(2)?,
+                        display_path: row.get(3)?,
+                        created_at: row.get(4)?,
+                        updated_at: row.get(5)?,
+                    })
+                })
                 .optional()
         })
         .map_err(ScannerError::persistence)
@@ -204,11 +204,8 @@ impl ScanRepository for SqliteLibraryStore {
     ) -> Result<Option<ScanSession>, ScannerError> {
         self.with_connection(|connection| {
             connection
-                .query_row(
-                    &format!("{} WHERE session_id = ?1", scan_session_select()),
-                    params![session_id.0],
-                    read_scan_session,
-                )
+                .prepare_cached(&format!("{} WHERE session_id = ?1", scan_session_select()))?
+                .query_row(params![session_id.0], read_scan_session)
                 .optional()
         })
         .map_err(ScannerError::persistence)
@@ -217,15 +214,12 @@ impl ScanRepository for SqliteLibraryStore {
     fn read_latest_session(&self) -> Result<Option<ScanSession>, ScannerError> {
         self.with_connection(|connection| {
             connection
-                .query_row(
-                    &format!(
-                        "{} WHERE purpose = 'library'
+                .prepare_cached(&format!(
+                    "{} WHERE purpose = 'library'
                          ORDER BY started_at DESC, session_id DESC LIMIT 1",
-                        scan_session_select()
-                    ),
-                    [],
-                    read_scan_session,
-                )
+                    scan_session_select()
+                ))?
+                .query_row([], read_scan_session)
                 .optional()
         })
         .map_err(ScannerError::persistence)
@@ -243,12 +237,13 @@ impl ScanRepository for SqliteLibraryStore {
 
     fn interrupt_active_sessions(&self, interrupted_at: &str) -> Result<usize, ScannerError> {
         self.with_connection(|connection| {
-            connection.execute(
-                "UPDATE library_scan_session
+            connection
+                .prepare_cached(
+                    "UPDATE library_scan_session
                  SET status = 'interrupted', finished_at = ?1
                  WHERE status IN ('queued', 'running')",
-                params![interrupted_at],
-            )
+                )?
+                .execute(params![interrupted_at])
         })
         .map_err(ScannerError::persistence)
     }
@@ -290,8 +285,9 @@ impl IgnoredScanFindingStore for SqliteLibraryStore {
         root_id: &ScanRootId,
     ) -> Result<BTreeSet<String>, InstallationScanSourceError> {
         self.with_connection(|connection| {
-            let mut statement = connection
-                .prepare("SELECT scope_key FROM library_scan_ignored_finding WHERE root_id = ?1")?;
+            let mut statement = connection.prepare_cached(
+                "SELECT scope_key FROM library_scan_ignored_finding WHERE root_id = ?1",
+            )?;
             let keys = statement.query_map(params![root_id.0], |row| row.get::<_, String>(0))?;
             keys.collect()
         })
@@ -307,15 +303,13 @@ impl IgnoredScanFindingStore for SqliteLibraryStore {
     ) -> Result<(), InstallationScanSourceError> {
         self.with_connection(|connection| {
             if ignored {
-                connection.execute(
-                    "INSERT INTO library_scan_ignored_finding (root_id, scope_key, ignored_at)
+                connection.prepare_cached("INSERT INTO library_scan_ignored_finding (root_id, scope_key, ignored_at)
                      VALUES (?1, ?2, ?3)
-                     ON CONFLICT (root_id, scope_key) DO UPDATE SET ignored_at = excluded.ignored_at",
+                     ON CONFLICT (root_id, scope_key) DO UPDATE SET ignored_at = excluded.ignored_at")?.execute(
                     params![root_id.0, key, now],
                 )?;
             } else {
-                connection.execute(
-                    "DELETE FROM library_scan_ignored_finding WHERE root_id = ?1 AND scope_key = ?2",
+                connection.prepare_cached("DELETE FROM library_scan_ignored_finding WHERE root_id = ?1 AND scope_key = ?2")?.execute(
                     params![root_id.0, key],
                 )?;
             }
@@ -330,11 +324,8 @@ fn read_installation_scan_snapshot(
     session_id: &ScanSessionId,
 ) -> rusqlite::Result<Option<InstallationScanSnapshot>> {
     let Some(session) = connection
-        .query_row(
-            &format!("{} WHERE session_id = ?1", scan_session_select()),
-            params![session_id.0],
-            read_scan_session,
-        )
+        .prepare_cached(&format!("{} WHERE session_id = ?1", scan_session_select()))?
+        .query_row(params![session_id.0], read_scan_session)
         .optional()?
     else {
         return Ok(None);
@@ -342,7 +333,7 @@ fn read_installation_scan_snapshot(
     let root = read_scan_root(connection, &session.root_id)?;
     let mut candidates = HashMap::<String, Vec<ScanMatchCandidate>>::new();
     {
-        let mut statement = connection.prepare(
+        let mut statement = connection.prepare_cached(
             "SELECT candidate.result_id, candidate.work_code, candidate.confidence,
                     candidate.reason_codes, candidate.rank
              FROM library_scan_candidate candidate
@@ -395,11 +386,8 @@ fn read_installation_scan_selection(
     selected_result_id: &ScanResultId,
 ) -> rusqlite::Result<Option<InstallationScanSelection>> {
     let Some(session) = connection
-        .query_row(
-            &format!("{} WHERE session_id = ?1", scan_session_select()),
-            params![session_id.0],
-            read_scan_session,
-        )
+        .prepare_cached(&format!("{} WHERE session_id = ?1", scan_session_select()))?
+        .query_row(params![session_id.0], read_scan_session)
         .optional()?
     else {
         return Ok(None);
@@ -428,12 +416,13 @@ fn read_installation_scan_selection(
 }
 
 fn read_scan_root(connection: &Connection, root_id: &ScanRootId) -> rusqlite::Result<ScanRoot> {
-    connection.query_row(
-        "SELECT root_id, platform, path_key, display_path, created_at, updated_at
+    connection
+        .prepare_cached(
+            "SELECT root_id, platform, path_key, display_path, created_at, updated_at
          FROM library_scan_root
          WHERE root_id = ?1",
-        params![root_id.0],
-        |row| {
+        )?
+        .query_row(params![root_id.0], |row| {
             Ok(ScanRoot {
                 id: ScanRootId(row.get(0)?),
                 platform: row.get(1)?,
@@ -442,15 +431,14 @@ fn read_scan_root(connection: &Connection, root_id: &ScanRootId) -> rusqlite::Re
                 created_at: row.get(4)?,
                 updated_at: row.get(5)?,
             })
-        },
-    )
+        })
 }
 
 fn read_session_entries(
     connection: &Connection,
     session: &ScanSession,
 ) -> rusqlite::Result<Vec<ScanEntry>> {
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT entry_id, root_id, relative_path, path_key, kind, extension, size, modified_at,
                 presence, first_seen_session_id, last_seen_session_id, created_at, updated_at
          FROM library_scan_entry
@@ -481,7 +469,7 @@ fn read_session_result_scopes(
     connection: &Connection,
     session_id: &ScanSessionId,
 ) -> rusqlite::Result<Vec<InstallationScanResultScope>> {
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT candidate_entry_id,
                 CASE WHEN outcome = 'matched' THEN upper(trim(selected_work_code)) END
          FROM library_scan_result
@@ -525,14 +513,16 @@ fn validate_batch(batch: &ScanWriteBatch) -> Result<(), ScannerError> {
 }
 
 fn insert_scan_session(connection: &Connection, session: &ScanSession) -> rusqlite::Result<()> {
-    connection.execute(
-        "INSERT INTO library_scan_session
+    connection
+        .prepare_cached(
+            "INSERT INTO library_scan_session
          (session_id, root_id, status, follow_symlinks, hash_policy, worker_limit,
           discovered_files, discovered_directories, inspected_files, matched, ambiguous,
           unmatched, recoverable_errors, started_at, finished_at, fatal_error_code,
           fatal_error_message, purpose)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
-        params![
+        )?
+        .execute(params![
             session.id.0,
             session.root_id.0,
             scan_status(session.status),
@@ -551,14 +541,12 @@ fn insert_scan_session(connection: &Connection, session: &ScanSession) -> rusqli
             session.fatal_error_code.map(scan_issue_code),
             session.fatal_error_message,
             scan_purpose(session.options.purpose),
-        ],
-    )?;
+        ])?;
     Ok(())
 }
 
 fn upsert_scan_entry(transaction: &Transaction<'_>, entry: &ScanEntry) -> rusqlite::Result<()> {
-    transaction.execute(
-        "INSERT INTO library_scan_entry
+    transaction.prepare_cached("INSERT INTO library_scan_entry
          (entry_id, root_id, relative_path, path_key, kind, extension, size, modified_at,
           presence, first_seen_session_id, last_seen_session_id, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
@@ -573,7 +561,7 @@ fn upsert_scan_entry(transaction: &Transaction<'_>, entry: &ScanEntry) -> rusqli
             presence = excluded.presence,
             first_seen_session_id = coalesce(library_scan_entry.first_seen_session_id, excluded.first_seen_session_id),
             last_seen_session_id = excluded.last_seen_session_id,
-            updated_at = excluded.updated_at",
+            updated_at = excluded.updated_at")?.execute(
         params![
             entry.id.0,
             entry.root_id.0,
@@ -594,8 +582,9 @@ fn upsert_scan_entry(transaction: &Transaction<'_>, entry: &ScanEntry) -> rusqli
 }
 
 fn upsert_scan_result(transaction: &Transaction<'_>, result: &ScanResult) -> rusqlite::Result<()> {
-    transaction.execute(
-        "INSERT INTO library_scan_result
+    transaction
+        .prepare_cached(
+            "INSERT INTO library_scan_result
          (result_id, session_id, candidate_entry_id, outcome, selected_work_code,
           confidence, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
@@ -606,7 +595,8 @@ fn upsert_scan_result(transaction: &Transaction<'_>, result: &ScanResult) -> rus
             selected_work_code = excluded.selected_work_code,
             confidence = excluded.confidence,
             updated_at = excluded.updated_at",
-        params![
+        )?
+        .execute(params![
             result.id.0,
             result.session_id.0,
             result.candidate_entry_id.as_ref().map(|id| &id.0),
@@ -615,39 +605,39 @@ fn upsert_scan_result(transaction: &Transaction<'_>, result: &ScanResult) -> rus
             result.confidence.map(scan_match_confidence),
             result.created_at,
             result.updated_at,
-        ],
-    )?;
-    transaction.execute(
-        "DELETE FROM library_scan_candidate WHERE result_id = ?1",
-        params![result.id.0],
-    )?;
-    transaction.execute(
-        "DELETE FROM library_scan_evidence WHERE result_id = ?1",
-        params![result.id.0],
-    )?;
+        ])?;
+    transaction
+        .prepare_cached("DELETE FROM library_scan_candidate WHERE result_id = ?1")?
+        .execute(params![result.id.0])?;
+    transaction
+        .prepare_cached("DELETE FROM library_scan_evidence WHERE result_id = ?1")?
+        .execute(params![result.id.0])?;
     for candidate in &result.candidates {
         let reason_codes = serde_json::to_string(&candidate.reason_codes)
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?;
-        transaction.execute(
-            "INSERT INTO library_scan_candidate
+        transaction
+            .prepare_cached(
+                "INSERT INTO library_scan_candidate
              (result_id, work_code, confidence, reason_codes, rank)
              VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![
+            )?
+            .execute(params![
                 result.id.0,
                 candidate.work_code,
                 scan_match_confidence(candidate.confidence),
                 reason_codes,
                 i64::from(candidate.rank),
-            ],
-        )?;
+            ])?;
     }
     for evidence in &result.evidence {
-        transaction.execute(
-            "INSERT INTO library_scan_evidence
+        transaction
+            .prepare_cached(
+                "INSERT INTO library_scan_evidence
              (evidence_id, result_id, source_entry_id, kind, normalized_value,
               reason_code, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
+            )?
+            .execute(params![
                 evidence.id,
                 result.id.0,
                 evidence.source_entry_id.as_ref().map(|id| &id.0),
@@ -655,15 +645,15 @@ fn upsert_scan_result(transaction: &Transaction<'_>, result: &ScanResult) -> rus
                 evidence.normalized_value,
                 evidence.reason_code,
                 evidence.created_at,
-            ],
-        )?;
+            ])?;
     }
     Ok(())
 }
 
 fn upsert_scan_issue(transaction: &Transaction<'_>, issue: &ScanIssue) -> rusqlite::Result<()> {
-    transaction.execute(
-        "INSERT INTO library_scan_issue
+    transaction
+        .prepare_cached(
+            "INSERT INTO library_scan_issue
          (issue_id, session_id, entry_id, relative_path, code, message, recoverable, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT(issue_id) DO UPDATE SET
@@ -672,7 +662,8 @@ fn upsert_scan_issue(transaction: &Transaction<'_>, issue: &ScanIssue) -> rusqli
             code = excluded.code,
             message = excluded.message,
             recoverable = excluded.recoverable",
-        params![
+        )?
+        .execute(params![
             issue.id,
             issue.session_id.0,
             issue.entry_id.as_ref().map(|id| &id.0),
@@ -681,8 +672,7 @@ fn upsert_scan_issue(transaction: &Transaction<'_>, issue: &ScanIssue) -> rusqli
             issue.message,
             issue.recoverable,
             issue.created_at,
-        ],
-    )?;
+        ])?;
     Ok(())
 }
 
@@ -692,17 +682,17 @@ fn read_scan_results(
 ) -> rusqlite::Result<ScanResultPage> {
     let outcome = query.outcome.map(scan_match_outcome);
     let total = if let Some(outcome) = outcome {
-        connection.query_row(
-            "SELECT count(*) FROM library_scan_result WHERE session_id = ?1 AND outcome = ?2",
-            params![query.session_id.0, outcome],
-            |row| row.get::<_, i64>(0),
-        )?
+        connection
+            .prepare_cached(
+                "SELECT count(*) FROM library_scan_result WHERE session_id = ?1 AND outcome = ?2",
+            )?
+            .query_row(params![query.session_id.0, outcome], |row| {
+                row.get::<_, i64>(0)
+            })?
     } else {
-        connection.query_row(
-            "SELECT count(*) FROM library_scan_result WHERE session_id = ?1",
-            params![query.session_id.0],
-            |row| row.get::<_, i64>(0),
-        )?
+        connection
+            .prepare_cached("SELECT count(*) FROM library_scan_result WHERE session_id = ?1")?
+            .query_row(params![query.session_id.0], |row| row.get::<_, i64>(0))?
     };
     let total = usize::try_from(total).map_err(|error| invalid_text(error.to_string()))?;
     let limit = sqlite_usize(query.limit)?;
@@ -776,13 +766,11 @@ fn read_scan_issues(
     connection: &Connection,
     query: &ScanIssueQuery,
 ) -> rusqlite::Result<ScanIssuePage> {
-    let total = connection.query_row(
-        "SELECT count(*) FROM library_scan_issue WHERE session_id = ?1",
-        params![query.session_id.0],
-        |row| row.get::<_, i64>(0),
-    )?;
+    let total = connection
+        .prepare_cached("SELECT count(*) FROM library_scan_issue WHERE session_id = ?1")?
+        .query_row(params![query.session_id.0], |row| row.get::<_, i64>(0))?;
     let total = usize::try_from(total).map_err(|error| invalid_text(error.to_string()))?;
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT issue_id, entry_id, relative_path, code, message, recoverable, created_at
          FROM library_scan_issue
          WHERE session_id = ?1
@@ -820,7 +808,7 @@ fn read_scan_candidates(
     connection: &Connection,
     result_id: &ScanResultId,
 ) -> rusqlite::Result<Vec<ScanMatchCandidate>> {
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT work_code, confidence, reason_codes, rank
          FROM library_scan_candidate
          WHERE result_id = ?1
@@ -843,7 +831,7 @@ fn read_scan_evidence(
     connection: &Connection,
     result_id: &ScanResultId,
 ) -> rusqlite::Result<Vec<ScanEvidence>> {
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT evidence_id, source_entry_id, kind, normalized_value, reason_code, created_at
          FROM library_scan_evidence
          WHERE result_id = ?1

@@ -1,9 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
 
+import { useGatewaySubscription } from "../../app/useGatewaySubscription";
+import { operationIsTerminal } from "../../app/operationStage";
 import {
   mergePackagePreparationProgress,
-  packagePreparationIsTerminal,
   type LibraryGateway,
   type PackagePreparationProgress,
 } from "./types";
@@ -27,28 +27,20 @@ export function usePackagePreparationProgress(gateway: PackagePreparationProgres
     enabled: gateway !== undefined,
     refetchInterval: (query) => {
       const value = query.state.data;
-      return value && !packagePreparationIsTerminal(value.stage) ? 650 : false;
+      return value && !operationIsTerminal(value.stage) ? 650 : false;
     },
   });
 
-  useEffect(() => {
-    if (!gateway) return undefined;
-    let unsubscribe: (() => void) | undefined;
-    let disposed = false;
-    void gateway.subscribePackagePreparationProgress((value) => {
+  useGatewaySubscription(
+    gateway?.subscribePackagePreparationProgress.bind(gateway),
+    (value) => {
       queryClient.setQueryData<PackagePreparationProgress | null>(
         packagePreparationProgressKey,
         (current) => mergePackagePreparationProgress(current, value),
       );
-    }).then((listener) => {
-      if (disposed) listener();
-      else unsubscribe = listener;
-    });
-    return () => {
-      disposed = true;
-      unsubscribe?.();
-    };
-  }, [gateway, queryClient]);
+    },
+    [gateway],
+  );
 
   return progress;
 }

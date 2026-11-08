@@ -1,7 +1,10 @@
+import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 
-import { formatByteSize } from "./CatalogImportPage";
-import { catalogImportIsIndeterminate, catalogImportIsTerminal } from "./types";
+import { catalogKeys } from "../catalog/catalogQueryKeys";
+import { formatByteSize, refreshAfterCatalogOperation } from "./CatalogImportPage";
+import { catalogImportIsIndeterminate } from "./types";
+import { operationIsTerminal } from "../../app/operationStage";
 
 describe("catalog import presentation", () => {
   it("formats package sizes without decimal noise", () => {
@@ -11,10 +14,10 @@ describe("catalog import presentation", () => {
   });
 
   it("keeps only completed, cancelled and failed operations terminal", () => {
-    expect(catalogImportIsTerminal("completed")).toBe(true);
-    expect(catalogImportIsTerminal("cancelled")).toBe(true);
-    expect(catalogImportIsTerminal("failed")).toBe(true);
-    expect(catalogImportIsTerminal("rebuilding_search")).toBe(false);
+    expect(operationIsTerminal("completed")).toBe(true);
+    expect(operationIsTerminal("cancelled")).toBe(true);
+    expect(operationIsTerminal("failed")).toBe(true);
+    expect(operationIsTerminal("rebuilding_search")).toBe(false);
   });
 
   it("uses indeterminate progress after package bytes have been consumed", () => {
@@ -23,5 +26,25 @@ describe("catalog import presentation", () => {
     expect(catalogImportIsIndeterminate("validating_catalog")).toBe(true);
     expect(catalogImportIsIndeterminate("rebuilding_search")).toBe(true);
     expect(catalogImportIsIndeterminate("building_catalog")).toBe(false);
+  });
+});
+
+describe("refreshAfterCatalogOperation", () => {
+  it("marks every catalog query stale, including the titles the Library and search show", async () => {
+    const queryClient = new QueryClient();
+    const keys = [
+      catalogKeys.works(["RJ000001", "RJ000002"]),
+      catalogKeys.work("RJ000001"),
+      catalogKeys.recommendations("RJ000001"),
+      catalogKeys.romContents("RJ000001", 0),
+      catalogKeys.search("text", "", 1),
+      catalogKeys.searchShortcuts("te"),
+      catalogKeys.searchIndex,
+    ];
+    for (const key of keys) queryClient.setQueryData(key, {});
+
+    await refreshAfterCatalogOperation(queryClient);
+
+    for (const key of keys) expect(queryClient.getQueryState(key)?.isInvalidated, JSON.stringify(key)).toBe(true);
   });
 });

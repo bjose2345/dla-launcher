@@ -1,5 +1,6 @@
 .settings-shell {
   --settings-gutter: max(16px, calc((100% - 1000px) / 2));
+  --page-gutter: var(--settings-gutter);
 
   min-height: 0;
   width: 100%;
@@ -9,28 +10,8 @@
 }
 
 .settings-masthead {
-  padding: 32px var(--settings-gutter) 0;
-  background-color: var(--app-backdrop);
-  background-image: radial-gradient(color-mix(in oklch, var(--color-base-content) 13%, transparent) 0.8px, transparent 0.8px);
-  background-size: 17px 17px;
-}
-
-.settings-eyebrow {
-  display: block;
-  margin-bottom: 6px;
-  color: var(--color-primary);
-  font-size: 0.62rem;
-  font-weight: 850;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-}
-
-.settings-masthead h1 {
-  margin: 0;
-  font-size: clamp(1.7rem, 3.4vw, 2.5rem);
-  font-weight: 850;
-  letter-spacing: -0.045em;
-  line-height: 1;
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 
 .settings-tabs {
@@ -148,53 +129,11 @@
   font-size: 0.73rem;
 }
 
-.settings-error {
-  margin: 12px 0 0;
-  padding: 9px 13px;
-  border-left: 2px solid var(--color-error);
-  background: color-mix(in oklch, var(--color-error) 10%, transparent);
-  color: var(--color-error);
-  font-size: 0.78rem;
-  overflow-wrap: anywhere;
+.settings-section .app-callout {
+  margin-top: 12px;
 }
 
 /* ── buttons ──────────────────────────────────────────────── */
-
-.settings-button {
-  display: inline-flex;
-  min-height: 36px;
-  align-items: center;
-  gap: 8px;
-  padding: 0 15px;
-  border: 0;
-  box-shadow: inset 0 0 0 1px var(--app-border);
-  clip-path: var(--app-chip);
-  background: var(--app-panel-raised);
-  color: var(--app-muted);
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.76rem;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.settings-button svg {
-  width: 14px;
-  height: 14px;
-}
-
-.settings-button:hover:not(:disabled) {
-  color: var(--color-base-content);
-}
-
-.settings-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-.settings-button.is-ghost {
-  background: transparent;
-}
 
 /* ── option chips ─────────────────────────────────────────── */
 
@@ -283,71 +222,6 @@
 .settings-switches {
   display: grid;
   gap: 6px;
-}
-
-.settings-switch {
-  display: grid;
-  align-items: center;
-  gap: 16px;
-  grid-template-columns: minmax(0, 1fr) 44px;
-  padding: 13px 15px;
-  border: 0;
-  box-shadow: inset 0 0 0 1px var(--app-border);
-  clip-path: var(--app-notch-sm);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.settings-switch:hover {
-  background: color-mix(in oklch, var(--color-base-content) 5%, transparent);
-}
-
-.settings-switch strong {
-  display: block;
-  font-size: 0.84rem;
-  font-weight: 700;
-}
-
-.settings-switch small {
-  display: block;
-  margin-top: 2px;
-  color: var(--app-subtle);
-  font-size: 0.73rem;
-  line-height: 1.45;
-}
-
-.settings-switch-track {
-  position: relative;
-  display: block;
-  width: 44px;
-  height: 24px;
-  clip-path: var(--app-chip);
-  background: color-mix(in oklch, var(--color-base-content) 14%, transparent);
-  transition: background-color 180ms ease;
-}
-
-.settings-switch-track::after {
-  position: absolute;
-  top: 4px;
-  left: 4px;
-  width: 16px;
-  height: 16px;
-  clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
-  background: var(--app-subtle);
-  content: "";
-  transition: transform 180ms cubic-bezier(0.4, 0, 0.2, 1), background-color 180ms ease;
-}
-
-.settings-switch[aria-checked="true"] .settings-switch-track {
-  background: color-mix(in oklch, var(--color-primary) 40%, transparent);
-}
-
-.settings-switch[aria-checked="true"] .settings-switch-track::after {
-  background: var(--color-primary);
-  transform: translateX(20px);
 }
 
 .settings-cache-controls {
@@ -700,10 +574,6 @@
   flex: none;
 }
 
-.settings-spin {
-  animation: settings-spin 900ms linear infinite;
-}
-
 .settings-loading {
   display: flex;
   align-items: center;
@@ -713,12 +583,6 @@
 .settings-loading svg {
   width: 14px;
   height: 14px;
-}
-
-@keyframes settings-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 @media (max-width: 640px) {
@@ -737,14 +601,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .settings-spin,
   .settings-binding-keys button.listening {
     animation: none;
-  }
-
-  .settings-switch-track,
-  .settings-switch-track::after {
-    transition: none;
   }
 }
 
@@ -918,7 +776,7 @@
 }
 
 .settings-about-build .settings-loading,
-.settings-about-build .settings-error {
+.settings-about-build .app-callout {
   margin-bottom: 20px;
 }
 

@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useRef, useState } from "react";
 
+import { errorMessage } from "../../app/errorMessage";
 import { formatByteSize } from "../../formatByteSize";
 import type { MessageKey } from "../../i18n/catalogs";
 import { usePresentation } from "../../preferences/PresentationProvider";
@@ -87,7 +88,7 @@ export function OwnWorkPage({
       <main className="work-detail-state">
         <strong>{t("ownWork.loadFailed")}</strong>
         {installation.error ? (
-          <span>{t("common.technicalDetail", { detail: installation.error instanceof Error ? installation.error.message : String(installation.error) })}</span>
+          <span>{t("common.technicalDetail", { detail: errorMessage(installation.error) })}</span>
         ) : null}
         <div><button type="button" onClick={onBack}>{t("library.back")}</button></div>
       </main>

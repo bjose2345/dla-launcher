@@ -12,7 +12,9 @@ native runtime check.
 | Rust | 1.99.0 (from `rust-toolchain.toml`) |
 | Node.js | 24 LTS |
 | pnpm | 11.28.5 (from `package.json`) |
-| Tauri CLI | 2.12.1 |
+| Tauri CLI (WebKitGTK and Windows builds) | 2.12.4 |
+| Tauri 3 CLI (Chromium build) | 3.0.0-alpha.5, built from source by `tauri3/scripts/install-tauri-cli.sh` |
+| CEF (Chromium build) | 154.0.34, the project's own build (`tauri3/cef-build/`) |
 | Android compile/target SDK | 36 |
 | Android NDK | 29.0.14206865 |
 | Android Java | 17 |
@@ -22,7 +24,7 @@ Enable pnpm through Corepack and install the pinned frontend dependencies:
 ```bash
 corepack enable
 pnpm install --frozen-lockfile
-cargo install tauri-cli --version 2.12.1 --locked
+cargo install tauri-cli --version 2.12.4 --locked
 ```
 
 ## Bundled sidecars
@@ -51,8 +53,18 @@ route, which the project owner issues. Put it in
 succeeds and Install from DLA reports that DLA is unreachable; everything else
 works. The token only keeps unsolicited traffic off the route: access to the
 archive is decided by the subscriber's own account.
+Translations from the archive use a second route with its own token and CA
+certificate: `state/tunnel/overlays-token.json` and `state/overlays/ca.crt`,
+or `DLA_LAUNCHER_OVERLAYS_ACCESS_TOKEN_FILE` and `DLA_LAUNCHER_OVERLAYS_CA_FILE`.
+Without them the build succeeds and only those translations are unavailable.
 
-## Linux (Debian or Ubuntu)
+## Linux WebKitGTK build (Debian or Ubuntu)
+
+The Tauri 2 build on the system WebKitGTK, in `tauri2/`. Since 0.1.0-alpha.5
+the Linux release is the Chromium build (next section), which carries its own
+browser engine and plays video in the page; the WebKitGTK build is no longer
+published and stays buildable as the fallback and for the Wine and Linux
+verification gates.
 
 Install Tauri's native requirements:
 
@@ -86,7 +98,7 @@ cargo tauri dev
 cargo tauri build --ci
 ```
 
-Release Linux bundles are built against the Debian 12 / Ubuntu 22.04 x86_64
+This build's bundles are built against the Debian 12 / Ubuntu 22.04 x86_64
 compatibility baseline. The platform-specific Tauri configuration produces DEB
 and RPM packages. Wayland and X11 are the tested display systems. RPM artifacts
 target other modern distributions on a best-effort basis until a native runtime
@@ -120,6 +132,83 @@ an explicit redistribution review.
 Wine is optional and is required only to launch reviewed Windows executables
 on Linux. A functioning 32-bit Wine environment is required for 32-bit titles.
 
+gamescope and libdecor-0-plugin-1-cairo are optional and Linux only. They give
+the **Display** tab in a game's Edit details, which sets a resolution and refresh
+rate for older games that open in a small window by running them through
+gamescope; that needs a Vulkan-capable GPU. The Linux package recommends both.
+
+## Linux Chromium build
+
+`tauri3/` builds the same launcher with Tauri 3 (alpha) and its CEF runtime,
+so it runs on Chromium instead of WebKitGTK; see [its README](../tauri3/README.md)
+for what differs. This is the Linux release build: the releases carry its DEB
+(package `dla-launcher`, replacing an installed WebKitGTK package in place) and
+nothing else for Linux. It needs GTK 4.14 or newer: Ubuntu 24.04, Debian 13,
+Fedora 40 or later. On Debian or Ubuntu:
+
+```bash
+sudo apt update
+sudo apt install \
+  build-essential \
+  cmake \
+  ninja-build \
+  curl \
+  file \
+  pkg-config \
+  libssl-dev \
+  libgtk-4-dev \
+  libasound2-dev \
+  libatk-bridge2.0-dev \
+  libcups2-dev \
+  libdrm-dev \
+  libgbm-dev \
+  libnss3-dev \
+  libudev-dev \
+  libxcomposite-dev \
+  libxdamage-dev \
+  libxkbcommon-dev \
+  libxrandr-dev \
+  libxshmfence-dev
+```
+
+Three things are prepared once, from the repository root, after the frontend
+dependencies and the sidecars:
+
+```bash
+bash tauri3/scripts/install-tauri-cli.sh
+bash tauri3/scripts/prepare-runtime-cef.sh
+export CEF_PATH="$PWD/tauri3/.cef"
+mkdir -p "$CEF_PATH"
+curl -fLO https://downloads.dlsitearchive.com/cef/cef_binary_154.0.34+g14c5a08+chromium-154.0.8037.98_linux64_minimal.tar.bz2
+echo "2ec13d795c37a6942512549139cc75879c62c509  cef_binary_154.0.34+g14c5a08+chromium-154.0.8037.98_linux64_minimal.tar.bz2" | sha1sum -c
+bash tauri3/cef-build/install-cef.sh cef_binary_154.0.34+g14c5a08+chromium-154.0.8037.98_linux64_minimal.tar.bz2
+```
+
+The first builds the Tauri 3 CLI from its crate source with the launcher's
+bundler patch (the released bundler stops on two files CEF 154 no longer
+ships) into `~/.cargo/bin`. The second vendors `tauri-runtime-cef` with the
+launcher's patches into `tauri3/vendor/`, where `tauri3/Cargo.toml` points.
+The last ones install the project's own CEF distribution, built with the
+H.264 and AAC decoders (`tauri3/cef-build/README.md`), where the `cef` crate
+looks; without `CEF_PATH` the crate downloads Spotify's build of the same
+version (about 1 GB), which cannot decode most of a library's videos. Keep
+`CEF_PATH` exported for every build.
+
+Then run or package the application:
+
+```bash
+cd tauri3
+cargo tauri dev
+cargo tauri build --ci --bundles deb
+```
+
+The deb installs the launcher with its CEF files under `/usr/share/DLA
+Launcher/` and a `/usr/bin/dla-launcher-chromium` symlink, declares Chromium's
+host libraries and GTK 4 as dependencies, and needs no GStreamer: video decodes
+inside Chromium. The package is a few hundred MB because Chromium ships inside
+it. An AppImage can be built with `--bundles appimage` and an RPM with
+`--bundles rpm`, but neither is part of the release.
+
 ## Windows 11
 
 Install:
@@ -142,7 +231,7 @@ rustup toolchain install 1.99.0-x86_64-pc-windows-msvc `
 rustup override set 1.99.0-x86_64-pc-windows-msvc
 corepack enable
 pnpm install --frozen-lockfile
-cargo install tauri-cli --version 2.12.1 --locked
+cargo install tauri-cli --version 2.12.4 --locked
 Set-Location tauri2
 cargo tauri build --ci
 ```

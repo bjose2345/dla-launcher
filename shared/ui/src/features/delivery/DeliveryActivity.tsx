@@ -1,18 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
 import { CloudDownload } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
 
 import { Notice } from "../../app/Notice";
-import { usePresentation } from "../../preferences";
+import { SidebarActivity } from "../../app/SidebarActivity";
+import { useNewlySettled } from "../../app/useNewlySettled";
+import { usePresentation } from "../../preferences/PresentationProvider";
 import type { CatalogDetailGateway } from "../catalog/types";
+import { catalogKeys } from "../catalog/catalogQueryKeys";
 import { jobProgressFraction, jobStatusText, problemText, remainingText } from "./deliveryText";
 import { useDelivery } from "./useDelivery";
 import { useTransferRate } from "./useTransferRate";
-import { receivedBytes, totalBytes, type DeliveryGateway, type DeliveryJob } from "./types";
+import { receivedBytes, totalBytes, type DeliveryGateway, type DeliveryJob, type DeliveryStatus } from "./types";
 
-interface Toast {
-  job: DeliveryJob;
-}
+const SETTLED: readonly DeliveryStatus[] = ["installed", "needs_review", "failed"];
 
 /**
  * The running Install from DLA in the sidebar, while the rest of the app
@@ -37,24 +37,10 @@ export function DeliveryActivity({
   const waiting = jobs.filter((job) => job.status === "queued").length;
   const progress = view?.progress && running && view.progress.jobId === running.id ? view.progress : null;
   const rate = useTransferRate(progress);
-
-  const [toast, setToast] = useState<Toast | null>(null);
-  const statuses = useRef<Map<string, DeliveryJob["status"]> | null>(null);
-  useEffect(() => {
-    if (!view) return;
-    const previous = statuses.current;
-    statuses.current = new Map(view.jobs.map((job) => [job.id, job.status]));
-    // Jobs present when the app opened are not announced; a job created since
-    // is, even when it finished before the view first showed it.
-    if (!previous) return;
-    const finished = view.jobs.find((job) => (
-      ["installed", "needs_review", "failed"].includes(job.status) && previous.get(job.id) !== job.status
-    ));
-    if (finished) setToast({ job: finished });
-  }, [view]);
-  const codes = [...new Set([running?.workCode, toast?.job.workCode].filter((code): code is string => !!code))];
+  const [finished, dismiss] = useNewlySettled(view?.jobs, (job: DeliveryJob) => job.id, (job) => job.status, SETTLED);
+  const codes = [...new Set([running?.workCode, finished?.workCode].filter((code): code is string => !!code))];
   const titles = useQuery({
-    queryKey: ["catalog", "works", codes],
+    queryKey: catalogKeys.works(codes),
     queryFn: () => catalogGateway.readWorks(codes),
     enabled: codes.length > 0,
   });
@@ -72,56 +58,48 @@ export function DeliveryActivity({
   return (
     <>
       {running && (
-        <button
-          className="delivery-activity"
-          type="button"
-          onClick={onOpenDownloads}
-          aria-label={t("delivery.activity.label", { title: title(running.workCode) })}
+        <SidebarActivity
+          icon={CloudDownload}
+          title={title(running.workCode)}
+          label={t("delivery.activity.label", { title: title(running.workCode) })}
+          percent={running.status === "installing" && progress?.phase !== "unpacking"
+            ? null
+            : jobProgressFraction(running, progress) * 100}
+          onOpen={onOpenDownloads}
         >
-          <CloudDownload className="delivery-activity-icon" aria-hidden="true" />
-          <span className="delivery-activity-text">
-            <strong>{title(running.workCode)}</strong>
-            <span>{jobStatusText(t, locale, running, progress)}</span>
-            {remaining && <span>{remaining}</span>}
-            {waiting > 0 && <span>{t("delivery.activity.waiting", { count: waiting })}</span>}
-          </span>
-          <progress
-            className="delivery-activity-progress"
-            max={1}
-            value={running.status === "installing" && progress?.phase !== "unpacking"
-              ? undefined
-              : jobProgressFraction(running, progress)}
-          />
-        </button>
+          <span>{jobStatusText(t, locale, running, progress)}</span>
+          {remaining && <span>{remaining}</span>}
+          {waiting > 0 && <span>{t("delivery.activity.waiting", { count: waiting })}</span>}
+        </SidebarActivity>
       )}
-      {toast && (
+      {finished && (
         <Notice
-          tone={toast.job.status === "failed" ? "problem" : "success"}
-          title={toast.job.status === "installed"
-            ? t("delivery.toast.installed", { title: title(toast.job.workCode) })
-            : toast.job.status === "needs_review"
-              ? t("delivery.toast.review", { title: title(toast.job.workCode) })
+          tone={finished.status === "failed" ? "problem" : "success"}
+          title={finished.status === "installed"
+            ? t("delivery.toast.installed", { title: title(finished.workCode) })
+            : finished.status === "needs_review"
+              ? t("delivery.toast.review", { title: title(finished.workCode) })
               : t("delivery.toast.failed", {
-                title: title(toast.job.workCode),
-                reason: problemText(t, toast.job.problem ?? "unavailable"),
+                title: title(finished.workCode),
+                reason: problemText(t, finished.problem ?? "unavailable"),
               })}
-          actions={toast.job.installationId && toast.job.status !== "failed"
+          actions={finished.installationId && finished.status !== "failed"
             ? [{
-              label: toast.job.status === "installed" ? t("delivery.openLibrary") : t("library.setUp"),
+              label: finished.status === "installed" ? t("delivery.openLibrary") : t("library.setUp"),
               primary: true,
               onClick: () => {
-                onOpenInstallation(toast.job.installationId!);
-                setToast(null);
+                onOpenInstallation(finished.installationId!);
+                dismiss();
               },
             }]
             : [{
               label: t("delivery.openDownloads"),
               onClick: () => {
                 onOpenDownloads();
-                setToast(null);
+                dismiss();
               },
             }]}
-          onClose={() => setToast(null)}
+          onClose={dismiss}
         />
       )}
     </>

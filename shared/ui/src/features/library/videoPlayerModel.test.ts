@@ -2,10 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import {
   clampVideoVolume,
+  defaultSubtitleStyle,
   defaultVideoPlayerPreferences,
+  normalizeSubtitleStyle,
+  readSubtitleStyle,
   readVideoPlayerPreferences,
   videoPlaybackFailure,
   videoStepTarget,
+  writeSubtitleStyle,
   writeVideoPlayerPreferences,
 } from "./videoPlayerModel";
 import {
@@ -15,6 +19,23 @@ import {
 import type { MediaSessionItem } from "./types";
 
 describe("video player model", () => {
+  it("keeps one validated subtitle style for every video", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+    };
+
+    expect(readSubtitleStyle(storage)).toEqual(defaultSubtitleStyle);
+    writeSubtitleStyle({ size: 2, color: "cyan", opacity: 0.5, background: 0 }, storage);
+    expect(readSubtitleStyle(storage)).toEqual({ size: 2, color: "cyan", opacity: 0.5, background: 0 });
+    expect(normalizeSubtitleStyle({ size: 3, color: "cyan", opacity: 0.33, background: 7 })).toEqual({
+      ...defaultSubtitleStyle,
+      color: "cyan",
+    });
+    expect(normalizeSubtitleStyle(null)).toEqual(defaultSubtitleStyle);
+  });
+
   it("persists validated preferences per installation", () => {
     const values = new Map<string, string>();
     const storage = {
@@ -26,6 +47,7 @@ describe("video player model", () => {
       volume: 0.42,
       muted: true,
       subtitleLabel: "ENG",
+      ambient: false,
     };
 
     writeVideoPlayerPreferences("installation-1", preferences, storage);
@@ -63,12 +85,14 @@ describe("video player model", () => {
       volume: 0.38,
       muted: true,
       subtitleLabel: "KOR",
+      ambient: true,
     });
     expect(JSON.parse(values.get("dla-launcher:video-player:v2:installation") ?? "null")).toEqual({
       fit: "contain",
       volume: 0.38,
       muted: true,
       subtitleLabel: "KOR",
+      ambient: true,
     });
   });
 

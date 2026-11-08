@@ -18,8 +18,30 @@ const LIBRARY_MIGRATION_LIST: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/library/0021_add_own_work_details.sql"
     )),
+    M::up(include_str!(
+        "../migrations/library/0022_add_game_translations.sql"
+    )),
+    M::up(include_str!(
+        "../migrations/library/0023_add_launch_options.sql"
+    )),
+    M::up(include_str!(
+        "../migrations/library/0024_add_launch_option_video_player.sql"
+    )),
+    M::up(include_str!(
+        "../migrations/library/0025_add_launch_option_audio_player.sql"
+    )),
+    M::up(include_str!(
+        "../migrations/library/0026_add_game_translation_patches.sql"
+    )),
+    M::up(include_str!(
+        "../migrations/library/0027_add_launch_option_window_scale.sql"
+    )),
+    M::up(include_str!(
+        "../migrations/library/0028_add_launch_option_refresh_rate.sql"
+    )),
 ];
 const LIBRARY_MIGRATIONS: Migrations<'static> = Migrations::from_slice(LIBRARY_MIGRATION_LIST);
+const STATEMENT_CACHE_CAPACITY: usize = 64;
 
 pub struct SqliteLibraryStore {
     connection: Mutex<Connection>,
@@ -27,8 +49,10 @@ pub struct SqliteLibraryStore {
 
 impl SqliteLibraryStore {
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
+        let connection = database::open(path, &LIBRARY_MIGRATIONS)?;
+        connection.set_prepared_statement_cache_capacity(STATEMENT_CACHE_CAPACITY);
         Ok(Self {
-            connection: Mutex::new(database::open(path, &LIBRARY_MIGRATIONS)?),
+            connection: Mutex::new(connection),
         })
     }
 

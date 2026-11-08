@@ -13,7 +13,7 @@ use dla_domain::{
         Installation, InstallationId, InstallationPlatform, InstallationStatus, LaunchActionKind,
         LaunchTarget, MediaType, RelativePath,
     },
-    launch::{LaunchActivity, LaunchActivityId, LaunchActivityStatus, LaunchAdapter},
+    launch::{LaunchActivity, LaunchActivityId, LaunchActivityStatus, LaunchAdapter, WindowScale},
 };
 use thiserror::Error;
 
@@ -37,6 +37,40 @@ pub struct LaunchExecutionPlan {
     pub relative_target: RelativePath,
     pub supported_platforms: Vec<InstallationPlatform>,
     pub expected_sha256: Option<String>,
+    /// Start the work in a Japanese locale (on Windows; Wine always does).
+    pub japanese_locale: bool,
+    /// Enlarge the game's window to the screen (on Linux, through gamescope).
+    pub window_scale: Option<WindowScale>,
+    /// The refresh rate gamescope paces the enlarged game at, in Hz; none
+    /// leaves the launcher's default.
+    pub refresh_rate: Option<u32>,
+}
+
+/// The player's choices for how a work starts.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LaunchOptions {
+    pub japanese_locale: bool,
+    /// A video player program for the work's videos; none for the launcher's.
+    pub video_player: Option<String>,
+    /// An audio player program for the work's tracks; none for the launcher's.
+    pub audio_player: Option<String>,
+    /// How Linux shows the game's window; none leaves it as the game made it.
+    pub window_scale: Option<WindowScale>,
+    /// The refresh rate of the enlarged game, in Hz; none is the default.
+    pub refresh_rate: Option<u32>,
+}
+
+pub trait LaunchOptionStore: Send + Sync {
+    fn read_launch_options(
+        &self,
+        installation_id: &InstallationId,
+    ) -> Result<LaunchOptions, LaunchError>;
+
+    fn save_launch_options(
+        &self,
+        installation_id: &InstallationId,
+        options: LaunchOptions,
+    ) -> Result<(), LaunchError>;
 }
 
 pub struct LaunchExecutionResult {
@@ -133,12 +167,70 @@ pub trait LaunchActivityStore: Send + Sync {
     ) -> Result<u64, LaunchError>;
 }
 
+pub trait LaunchActivityObserver: Send + Sync {
+    fn launch_activity_changed(&self, activity: &LaunchActivity);
+}
+
+/// A launch activity store that reports every activity it writes, so the page
+/// learns that a launch started or ended without polling for it.
+pub struct ObservedLaunchActivityStore {
+    inner: Arc<dyn LaunchActivityStore>,
+    observer: Arc<dyn LaunchActivityObserver>,
+}
+
+impl ObservedLaunchActivityStore {
+    pub fn new(
+        inner: Arc<dyn LaunchActivityStore>,
+        observer: Arc<dyn LaunchActivityObserver>,
+    ) -> Self {
+        Self { inner, observer }
+    }
+}
+
+impl LaunchActivityStore for ObservedLaunchActivityStore {
+    fn begin_launch_activity(&self, activity: &LaunchActivity) -> Result<(), LaunchError> {
+        self.inner.begin_launch_activity(activity)?;
+        self.observer.launch_activity_changed(activity);
+        Ok(())
+    }
+
+    fn save_launch_activity(&self, activity: &LaunchActivity) -> Result<(), LaunchError> {
+        self.inner.save_launch_activity(activity)?;
+        self.observer.launch_activity_changed(activity);
+        Ok(())
+    }
+
+    fn read_launch_activity(
+        &self,
+        activity_id: &LaunchActivityId,
+    ) -> Result<Option<LaunchActivity>, LaunchError> {
+        self.inner.read_launch_activity(activity_id)
+    }
+
+    fn list_launch_activities(
+        &self,
+        installation_id: Option<&InstallationId>,
+        limit: u32,
+    ) -> Result<Vec<LaunchActivity>, LaunchError> {
+        self.inner.list_launch_activities(installation_id, limit)
+    }
+
+    fn interrupt_active_launches(
+        &self,
+        interrupted_at: &str,
+        reason: &str,
+    ) -> Result<u64, LaunchError> {
+        self.inner.interrupt_active_launches(interrupted_at, reason)
+    }
+}
+
 pub struct LaunchService {
     installations: Arc<dyn InstallationStore>,
     preparations: Arc<dyn PackagePreparationStore>,
     executor: Arc<dyn LaunchExecutor>,
     activities: Arc<dyn LaunchActivityStore>,
     clock: Arc<dyn LaunchClock>,
+    options: Option<Arc<dyn LaunchOptionStore>>,
     active: Arc<Mutex<BTreeMap<LaunchActivityId, ActiveLaunch>>>,
     poll_interval: Duration,
 }
@@ -188,8 +280,24 @@ impl LaunchService {
             executor,
             activities,
             clock,
+            options: None,
             active: Arc::new(Mutex::new(BTreeMap::new())),
             poll_interval,
+        }
+    }
+
+    pub fn with_launch_options(mut self, options: Arc<dyn LaunchOptionStore>) -> Self {
+        self.options = Some(options);
+        self
+    }
+
+    fn launch_options(
+        &self,
+        installation_id: &InstallationId,
+    ) -> Result<LaunchOptions, LaunchError> {
+        match &self.options {
+            Some(options) => options.read_launch_options(installation_id),
+            None => Ok(LaunchOptions::default()),
         }
     }
 
@@ -317,6 +425,14 @@ impl LaunchService {
             .ok_or_else(|| LaunchError::ActivityNotFound(activity_id.0.clone()))
     }
 
+    /// Whether a game this launcher started is still running.
+    pub fn is_running(&self) -> bool {
+        self.active
+            .lock()
+            .map(|active| !active.is_empty())
+            .unwrap_or(false)
+    }
+
     pub fn recent(&self, limit: u32) -> Result<Vec<LaunchActivity>, LaunchError> {
         self.activities
             .list_launch_activities(None, normalized_history_limit(limit))
@@ -439,6 +555,7 @@ impl LaunchService {
             if action.action != LaunchActionKind::LaunchExecutable {
                 return Err(LaunchError::UnsupportedAction);
             }
+            let options = self.launch_options(&installation.id)?;
             return Ok(LaunchExecutionPlan {
                 installation_id: installation.id.clone(),
                 root_path: prepared.destination_root,
@@ -446,6 +563,9 @@ impl LaunchService {
                 relative_target: action.relative_path,
                 supported_platforms: action.supported_platforms,
                 expected_sha256: action.expected_sha256,
+                japanese_locale: options.japanese_locale,
+                window_scale: options.window_scale,
+                refresh_rate: options.refresh_rate,
             });
         }
 
@@ -485,6 +605,7 @@ impl LaunchService {
             .map(|candidate| candidate.supported_platforms.clone())
             .unwrap_or_else(|| inferred_platforms(installation, target));
 
+        let options = self.launch_options(&installation.id)?;
         Ok(LaunchExecutionPlan {
             installation_id: installation.id.clone(),
             root_path: installation.root_path.clone(),
@@ -492,6 +613,9 @@ impl LaunchService {
             relative_target: target.clone(),
             supported_platforms,
             expected_sha256: None,
+            japanese_locale: options.japanese_locale,
+            window_scale: options.window_scale,
+            refresh_rate: options.refresh_rate,
         })
     }
 
@@ -866,6 +990,62 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct RecordingObserver(Mutex<Vec<LaunchActivityStatus>>);
+
+    impl LaunchActivityObserver for RecordingObserver {
+        fn launch_activity_changed(&self, activity: &LaunchActivity) {
+            self.0.lock().expect("observed").push(activity.status);
+        }
+    }
+
+    #[test]
+    fn an_observed_store_reports_each_activity_it_writes() {
+        let inner = Arc::new(MemoryActivityStore::default());
+        let observer = Arc::new(RecordingObserver::default());
+        let store = ObservedLaunchActivityStore::new(
+            Arc::clone(&inner) as Arc<dyn LaunchActivityStore>,
+            Arc::clone(&observer) as Arc<dyn LaunchActivityObserver>,
+        );
+        let mut activity = LaunchActivity {
+            id: LaunchActivityId("launch-observed".to_owned()),
+            installation_id: InstallationId("installation-observed".to_owned()),
+            action: None,
+            target_path: None,
+            adapter: None,
+            status: LaunchActivityStatus::Starting,
+            process_id: None,
+            error: None,
+            attempted_at: "2026-08-09T12:00:00Z".to_owned(),
+            started_at: None,
+            ended_at: None,
+            duration_ms: None,
+            exit_code: None,
+            stop_requested_at: None,
+        };
+
+        store.begin_launch_activity(&activity).expect("begin");
+        activity.status = LaunchActivityStatus::Running;
+        store.save_launch_activity(&activity).expect("save");
+
+        assert_eq!(
+            *observer.0.lock().expect("observed"),
+            vec![
+                LaunchActivityStatus::Starting,
+                LaunchActivityStatus::Running
+            ]
+        );
+        assert_eq!(
+            store
+                .read_launch_activity(&activity.id)
+                .expect("read")
+                .expect("stored")
+                .status,
+            LaunchActivityStatus::Running
+        );
+        assert_eq!(inner.activities.lock().expect("activities").len(), 2);
+    }
+
+    #[derive(Default)]
     struct MemoryActivityStore {
         activities: Mutex<Vec<LaunchActivity>>,
         fail_running_saves: AtomicUsize,
@@ -1148,6 +1328,70 @@ mod tests {
         service
             .stop(&running.id)
             .expect("stop long-running process");
+    }
+
+    struct ChosenOptions;
+
+    impl LaunchOptionStore for ChosenOptions {
+        fn read_launch_options(
+            &self,
+            _installation_id: &InstallationId,
+        ) -> Result<LaunchOptions, LaunchError> {
+            Ok(LaunchOptions {
+                japanese_locale: true,
+                video_player: None,
+                audio_player: None,
+                window_scale: Some(WindowScale::Fit),
+                refresh_rate: Some(60),
+            })
+        }
+
+        fn save_launch_options(
+            &self,
+            _installation_id: &InstallationId,
+            _options: LaunchOptions,
+        ) -> Result<(), LaunchError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn hands_the_executor_the_players_launch_options() {
+        let executor = Arc::new(RecordingExecutor {
+            plans: Mutex::new(vec![]),
+            failure: None,
+            behavior: ProcessBehavior::LongRunning,
+        });
+        let launches = |options: Option<Arc<dyn LaunchOptionStore>>| {
+            let service = LaunchService::new(
+                Arc::new(MemoryInstallationStore {
+                    installation: installation(true, true),
+                }),
+                Arc::new(MemoryPreparationStore {
+                    prepared: Some(prepared()),
+                }),
+                executor.clone(),
+                Arc::new(MemoryActivityStore::default()),
+                Arc::new(TestClock::default()),
+            );
+            let service = match options {
+                Some(options) => service.with_launch_options(options),
+                None => service,
+            };
+            let running = service.launch(request()).expect("running activity");
+            service.stop(&running.id).expect("stop");
+        };
+
+        launches(None);
+        launches(Some(Arc::new(ChosenOptions)));
+
+        let plans = executor.plans.lock().expect("plans");
+        assert!(!plans[0].japanese_locale);
+        assert_eq!(plans[0].window_scale, None);
+        assert!(plans[1].japanese_locale);
+        assert_eq!(plans[1].window_scale, Some(WindowScale::Fit));
+        assert_eq!(plans[0].refresh_rate, None);
+        assert_eq!(plans[1].refresh_rate, Some(60));
     }
 
     #[test]

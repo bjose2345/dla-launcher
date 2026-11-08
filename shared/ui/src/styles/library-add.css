@@ -121,6 +121,10 @@
   line-height: 1.4;
 }
 
+.library-add-body .app-callout {
+  margin-top: 18px;
+}
+
 .library-add-error {
   position: absolute;
   z-index: 60;
@@ -410,7 +414,7 @@
   color: #ff9a9a;
 }
 
-.library-add-side .library-manage-button svg {
+.library-add-side .app-button svg {
   width: 14px;
   height: 14px;
 }
@@ -473,17 +477,7 @@
 }
 
 .library-add-progress {
-  display: block;
   width: 160px;
-  height: 4px;
-  overflow: hidden;
-  background: color-mix(in oklch, var(--color-base-content) 12%, transparent);
-}
-
-.library-add-progress i {
-  display: block;
-  height: 100%;
-  background: var(--color-primary);
 }
 
 .library-add-foot {

@@ -60,6 +60,37 @@ pub struct MaintenanceCleanupReport {
     pub retained_paths: Vec<String>,
 }
 
+/// A work's file names that an older install read wrongly: Japanese
+/// (Shift-JIS) names read as CP437, which turned them into symbols.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileNameReport {
+    pub installation_id: InstallationId,
+    /// Names still wrong.
+    pub wrong: u64,
+    /// Names given back just now.
+    pub fixed: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryFileNameReport {
+    /// Works whose names were fixed.
+    pub works: u64,
+    pub files: u64,
+    /// Works with wrong names left as they were: in use, or a name could not
+    /// be given back.
+    pub skipped: u64,
+}
+
+/// A file whose name an older install read wrongly, and the name it has in
+/// the archive.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileNameFix {
+    pub from: RelativePath,
+    pub to: RelativePath,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExpectedInstallationFile {
     pub relative_path: RelativePath,

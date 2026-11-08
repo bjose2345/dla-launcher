@@ -10,6 +10,7 @@ import {
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
+import { errorMessage } from "../../app/errorMessage";
 import {
   clampPlaybackPosition,
   clampPlaybackRate,
@@ -19,7 +20,7 @@ import {
 import { useMaterializedMediaSource, type MediaAssetFailure } from "./mediaAsset";
 import { useBoundKeys } from "../../preferences/KeyBindingsProvider";
 import { orderedSessionItems } from "./mediaSession";
-import type { VideoFit } from "./videoPlayerModel";
+import type { SubtitleStyle, VideoFit } from "./videoPlayerModel";
 import type {
   LibraryGateway,
   MediaRepeatMode,
@@ -36,6 +37,7 @@ export type MediaPlaybackGateway = Pick<
   | "updateMediaProgress"
   | "updateMediaQueueSettings"
   | "mediaAssetUrl"
+  | "audioDelivery"
 >;
 
 export interface VideoPlaybackRegistration {
@@ -50,10 +52,14 @@ export interface VideoPlaybackRegistration {
   error: string;
   failure: MediaAssetFailure | null;
   fit: VideoFit;
+  ambient: boolean;
   fullscreen: boolean;
   subtitles: NativeVideoSubtitle[];
   subtitleTrack: number | null;
   subtitleError: boolean;
+  subtitleStyle: SubtitleStyle;
+  /** Whether the player shows its controls now; in fullscreen the dock follows. */
+  controlsVisible: boolean;
   toggle: () => void;
   seek: (positionSeconds: number, persistProgress?: boolean) => void;
   skip: (offsetSeconds: number) => void;
@@ -63,9 +69,13 @@ export interface VideoPlaybackRegistration {
   setRepeatMode: (mode: MediaRepeatMode) => void;
   setShuffle: (shuffle: boolean) => void;
   setFit: (fit: VideoFit) => void;
+  setAmbient: (enabled: boolean) => void;
   toggleFullscreen: () => void;
   setSubtitle: (track: number | null) => void;
+  setSubtitleStyle: (style: SubtitleStyle) => void;
   setPlaybackRate: (rate: number) => void;
+  /** Only a video playing in the page can go into a picture-in-picture window. */
+  canPictureInPicture: boolean;
   togglePictureInPicture: () => void;
   bufferedSeconds: number;
   close: () => void;
@@ -73,13 +83,19 @@ export interface VideoPlaybackRegistration {
 
 export interface VideoDisplayControls {
   fit: VideoFit;
+  ambient: boolean;
   fullscreen: boolean;
   subtitles: NativeVideoSubtitle[];
   subtitleTrack: number | null;
   subtitleError: boolean;
+  subtitleStyle: SubtitleStyle;
+  controlsVisible: boolean;
   setFit: (fit: VideoFit) => void;
+  setAmbient: (enabled: boolean) => void;
   toggleFullscreen: () => void;
   setSubtitle: (track: number | null) => void;
+  setSubtitleStyle: (style: SubtitleStyle) => void;
+  canPictureInPicture: boolean;
   togglePictureInPicture: () => void;
 }
 
@@ -108,6 +124,8 @@ interface MediaPlaybackValue {
   selectOrdinal: (ordinal: number, positionSeconds?: number) => void;
   step: (direction: -1 | 1) => void;
   setVolume: (volume: number) => void;
+  /** Silences, or brings back the volume from before the silence. */
+  toggleMute: () => void;
   setRepeatMode: (mode: MediaRepeatMode) => void;
   setShuffle: (shuffle: boolean) => void;
   close: () => void;
@@ -186,7 +204,7 @@ export function MediaPlaybackProvider({
   );
   const item = items.find((candidate) => candidate.ordinal === ordinal) ?? null;
   const source = session && item ? gateway.mediaAssetUrl(session.id, item.ordinal) : "";
-  const playable = useMaterializedMediaSource(source);
+  const playable = useMaterializedMediaSource(source, gateway.audioDelivery);
 
   const playCurrent = useCallback(async () => {
     const element = audioRef.current;
@@ -223,7 +241,7 @@ export function MediaPlaybackProvider({
       return true;
     } catch (cause) {
       setPlaying(false);
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
       return false;
     }
   }, [playable.url]);
@@ -308,7 +326,7 @@ export function MediaPlaybackProvider({
       }
       return adopt(await gateway.openMediaSession(installationId));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
       return null;
     }
   }, [adopt, gateway, playable.url, playCurrent, session, stopPublishedVideo]);
@@ -318,7 +336,7 @@ export function MediaPlaybackProvider({
       stopPublishedVideo();
       return adopt(await gateway.openPersonalizedVoiceQueue());
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
       return null;
     }
   }, [adopt, gateway, stopPublishedVideo]);
@@ -620,6 +638,19 @@ export function MediaPlaybackProvider({
     if (audioRef.current) audioRef.current.playbackRate = playbackRate;
   }, [playable.url, playbackRate]);
 
+  const mutedVolumeRef = useRef(0);
+  const currentVolume = videoPlayback?.volume ?? volume;
+  const currentSetVolume = videoPlayback?.setVolume ?? setVolume;
+  // A volume of 0 reads as muted; unmuting brings back the volume from before.
+  const toggleMute = useCallback(() => {
+    if (currentVolume > 0) {
+      mutedVolumeRef.current = currentVolume;
+      currentSetVolume(0);
+    } else {
+      currentSetVolume(mutedVolumeRef.current > 0 ? mutedVolumeRef.current : 1);
+    }
+  }, [currentSetVolume, currentVolume]);
+
   const value = useMemo<MediaPlaybackValue>(() => ({
     session: videoPlayback?.session ?? session,
     item: videoPlayback?.item ?? item,
@@ -638,13 +669,19 @@ export function MediaPlaybackProvider({
     bufferedSeconds: videoPlayback?.bufferedSeconds ?? 0,
     videoDisplay: videoPlayback ? {
       fit: videoPlayback.fit,
+      ambient: videoPlayback.ambient,
       fullscreen: videoPlayback.fullscreen,
       subtitles: videoPlayback.subtitles,
       subtitleTrack: videoPlayback.subtitleTrack,
       subtitleError: videoPlayback.subtitleError,
+      subtitleStyle: videoPlayback.subtitleStyle,
+      controlsVisible: videoPlayback.controlsVisible,
       setFit: videoPlayback.setFit,
+      setAmbient: videoPlayback.setAmbient,
       toggleFullscreen: videoPlayback.toggleFullscreen,
       setSubtitle: videoPlayback.setSubtitle,
+      setSubtitleStyle: videoPlayback.setSubtitleStyle,
+      canPictureInPicture: videoPlayback.canPictureInPicture,
       togglePictureInPicture: videoPlayback.togglePictureInPicture,
     } : null,
     openWork,
@@ -655,6 +692,7 @@ export function MediaPlaybackProvider({
     selectOrdinal: videoPlayback?.selectOrdinal ?? selectOrdinal,
     step: videoPlayback?.step ?? step,
     setVolume: videoPlayback?.setVolume ?? setVolume,
+    toggleMute,
     setRepeatMode: videoPlayback?.setRepeatMode ?? setRepeatMode,
     setShuffle: videoPlayback?.setShuffle ?? setShuffle,
     close,
@@ -664,28 +702,18 @@ export function MediaPlaybackProvider({
     analyser, close, decodeFailure, durationSeconds, enableAnalyser, error, item, items, openVoiceQueue, openWork,
     playable.failure, playable.loading,
     playing, positionSeconds, publishVideoPlayback, releaseVideoPlayback, seek, selectOrdinal, session,
-    setRepeatMode, setShuffle, setVolume, skip, step, toggle, videoPlayback, volume,
+    setRepeatMode, setShuffle, setVolume, skip, step, toggle, toggleMute, videoPlayback, volume,
   ]);
 
-  const mutedVolumeRef = useRef(0);
   const shortcutSession = videoPlayback?.session ?? session;
-  const shortcutVolume = videoPlayback?.volume ?? volume;
-  const shortcutSetVolume = videoPlayback?.setVolume ?? setVolume;
   const shortcutStep = videoPlayback?.step ?? step;
   const shortcutToggle = videoPlayback?.toggle ?? toggle;
   const playbackHandlers = useMemo(() => ({
     playPause: () => shortcutToggle(),
     nextTrack: () => shortcutStep(1),
     previousTrack: () => shortcutStep(-1),
-    toggleMute: () => {
-      if (shortcutVolume > 0) {
-        mutedVolumeRef.current = shortcutVolume;
-        shortcutSetVolume(0);
-      } else {
-        shortcutSetVolume(mutedVolumeRef.current > 0 ? mutedVolumeRef.current : 1);
-      }
-    },
-  }), [shortcutSetVolume, shortcutStep, shortcutToggle, shortcutVolume]);
+    toggleMute,
+  }), [shortcutStep, shortcutToggle, toggleMute]);
   useBoundKeys("playback", playbackHandlers, { enabled: Boolean(shortcutSession) });
 
   return (

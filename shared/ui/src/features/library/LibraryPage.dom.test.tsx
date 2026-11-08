@@ -259,12 +259,12 @@ describe("Library executable actions", () => {
     expect(gateway.launchInstallation).not.toHaveBeenCalled();
   });
 
-  it("keeps Play disabled while the executable launch is active", async () => {
+  it("turns Play into Stop while the executable launch is active", async () => {
     const { gateway } = renderExecutableLibrary({ running: true });
 
-    const running = await screen.findByRole("button", { name: "Running" }) as HTMLButtonElement;
-    expect(running.disabled).toBe(true);
-    fireEvent.click(running);
+    const stop = await screen.findByRole("button", { name: "Stop" });
+    fireEvent.click(stop);
+    await waitFor(() => expect(gateway.stopLaunch).toHaveBeenCalledWith("launch-app"));
     expect(gateway.launchInstallation).not.toHaveBeenCalled();
   });
 
@@ -559,6 +559,7 @@ function renderExecutableLibrary({
     readPreparedPackages: vi.fn().mockResolvedValue([preparedExecutable(executable.id)]),
     readInstallationHealths: vi.fn().mockResolvedValue([]),
     launchInstallation: vi.fn().mockReturnValue(launchResult),
+    stopLaunch: vi.fn().mockResolvedValue(executableActivity("stopping")),
     mediaAssetUrl: vi.fn().mockReturnValue(""),
     openInstallationFolder: vi.fn().mockResolvedValue(undefined),
   } as unknown as LibraryGateway;

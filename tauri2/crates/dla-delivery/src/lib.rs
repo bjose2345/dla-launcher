@@ -6,6 +6,7 @@
 mod client;
 mod locator;
 mod names;
+mod overlays;
 mod transfer;
 
 #[cfg(test)]
@@ -16,4 +17,5 @@ mod service_tests;
 pub use client::{Credentials, DeliveryClient, Dial, Endpoint, Entry, PRIVATE_DOWNLOADS};
 pub use locator::{ARCHIVE_ROOT, MANIFEST_NAME, ManifestLocator};
 pub use names::local_name;
+pub use overlays::OverlayClient;
 pub use transfer::{FileTransfer, PART_SUFFIX};

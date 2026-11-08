@@ -1,3 +1,4 @@
+import { operationIsTerminal } from "../../app/operationStage";
 import type { CatalogWork } from "../catalog/types";
 
 export type InstallationPlatform = "windows" | "linux" | "macos" | "android" | "ios" | "unknown";
@@ -231,6 +232,24 @@ export interface MaintenanceCleanupReport {
   retainedPaths: string[];
 }
 
+/** A work's file names that an older install read wrongly: Japanese names
+ * that turned into symbols. */
+export interface FileNameReport {
+  installationId: string;
+  /** Names still wrong. */
+  wrong: number;
+  /** Names given back just now. */
+  fixed: number;
+}
+
+export interface LibraryFileNameReport {
+  /** Works whose names were fixed. */
+  works: number;
+  files: number;
+  /** Works left as they were: in use, or a fixed name already taken. */
+  skipped: number;
+}
+
 export type LaunchActivityStatus =
   | "starting"
   | "running"
@@ -397,11 +416,34 @@ export interface NativeVideoViewport {
   height: number;
 }
 
+/** A part of the page over the video that must stay visible, in CSS pixels. */
+export interface NativeVideoRectangle {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Corner radius, for a round control. */
+  radius?: number;
+}
+
 export interface NativeVideoSubtitle {
   index: number;
   label: string;
   language: string | null;
   format: "web_vtt" | "sub_rip" | "sub_station_alpha" | "sami";
+}
+
+export type NativeVideoSubtitleColor = "white" | "yellow" | "cyan";
+
+/** How subtitles are drawn, on every player: the native surfaces and the overlay. */
+export interface NativeVideoSubtitleStyle {
+  /** Text size as a factor of the normal size, 1 being normal. */
+  size: number;
+  color: NativeVideoSubtitleColor;
+  /** Text opacity, 0 to 1. */
+  opacity: number;
+  /** Opacity of the black box behind the text, 0 to 1; 0 is no box. */
+  background: number;
 }
 
 export interface NativeVideoPlaylistItem {
@@ -429,6 +471,9 @@ export interface OpenNativeVideoRequest {
   completed: boolean;
   playlist: NativeVideoPlaylistItem[];
   subtitleLabel: string | null;
+  subtitleStyle: NativeVideoSubtitleStyle;
+  /** Whether the letterbox bands carry a blurred copy of the picture. */
+  ambient: boolean;
   labels: {
     back: string;
     player: string;
@@ -439,24 +484,31 @@ export interface OpenNativeVideoRequest {
     nowPlaying: string;
     playbackFailed: string;
     codecUnsupported: string;
+    exitFullscreen: string;
     retry: string;
   };
 }
 
 export interface NativeVideoControlRequest {
   sessionId: string;
-  command: "play" | "pause" | "seek" | "volume" | "muted" | "fit" | "retry" | "fullscreen" | "subtitle";
+  command: "play" | "pause" | "seek" | "volume" | "muted" | "fit" | "retry" | "fullscreen" | "subtitle" | "rate"
+    | "subtitle_style" | "ambient";
   value?: number;
+  /** A seek while scrubbing: quick, landing on the nearest keyframe. */
+  preview?: boolean;
+  subtitleStyle?: NativeVideoSubtitleStyle;
   enabled?: boolean;
   fit?: NativeVideoFit;
   subtitleTrack?: number;
+  /** The command came from a click on the picture: the player shows the play or pause badge over it. */
+  badge?: boolean;
 }
 
 export interface NativeVideoState {
   surfaceId: string;
   sessionId: string;
   ordinal: number;
-  kind: "loading" | "metadata" | "ready" | "playing" | "paused" | "time" | "waiting" | "ended" | "error" | "interaction" | "fullscreen" | "subtitle" | "subtitle_error" | "back" | "choose";
+  kind: "loading" | "metadata" | "ready" | "playing" | "paused" | "time" | "waiting" | "ended" | "error" | "interaction" | "fullscreen" | "subtitle" | "subtitle_error" | "back" | "choose" | "volume";
   positionSeconds: number;
   durationSeconds: number | null;
   paused: boolean;
@@ -466,6 +518,8 @@ export interface NativeVideoState {
   subtitleTrack: number | null;
   actionOrdinal: number | null;
   fullscreen: boolean;
+  /** The surface's own volume after the user changed it there (kind "volume"). */
+  volume?: number | null;
 }
 
 export interface ManualLaunchSelection {
@@ -515,6 +569,44 @@ export interface InstallationReviewRequest {
   contentItems: ContentItemOverride[];
 }
 
+export interface LaunchOptions {
+  /** Start the work as if Windows were Japanese, through Locale Remulator. */
+  japaneseLocale: boolean;
+  /** Only Windows offers it: Wine always runs games in Japanese. */
+  japaneseLocaleAvailable: boolean;
+  /** The Visual C++ runtimes Locale Remulator needs and Windows lacks. */
+  missingRuntimes: VisualCppRuntime[];
+  /** A video player of the user's to play this work's videos in, or none for the built-in player. */
+  videoPlayer: string | null;
+  /** An audio player of the user's to play this work's tracks in, or none for the built-in player. */
+  audioPlayer: string | null;
+  /** How Linux shows the game's window; null leaves it as the game made it. */
+  windowScale: WindowScale | null;
+  /** Linux with gamescope installed can enlarge a game's window. */
+  windowScaleAvailable: boolean;
+  /** The refresh rate of the enlarged game in Hz; null is the launcher's default. */
+  refreshRate: number | null;
+}
+
+export interface LaunchOptionsRequest {
+  japaneseLocale: boolean;
+  videoPlayer: string | null;
+  audioPlayer: string | null;
+  windowScale: WindowScale | null;
+  refreshRate: number | null;
+}
+
+/**
+ * A small game's window enlarged through gamescope: full screen fitted, full screen
+ * by whole numbers so its pixels stay sharp, or a window of the given size.
+ */
+export type WindowScale = "fit" | "integer" | `${number}x${number}`;
+
+/** Which of a work's media an external player is for. */
+export type MediaPlayerKind = "audio" | "video";
+
+export type VisualCppRuntime = "x64" | "x86";
+
 export interface LibraryGateway {
   readShelves(): Promise<LibraryShelves>;
   readWorkPreference(workCode: string): Promise<WorkPreference | null>;
@@ -549,10 +641,24 @@ export interface LibraryGateway {
   uninstallInstallation(installationId: string): Promise<void>;
   /** Opens the work's folder in the system file manager, on desktop. */
   openInstallationFolder?(installationId: string): Promise<void>;
+  /** How a work starts, on desktop. */
+  readLaunchOptions?(installationId: string): Promise<LaunchOptions>;
+  saveLaunchOptions?(installationId: string, options: LaunchOptionsRequest): Promise<LaunchOptions>;
+  /** Lets the user pick a player program; nothing when they cancel. */
+  selectMediaPlayer?(): Promise<string | null>;
+  /** Plays the work's videos or tracks in the player chosen for them, the given one first. */
+  playInPlayer?(installationId: string, kind: MediaPlayerKind, ordinal: number | null): Promise<void>;
+  /** Opens a download the launcher points to, such as Microsoft's runtime. */
+  openWebsite?(url: string): Promise<void>;
   cleanupMaintenance(): Promise<MaintenanceCleanupReport>;
+  /** Finds and fixes file names an older install read wrongly, on desktop. */
+  checkFileNames?(installationId: string): Promise<FileNameReport>;
+  fixFileNames?(installationId: string): Promise<FileNameReport>;
   launchInstallation(installationId: string): Promise<LaunchActivity>;
   stopLaunch(activityId: string): Promise<LaunchActivity>;
   listRecentLaunches(limit: number): Promise<LaunchActivity[]>;
+  /** Reports a launch each time its stored state changes. */
+  subscribeLaunchActivity?(listener: (activity: LaunchActivity) => void): Promise<() => void>;
   listInstallationLaunchHistory(
     installationId: string,
     limit: number,
@@ -583,8 +689,38 @@ export interface LibraryGateway {
   installationImageUrl(installationId: string, relativePath: string): string;
   /** A small copy of an image item, made once and kept by the app. */
   mediaThumbnailUrl(sessionId: string, ordinal: number): string;
+  /** The sidecar subtitle files beside a video, for the page's own player. */
+  readVideoSubtitles?(sessionId: string, ordinal: number): Promise<NativeVideoSubtitle[]>;
+  /** A subtitle file as WebVTT, for a `<track>` of the page's own player. */
+  videoSubtitleUrl?(sessionId: string, ordinal: number, trackIndex: number): string;
   openNativeVideo?(request: OpenNativeVideoRequest): Promise<OpenNativeVideoResponse>;
-  updateNativeVideoViewport?(sessionId: string, surfaceId: string, viewport: NativeVideoViewport): Promise<void>;
+  /**
+   * Who draws the player's bar with the native video surface: the surface
+   * itself (a webview window), or the page, above a surface that nothing can
+   * be drawn over (the Chromium build's GStreamer window). Surface by default.
+   */
+  nativeVideoChrome?: "surface" | "page";
+  /**
+   * How the audio element gets its bytes: streamed from the media URL with
+   * range requests, or the whole track fetched into a blob first, for a
+   * webview that cannot stream the private protocol (WebKitGTK, ADR 0028).
+   * Blob by default.
+   */
+  audioDelivery?: MediaDelivery;
+  /**
+   * How the reader gets a PDF: "stream" reads the byte ranges the shown pages
+   * need; "blob" fetches the whole file first, for a webview that cannot serve
+   * ranges from the media protocol. Streaming when absent.
+   */
+  documentDelivery?: MediaDelivery;
+  /** Opens the video in the system's video player, for files the launcher cannot play. */
+  openVideoExternally?(sessionId: string, ordinal: number): Promise<void>;
+  updateNativeVideoViewport?(
+    sessionId: string,
+    surfaceId: string,
+    viewport: NativeVideoViewport,
+    obstructions?: NativeVideoRectangle[],
+  ): Promise<void>;
   controlNativeVideo?(request: NativeVideoControlRequest): Promise<void>;
   closeNativeVideo?(sessionId: string, surfaceId: string): Promise<void>;
   subscribeNativeVideoState?(
@@ -603,12 +739,10 @@ export interface LibraryGateway {
   ): Promise<() => void>;
 }
 
+export type MediaDelivery = "stream" | "blob";
+
 export function launchActivityIsActive(status: LaunchActivityStatus): boolean {
   return status === "starting" || status === "running" || status === "stopping";
-}
-
-export function packagePreparationIsTerminal(stage: PackagePreparationStage | undefined): boolean {
-  return stage === "completed" || stage === "cancelled" || stage === "failed";
 }
 
 export function packagePreparationIsIndeterminate(stage: PackagePreparationStage | undefined): boolean {
@@ -645,8 +779,8 @@ export function mergePackagePreparationProgress(
 ): PackagePreparationProgress | null {
   if (!incoming) return current ?? null;
   if (!current || current.operationId !== incoming.operationId) return incoming;
-  if (packagePreparationIsTerminal(current.stage)) return current;
-  if (packagePreparationIsTerminal(incoming.stage)) return incoming;
+  if (operationIsTerminal(current.stage)) return current;
+  if (operationIsTerminal(incoming.stage)) return incoming;
   const currentStage = packagePreparationStageOrder[current.stage];
   const incomingStage = packagePreparationStageOrder[incoming.stage];
   if (incomingStage < currentStage) return current;
@@ -665,10 +799,10 @@ export function packagePreparationNeedsPreparedRefresh(
   installationId: string,
 ): boolean {
   return progress?.installationId === installationId
-    && packagePreparationIsTerminal(progress.stage);
+    && operationIsTerminal(progress.stage);
 }
 
-export const manageTabs = ["general", "files"] as const;
+export const manageTabs = ["general", "files", "display", "translation"] as const;
 export type ManageTab = (typeof manageTabs)[number];
 
 export type OwnWorkKind = "images" | "manga" | "game" | "voice" | "video" | "document";

@@ -2,7 +2,8 @@ import { Pause, Play, RotateCcw, Trash2, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { usePresentation } from "../../preferences";
+import { ProgressBar } from "../../app/ProgressBar";
+import { usePresentation } from "../../preferences/PresentationProvider";
 import { jobProgressFraction, jobStatusText, problemText } from "./deliveryText";
 import { acceptDeliveryView } from "./useDelivery";
 import {
@@ -47,11 +48,10 @@ export function DeliveryJobControls({
     <div className={`delivery-job delivery-job-${job.status}`}>
       <p className="delivery-job-status" role="status">{jobStatusText(t, locale, job, progress)}</p>
       {(running || job.status === "installing" || job.status === "paused") && (
-        <progress
-          className="delivery-job-progress"
-          max={1}
-          value={job.status === "installing" ? undefined : fraction}
-          aria-label={t("delivery.progressLabel", { code: job.workCode })}
+        <ProgressBar
+          percent={job.status === "installing" ? null : fraction * 100}
+          state={job.status === "paused" ? "paused" : job.status === "queued" ? "waiting" : "running"}
+          label={t("delivery.progressLabel", { code: job.workCode })}
         />
       )}
       {job.status === "failed" && job.detail && (job.problem === "install" || job.problem === "unavailable") && (
@@ -62,23 +62,23 @@ export function DeliveryJobControls({
       )}
       <div className="delivery-job-actions">
         {running && (
-          <button className="delivery-button" type="button" disabled={pending} onClick={() => void run(gateway.pause)}>
+          <button className="app-button is-quiet" type="button" disabled={pending} onClick={() => void run(gateway.pause)}>
             <Pause aria-hidden="true" />{t("delivery.pause")}
           </button>
         )}
         {stopped && (
-          <button className="delivery-button" type="button" disabled={pending} onClick={() => void run(gateway.resume)}>
+          <button className="app-button is-quiet" type="button" disabled={pending} onClick={() => void run(gateway.resume)}>
             {job.status === "failed" ? <RotateCcw aria-hidden="true" /> : <Play aria-hidden="true" />}
             {job.status === "failed" ? t("delivery.retry") : t("delivery.resume")}
           </button>
         )}
         {(running || stopped) && (
-          <button className="delivery-button delivery-button-danger" type="button" disabled={pending} onClick={() => void run(gateway.cancel)}>
+          <button className="app-button is-quiet is-danger" type="button" disabled={pending} onClick={() => void run(gateway.cancel)}>
             <X aria-hidden="true" />{t("delivery.cancel")}
           </button>
         )}
         {finished && (
-          <button className="delivery-button" type="button" disabled={pending} onClick={() => void run(gateway.remove)}>
+          <button className="app-button is-quiet" type="button" disabled={pending} onClick={() => void run(gateway.remove)}>
             <Trash2 aria-hidden="true" />{t("delivery.remove")}
           </button>
         )}

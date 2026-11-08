@@ -1,6 +1,7 @@
 import { usePresentation } from "../../preferences/PresentationProvider";
 import type { CatalogDetailGateway, CatalogRom } from "./types";
 import { RomFileTree } from "./RomFileTree";
+import { pluralText } from "../../i18n/pluralText";
 
 export function WorkFilesInfo({
   workCode,
@@ -28,9 +29,7 @@ export function WorkFilesInfo({
             </div>
             <div className="rom-header">
               <span className="rom-header-count">
-                {t(items.length === 1 ? "detail.files.countOne" : "detail.files.countMany", {
-                  count: items.length.toLocaleString(locale),
-                })}
+                {pluralText(t, locale, items.length, "detail.files.countOne", "detail.files.countMany")}
               </span>
             </div>
           </div>

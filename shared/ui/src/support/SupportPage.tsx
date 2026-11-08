@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Copy, ExternalLink, FileArchive, LifeBuoy, LoaderCircle } from "lucide-react";
 import { useState } from "react";
 
+import { copyText } from "../app/clipboard";
 import { formatByteSize } from "../features/importer/CatalogImportPage";
 import { usePresentation } from "../preferences/PresentationProvider";
 import type { SupportGateway } from "./types";
@@ -21,7 +22,7 @@ export function SupportPage({ gateway }: { gateway: SupportGateway }) {
   const copy = async () => {
     if (!status) return;
     try {
-      await navigator.clipboard.writeText(status.summary);
+      await copyText(status.summary);
       setFeedback("copied");
     } catch {
       setFeedback("failed");
@@ -49,8 +50,8 @@ export function SupportPage({ gateway }: { gateway: SupportGateway }) {
 
   return (
     <main className="support-page">
-      <header className="support-page-masthead">
-        <span>{t("nav.support")}</span>
+      <header className="page-masthead support-page-masthead">
+        <span className="page-eyebrow">{t("nav.support")}</span>
         <h1>{t("support.pageTitle")}</h1>
         <p>{t("support.pageDescription")}</p>
       </header>

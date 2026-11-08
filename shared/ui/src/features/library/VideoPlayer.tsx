@@ -1,15 +1,17 @@
 import {
   AlertTriangle,
-  ArrowLeft,
   ChevronRight,
+  ExternalLink,
   Film,
-  LoaderCircle,
   PanelRightOpen,
   Pause,
+  Play,
   RotateCw,
   Video,
+  X,
 } from "lucide-react";
 import {
+  type CSSProperties,
   type SyntheticEvent,
   useCallback,
   useEffect,
@@ -18,6 +20,10 @@ import {
   useState,
 } from "react";
 
+import { errorMessage } from "../../app/errorMessage";
+import { useImageSourceChain } from "../../app/useImageSourceChain";
+import { BackButton } from "../../app/BackButton";
+import { useAmbientFill } from "./useAmbientFill";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import { useBoundKeys } from "../../preferences/KeyBindingsProvider";
 import { isInteractiveTarget } from "../../preferences/keyBindings";
@@ -25,6 +31,7 @@ import {
   clampPlaybackPosition,
   clampPlaybackRate,
   restorePlaybackPosition,
+  VOLUME_WHEEL_STEP,
 } from "./audioPlayer";
 import { assetFailureMessageKey, useMediaAssetProbe } from "./mediaAsset";
 import { useMediaPlayback, type VideoPlaybackRegistration } from "./MediaPlaybackProvider";
@@ -39,16 +46,20 @@ import type {
   MediaSession,
   MediaSessionItem,
   NativeVideoControlRequest,
+  NativeVideoRectangle,
   NativeVideoState,
   NativeVideoSubtitle,
 } from "./types";
 import {
   bufferedAhead,
   clampVideoVolume,
+  readSubtitleStyle,
   readVideoPlayerPreferences,
   videoPlaybackFailure,
   videoStepTarget,
+  writeSubtitleStyle,
   writeVideoPlayerPreferences,
+  type SubtitleStyle,
   type VideoFit,
   type VideoPlaybackFailure,
   type VideoPlayerPreferences,
@@ -57,6 +68,31 @@ import {
 
 const CONTROLS_HIDE_DELAY_MS = 2_600;
 const SKIP_SECONDS = 15;
+/** How long the play or pause badge stays, as YouTube's. */
+const BADGE_MS = 500;
+
+const CUE_COLORS: Record<SubtitleStyle["color"], string> = {
+  white: "255 255 255",
+  yellow: "255 228 77",
+  cyan: "127 233 255",
+};
+
+/** The cue variables of the page's own tracks, as the surface document sets them. */
+function cueStyle(style: SubtitleStyle): CSSProperties {
+  return {
+    "--cue-size": `calc(clamp(16px, 2.4vw, 34px) * ${style.size})`,
+    "--cue-color": `rgb(${CUE_COLORS[style.color] ?? CUE_COLORS.white} / ${style.opacity})`,
+    "--cue-background": `rgba(0, 0, 0, ${style.background})`,
+  } as CSSProperties;
+}
+const NATIVE_SEEK_TOLERANCE_SECONDS = 0.75;
+const NATIVE_SEEK_SETTLE_MS = 4_000;
+
+interface PendingNativeSeek {
+  target: number;
+  at: number;
+  preview: boolean;
+}
 
 interface VideoPlayerProps {
   gateway: VideoPlayerGateway;
@@ -115,8 +151,21 @@ export function VideoPlayer({
   const publishVideoPlayback = playback.publishVideoPlayback;
   const releaseVideoPlayback = playback.releaseVideoPlayback;
   const nativeGateway = useMemo(() => resolveNativeVideoGateway(gateway), [gateway]);
+  // The page draws the bar unless the native surface draws its own.
+  const pageChrome = !nativeGateway || gateway.nativeVideoChrome === "page";
   const rootRef = useRef<HTMLElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const exitFullscreenRef = useRef<HTMLButtonElement>(null);
+  // The play or pause badge a click on the picture shows, as YouTube does; a
+  // native picture draws its own (the surface document, the GStreamer frame).
+  const [badge, setBadge] = useState<{ kind: "play" | "pause"; nonce: number } | null>(null);
+  useEffect(() => {
+    if (!badge) return undefined;
+    const timer = window.setTimeout(() => setBadge(null), BADGE_MS + 100);
+    return () => window.clearTimeout(timer);
+  }, [badge]);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const ambientRef = useRef<HTMLCanvasElement>(null);
   const hideTimerRef = useRef<number | null>(null);
   const shouldPlayRef = useRef(autoPlay);
   const playAttemptRef = useRef(0);
@@ -125,6 +174,7 @@ export function VideoPlayer({
   const readyRef = useRef(false);
   const restoringRef = useRef(false);
   const nativeReportedSecondRef = useRef(-1);
+  const nativeSeekRef = useRef<PendingNativeSeek | null>(null);
   const [preferences, setPreferences] = useState<VideoPlayerPreferences>(() => (
     readVideoPlayerPreferences(session.installationId)
   ));
@@ -138,18 +188,66 @@ export function VideoPlayer({
   const [controlsVisible, setControlsVisible] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const leaveFullscreenRef = useRef<() => void>(() => undefined);
+  leaveFullscreenRef.current = () => {
+    if (!fullscreen) return;
+    if (nativeGateway) {
+      void nativeGateway.controlNativeVideo({ sessionId: session.id, command: "fullscreen", enabled: false }).catch(() => undefined);
+    } else if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined);
+    }
+  };
+  // Leaving the player gives the window back; nothing else of the app is fullscreen.
+  useEffect(() => () => leaveFullscreenRef.current(), []);
   const [subtitles, setSubtitles] = useState<NativeVideoSubtitle[]>([]);
   const [subtitleTrack, setSubtitleTrack] = useState<number | null>(null);
   const [subtitleError, setSubtitleError] = useState(false);
+  const [subtitleStyle, setSubtitleStyleState] = useState<SubtitleStyle>(() => readSubtitleStyle());
   const [playbackFailure, setPlaybackFailure] = useState<VideoPlaybackFailure | null>(null);
   const [playError, setPlayError] = useState("");
+  const [externalError, setExternalError] = useState("");
   const [retryVersion, setRetryVersion] = useState(0);
   const [bufferedSeconds, setBufferedSeconds] = useState(0);
   const currentIndex = Math.max(0, items.findIndex((item) => item.ordinal === currentOrdinal));
   const currentItem = items[currentIndex];
   const source = currentItem ? gateway.mediaAssetUrl(session.id, currentItem.ordinal) : "";
+  useAmbientFill(videoRef, ambientRef, nativeGateway || !preferences.ambient ? "" : `${source}:${retryVersion}`);
   const probe = useMediaAssetProbe(source, retryVersion);
+  // The page's own player lists the sidecar subtitles itself; a native picture
+  // reports them as it opens. The remembered label picks the first track.
+  const subtitleLabelRef = useRef(preferences.subtitleLabel);
+  subtitleLabelRef.current = preferences.subtitleLabel;
+  const currentOrdinalForSubtitles = currentItem?.ordinal ?? null;
+  useEffect(() => {
+    if (nativeGateway || currentOrdinalForSubtitles === null || !gateway.readVideoSubtitles) return undefined;
+    let disposed = false;
+    setSubtitles([]);
+    setSubtitleTrack(null);
+    setSubtitleError(false);
+    gateway.readVideoSubtitles(session.id, currentOrdinalForSubtitles).then((found) => {
+      if (disposed) return;
+      setSubtitles(found);
+      const wanted = subtitleLabelRef.current?.toLocaleLowerCase();
+      setSubtitleTrack(found.find((subtitle) => subtitle.label.toLocaleLowerCase() === wanted)?.index ?? null);
+    }).catch(() => {
+      if (!disposed) setSubtitleError(true);
+    });
+    return () => {
+      disposed = true;
+    };
+  }, [currentOrdinalForSubtitles, gateway, nativeGateway, session.id]);
+  useEffect(() => {
+    const element = videoRef.current;
+    if (nativeGateway || !element) return;
+    const tracks = element.textTracks;
+    for (let index = 0; index < tracks.length; index += 1) {
+      const track = tracks[index];
+      const own = subtitles[index];
+      if (track) track.mode = own && own.index === subtitleTrack ? "showing" : "disabled";
+    }
+  }, [nativeGateway, retryVersion, source, subtitles, subtitleTrack]);
   const loading = probe.loading || mediaLoading;
+  const controlsShowing = controlsVisible || drawerOpen || !playing;
   const failure = probe.failure;
   const effectiveVolume = preferences.muted ? 0 : preferences.volume;
 
@@ -161,7 +259,7 @@ export function VideoPlayer({
       await nativeGateway.controlNativeVideo({ sessionId: session.id, ...request });
       return true;
     } catch (error) {
-      setPlayError(error instanceof Error ? error.message : String(error));
+      setPlayError(errorMessage(error));
       return false;
     }
   }, [nativeGateway, session.id]);
@@ -205,12 +303,12 @@ export function VideoPlayer({
     }
   }, [currentItem, durationSeconds, nativeGateway, onProgress]);
 
-  const attemptPlay = useCallback(async () => {
+  const attemptPlay = useCallback(async (fromPicture = false) => {
     shouldPlayRef.current = true;
     if (nativeGateway) {
       if (probe.failure || playbackFailure) return false;
       setPlayError("");
-      return controlNativeVideo({ command: "play" });
+      return controlNativeVideo(fromPicture ? { command: "play", badge: true } : { command: "play" });
     }
     const element = videoRef.current;
     if (
@@ -241,7 +339,7 @@ export function VideoPlayer({
         setPlayError("");
         return false;
       }
-      setPlayError(error instanceof Error ? error.message : String(error));
+      setPlayError(errorMessage(error));
       return false;
     }
   }, [controlNativeVideo, nativeGateway, playbackFailure, probe.failure]);
@@ -255,21 +353,22 @@ export function VideoPlayer({
     if (shouldPlayRef.current) void attemptPlay();
   }, [attemptPlay]);
 
-  const toggle = useCallback(() => {
+  const toggle = useCallback((fromPicture = false) => {
     if (nativeGateway) {
       if (probe.failure || playbackFailure) return;
       if (playing) {
         playAttemptRef.current += 1;
         shouldPlayRef.current = false;
         setPlaying(false);
-        void controlNativeVideo({ command: "pause" });
+        void controlNativeVideo(fromPicture ? { command: "pause", badge: true } : { command: "pause" });
       } else {
-        void attemptPlay();
+        void attemptPlay(fromPicture);
       }
       return;
     }
     const element = videoRef.current;
     if (!element || probe.failure || playbackFailure) return;
+    if (fromPicture) setBadge({ kind: element.paused ? "play" : "pause", nonce: Date.now() });
     if (element.paused) {
       void attemptPlay();
       return;
@@ -284,8 +383,10 @@ export function VideoPlayer({
     const element = videoRef.current;
     const bounded = clampPlaybackPosition(next, durationSeconds);
     setPositionSeconds(bounded);
-    if (nativeGateway) void controlNativeVideo({ command: "seek", value: bounded });
-    else if (element && readyRef.current) element.currentTime = bounded;
+    if (nativeGateway) {
+      nativeSeekRef.current = { target: bounded, at: performance.now(), preview: !persistProgress };
+      void controlNativeVideo({ command: "seek", value: bounded, ...(persistProgress ? {} : { preview: true }) });
+    } else if (element && readyRef.current) element.currentTime = bounded;
     if (persistProgress && currentItem) {
       onProgress(
         currentItem.ordinal,
@@ -308,6 +409,24 @@ export function VideoPlayer({
       void controlNativeVideo({ command: "muted", enabled: false });
     }
   }, [controlNativeVideo, nativeGateway]);
+  const volumeRef = useRef(preferences.volume);
+  volumeRef.current = preferences.volume;
+
+  // The wheel over the picture turns the volume, as desktop players do. A
+  // listener of its own, since React's wheel handlers cannot stop the page
+  // from scrolling.
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const onWheel = (event: WheelEvent) => {
+      if (isInteractiveTarget(event.target) || event.deltaY === 0) return;
+      event.preventDefault();
+      setVolume(volumeRef.current + (event.deltaY < 0 ? VOLUME_WHEEL_STEP : -VOLUME_WHEEL_STEP));
+      revealControls();
+    };
+    viewport.addEventListener("wheel", onWheel, { passive: false });
+    return () => viewport.removeEventListener("wheel", onWheel);
+  }, [revealControls, setVolume]);
 
   const toggleMute = useCallback(() => {
     setPreferences((current) => {
@@ -322,6 +441,11 @@ export function VideoPlayer({
     if (nativeGateway) void controlNativeVideo({ command: "fit", fit });
   }, [controlNativeVideo, nativeGateway]);
 
+  const setAmbient = useCallback((ambient: boolean) => {
+    setPreferences((current) => ({ ...current, ambient }));
+    if (nativeGateway) void controlNativeVideo({ command: "ambient", enabled: ambient });
+  }, [controlNativeVideo, nativeGateway]);
+
   const setSubtitle = useCallback((track: number | null) => {
     const selected = track === null
       ? null
@@ -334,6 +458,12 @@ export function VideoPlayer({
       void controlNativeVideo({ command: "subtitle", subtitleTrack: selected?.index });
     }
   }, [controlNativeVideo, nativeGateway, subtitles]);
+
+  const setSubtitleStyle = useCallback((style: SubtitleStyle) => {
+    setSubtitleStyleState(style);
+    writeSubtitleStyle(style);
+    if (nativeGateway) void controlNativeVideo({ command: "subtitle_style", subtitleStyle: style });
+  }, [controlNativeVideo, nativeGateway]);
 
   const step = useCallback((direction: -1 | 1) => {
     const next = videoStepTarget(items, currentOrdinal, direction, repeatMode);
@@ -461,6 +591,11 @@ export function VideoPlayer({
         }
         return;
       }
+      if (event.key === "Escape" && fullscreen) {
+        event.preventDefault();
+        void toggleFullscreen();
+        return;
+      }
       if (isInteractiveTarget(event.target)) return;
       revealControls();
       if (event.defaultPrevented) return;
@@ -472,7 +607,19 @@ export function VideoPlayer({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [drawerOpen, durationSeconds, revealControls, seek]);
+  }, [drawerOpen, durationSeconds, fullscreen, revealControls, seek, toggleFullscreen]);
+
+  // In fullscreen the dock lies over the picture outside this page, so the
+  // whole document's pointer brings the controls back.
+  useEffect(() => {
+    if (!fullscreen) return;
+    document.addEventListener("mousemove", revealControls);
+    document.addEventListener("pointerdown", revealControls);
+    return () => {
+      document.removeEventListener("mousemove", revealControls);
+      document.removeEventListener("pointerdown", revealControls);
+    };
+  }, [fullscreen, revealControls]);
 
   const activeSession = useMemo<MediaSession>(() => ({
     ...session,
@@ -488,6 +635,21 @@ export function VideoPlayer({
     },
   }), [completed, currentOrdinal, durationSeconds, playing, positionSeconds, repeatMode, session, shuffle]);
 
+  // The dock calls the player through the registration. Its actions read the
+  // latest callbacks from this ref, so the new functions the page passes on
+  // every render (and it renders on every published registration) do not
+  // publish a new registration and loop.
+  const actionsRef = useRef({
+    toggle, seek, skip, selectOrdinal, step, setVolume, setFit, setAmbient, toggleFullscreen, setSubtitle, setSubtitleStyle,
+    controlNativeVideo, nativeGateway, onRepeatMode, onShuffle, onBack,
+  });
+  useEffect(() => {
+    actionsRef.current = {
+      toggle, seek, skip, selectOrdinal, step, setVolume, setFit, setAmbient, toggleFullscreen, setSubtitle, setSubtitleStyle,
+      controlNativeVideo, nativeGateway, onRepeatMode, onShuffle, onBack,
+    };
+  });
+
   const registration = useMemo<VideoPlaybackRegistration | null>(() => currentItem ? ({
     session: activeSession,
     item: currentItem,
@@ -500,25 +662,36 @@ export function VideoPlayer({
     error: probe.error || playError,
     failure,
     fit: preferences.fit,
+    ambient: preferences.ambient,
     fullscreen,
     subtitles,
     subtitleTrack,
     subtitleError,
-    toggle,
-    seek,
-    skip,
-    selectOrdinal,
-    step,
-    setVolume,
-    setRepeatMode: onRepeatMode,
-    setShuffle: onShuffle,
-    setFit,
-    toggleFullscreen: () => void toggleFullscreen(),
-    setSubtitle,
+    subtitleStyle,
+    controlsVisible: controlsShowing,
+    toggle: () => actionsRef.current.toggle(),
+    seek: (seconds: number, persistProgress?: boolean) => actionsRef.current.seek(seconds, persistProgress),
+    skip: (offsetSeconds: number) => actionsRef.current.skip(offsetSeconds),
+    selectOrdinal: (ordinal: number, positionSeconds?: number) => actionsRef.current.selectOrdinal(ordinal, positionSeconds),
+    step: (direction: -1 | 1) => actionsRef.current.step(direction),
+    setVolume: (volume: number) => actionsRef.current.setVolume(volume),
+    setRepeatMode: (mode: MediaRepeatMode) => actionsRef.current.onRepeatMode(mode),
+    setShuffle: (next: boolean) => actionsRef.current.onShuffle(next),
+    setFit: (fit: VideoFit) => actionsRef.current.setFit(fit),
+    setAmbient: (enabled: boolean) => actionsRef.current.setAmbient(enabled),
+    toggleFullscreen: () => void actionsRef.current.toggleFullscreen(),
+    setSubtitle: (track: number | null) => actionsRef.current.setSubtitle(track),
+    setSubtitleStyle: (style: SubtitleStyle) => actionsRef.current.setSubtitleStyle(style),
     setPlaybackRate: (rate: number) => {
+      const { controlNativeVideo: control, nativeGateway: native } = actionsRef.current;
+      if (native) {
+        void control({ command: "rate", value: clampPlaybackRate(rate) });
+        return;
+      }
       const element = videoRef.current;
       if (element) element.playbackRate = clampPlaybackRate(rate);
     },
+    canPictureInPicture: !nativeGateway && document.pictureInPictureEnabled === true,
     togglePictureInPicture: () => {
       const element = videoRef.current;
       if (!element || !document.pictureInPictureEnabled) return;
@@ -529,12 +702,11 @@ export function VideoPlayer({
       }
     },
     bufferedSeconds,
-    close: onBack,
+    close: () => actionsRef.current.onBack(),
   }) : null, [
-    activeSession, bufferedSeconds, currentItem, durationSeconds, effectiveVolume, failure, fullscreen, items, loading, onBack,
-    onRepeatMode, onShuffle, playError, playing, positionSeconds, probe.error, seek, selectOrdinal,
-    preferences.fit, setFit, setSubtitle, setVolume, skip, step, subtitles, subtitleError, subtitleTrack,
-    toggle, toggleFullscreen,
+    activeSession, bufferedSeconds, controlsShowing, currentItem, durationSeconds, effectiveVolume, failure, fullscreen, items, loading,
+    nativeGateway, playError, playing, positionSeconds, probe.error, preferences.ambient, preferences.fit, subtitles, subtitleError,
+    subtitleStyle, subtitleTrack,
   ]);
 
   useEffect(() => {
@@ -623,6 +795,13 @@ export function VideoPlayer({
       setSubtitleError(true);
       return;
     }
+    if (state.kind === "volume") {
+      if (typeof state.volume === "number") {
+        const volume = clampVideoVolume(state.volume);
+        setPreferences((current) => ({ ...current, volume, muted: false }));
+      }
+      return;
+    }
     if (state.kind === "interaction" || state.kind === "fullscreen") {
       revealControls();
       return;
@@ -630,7 +809,13 @@ export function VideoPlayer({
     const duration = state.durationSeconds && state.durationSeconds > 0
       ? state.durationSeconds
       : null;
-    const position = clampPlaybackPosition(state.positionSeconds, duration);
+    const settled = settleNativeSeek(
+      nativeSeekRef.current,
+      clampPlaybackPosition(state.positionSeconds, duration),
+      performance.now(),
+    );
+    nativeSeekRef.current = settled.pending;
+    const position = settled.position;
     setPositionSeconds(position);
     if (duration !== null) setDurationSeconds(duration);
     if (state.kind === "loading" || state.kind === "waiting") {
@@ -638,6 +823,10 @@ export function VideoPlayer({
       return;
     }
     if (state.kind === "metadata" || state.kind === "ready") {
+      // A new surface starts at normal speed; carry the chosen speed over.
+      if (state.kind === "ready" && playback.playbackRate !== 1) {
+        void controlNativeVideo({ command: "rate", value: playback.playbackRate });
+      }
       readyRef.current = state.kind === "ready" || state.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
       setMediaLoading(state.kind !== "ready");
       return;
@@ -712,6 +901,8 @@ export function VideoPlayer({
       itemName: mediaItemName(item),
     })),
     subtitleLabel: preferences.subtitleLabel,
+    subtitleStyle,
+    ambient: preferences.ambient,
     labels: {
       back: t("common.back"),
       player: t("media.player.video"),
@@ -722,11 +913,35 @@ export function VideoPlayer({
       nowPlaying: t("media.nowPlaying"),
       playbackFailed: t("media.video.playbackFailed"),
       codecUnsupported: t("media.video.codecUnsupported"),
+      exitFullscreen: t("media.video.exitFullscreen"),
       retry: t("media.video.retry"),
     },
   } : null;
 
-  const errorMessage = probe.failure
+  // The native surface cannot be drawn over, so it is told which controls lie
+  // over it in fullscreen and shows them through.
+  const measureObstructions = (): NativeVideoRectangle[] => {
+    if (!fullscreen || !controlsShowing) return [];
+    // The dock's menus open beside it, over the picture as well.
+    const dock = document.querySelector(".media-dock");
+    const menus = Array.from(document.querySelectorAll(".media-dock-menu-panel"));
+    return [exitFullscreenRef.current, dock, ...menus]
+      .filter((element): element is Element => element !== null)
+      .map((element) => ({
+        bounds: element.getBoundingClientRect(),
+        radius: Number.parseFloat(getComputedStyle(element).borderTopLeftRadius) || 0,
+      }))
+      .filter(({ bounds }) => bounds.width > 0 && bounds.height > 0)
+      .map(({ bounds, radius }) => ({
+        x: bounds.left,
+        y: bounds.top,
+        width: bounds.width,
+        height: bounds.height,
+        radius: Math.min(radius, bounds.width / 2, bounds.height / 2),
+      }));
+  };
+
+  const failureText = probe.failure
     ? t(assetFailureMessageKey(probe.failure))
     : playbackFailure === "unsupported" || playbackFailure === "decode"
       ? t("media.video.codecUnsupported")
@@ -736,18 +951,27 @@ export function VideoPlayer({
 
   return (
     <main
-      className={`video-player-page is-fit-${preferences.fit}${nativeGateway ? " is-native-video" : ""}${controlsVisible || drawerOpen || !playing ? " is-controls-visible" : " is-controls-hidden"}${drawerOpen ? " is-drawer-open" : ""}${fullscreen ? " is-fullscreen" : ""}`}
+      className={`video-player-page is-fit-${preferences.fit}${nativeGateway ? " is-native-video" : ""}${nativeGateway && pageChrome ? " is-page-chrome" : ""}${controlsShowing ? " is-controls-visible" : " is-controls-hidden"}${drawerOpen ? " is-drawer-open" : ""}${fullscreen ? " is-fullscreen" : ""}`}
       ref={rootRef}
       onMouseMove={revealControls}
       onPointerDown={revealControls}
       onFocusCapture={revealControls}
       onBlurCapture={revealControls}
     >
-      {!nativeGateway ? <header className="video-player-topbar">
-        <button className="video-player-back" type="button" disabled={closing} onClick={onBack}>
-          {closing ? <LoaderCircle className="library-spin" aria-hidden="true" /> : <ArrowLeft aria-hidden="true" />}
-          <span>{t("common.back")}</span>
+      {fullscreen && pageChrome ? (
+        <button
+          ref={exitFullscreenRef}
+          className="video-player-fullscreen-exit"
+          type="button"
+          title={t("media.video.exitFullscreen")}
+          aria-label={t("media.video.exitFullscreen")}
+          onClick={() => void toggleFullscreen()}
+        >
+          <X aria-hidden="true" />
         </button>
+      ) : null}
+      {pageChrome && !fullscreen ? <header className="video-player-topbar">
+        <BackButton closing={closing} onClick={onBack} />
         <div className="video-player-title">
           <span><Video aria-hidden="true" />{t("media.player.video")}</span>
           <strong>{installationName}</strong>
@@ -795,86 +1019,126 @@ export function VideoPlayer({
 
       <div className="video-player-workspace">
         <div
+          ref={viewportRef}
           className="video-player-viewport"
+          onClick={(event) => {
+            if (isInteractiveTarget(event.target)) return;
+            toggle(true);
+          }}
           onDoubleClick={(event) => {
             if (isInteractiveTarget(event.target)) return;
             void toggleFullscreen();
           }}
         >
-        {nativeGateway && nativeRequest && !errorMessage ? (
-          <NativeVideoSurface
-            key={`${source}:${retryVersion}`}
-            gateway={nativeGateway}
-            request={nativeRequest}
-            onState={handleNativeState}
-            onOpen={(response) => {
-              setSubtitles(response.subtitles);
-              setSubtitleError(false);
-              setSubtitleTrack(
-                response.subtitles.find((subtitle) => (
-                  subtitle.label.toLocaleLowerCase()
-                  === preferences.subtitleLabel?.toLocaleLowerCase()
-                ))?.index ?? null,
-              );
-            }}
-            onError={(error) => {
-              setMediaLoading(false);
-              setPlayError(error instanceof Error ? error.message : String(error));
-            }}
-          />
-        ) : null}
-        {!nativeGateway && currentItem ? (
-          <video
-            key={`${source}:${retryVersion}`}
-            ref={videoRef}
-            className="video-player-element"
-            src={source}
-            preload="metadata"
-            playsInline
-            loop={repeatMode === "one" || (repeatMode === "all" && items.length === 1)}
-            onLoadedMetadata={handleLoadedMetadata}
-            onCanPlay={() => {
-              setMediaLoading(false);
-              if (!readyRef.current && !restoringRef.current) finishPreparation();
-              else if (shouldPlayRef.current) void attemptPlay();
-            }}
-            onPlaying={() => setMediaLoading(false)}
-            onWaiting={() => setMediaLoading(true)}
-            onSeeked={handleSeeked}
-            onPlay={handlePlay}
-            onPause={handlePause}
-            onTimeUpdate={() => reportProgress()}
-            onProgress={(event) => {
-              const element = event.currentTarget;
-              const ranges = Array.from(
-                { length: element.buffered.length },
-                (_, index) => ({
-                  start: element.buffered.start(index),
-                  end: element.buffered.end(index),
-                }),
-              );
-              setBufferedSeconds(bufferedAhead(ranges, element.currentTime));
-            }}
-            onEnded={handleEnded}
-            onError={handleError}
-          />
-        ) : null}
+          {nativeGateway && nativeRequest && !failureText ? (
+            <NativeVideoSurface
+              key={`${source}:${retryVersion}`}
+              gateway={nativeGateway}
+              request={nativeRequest}
+              onState={handleNativeState}
+              obstructions={measureObstructions}
+              overlays={`${fullscreen}:${controlsShowing}`}
+              onOpen={(response) => {
+                setSubtitles(response.subtitles);
+                setSubtitleError(false);
+                setSubtitleTrack(
+                  response.subtitles.find((subtitle) => (
+                    subtitle.label.toLocaleLowerCase()
+                    === preferences.subtitleLabel?.toLocaleLowerCase()
+                  ))?.index ?? null,
+                );
+              }}
+              onError={(error) => {
+                setMediaLoading(false);
+                setPlayError(errorMessage(error));
+              }}
+            />
+          ) : null}
+          {badge ? (
+            <div key={badge.nonce} className="video-player-badge" aria-hidden="true">
+              {badge.kind === "pause" ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}
+            </div>
+          ) : null}
+          {!nativeGateway && currentItem && preferences.ambient ? (
+            <canvas className="video-player-ambient" ref={ambientRef} aria-hidden="true" />
+          ) : null}
+          {!nativeGateway && currentItem ? (
+            <video
+              key={`${source}:${retryVersion}`}
+              ref={videoRef}
+              className="video-player-element"
+              src={source}
+              crossOrigin="anonymous"
+              style={cueStyle(subtitleStyle)}
+              preload="metadata"
+              playsInline
+              loop={repeatMode === "one" || (repeatMode === "all" && items.length === 1)}
+              onLoadedMetadata={handleLoadedMetadata}
+              onCanPlay={() => {
+                setMediaLoading(false);
+                if (!readyRef.current && !restoringRef.current) finishPreparation();
+                else if (shouldPlayRef.current) void attemptPlay();
+              }}
+              onPlaying={() => setMediaLoading(false)}
+              onWaiting={() => setMediaLoading(true)}
+              onSeeked={handleSeeked}
+              onPlay={handlePlay}
+              onPause={handlePause}
+              onTimeUpdate={() => reportProgress()}
+              onProgress={(event) => {
+                const element = event.currentTarget;
+                const ranges = Array.from(
+                  { length: element.buffered.length },
+                  (_, index) => ({
+                    start: element.buffered.start(index),
+                    end: element.buffered.end(index),
+                  }),
+                );
+                setBufferedSeconds(bufferedAhead(ranges, element.currentTime));
+              }}
+              onEnded={handleEnded}
+              onError={handleError}
+            >
+              {subtitles.map((subtitle) => (
+                <track
+                  key={subtitle.index}
+                  kind="subtitles"
+                  label={subtitle.label}
+                  srcLang={subtitle.language ?? undefined}
+                  src={gateway.videoSubtitleUrl?.(session.id, currentItem.ordinal, subtitle.index) ?? ""}
+                  onError={() => setSubtitleError(true)}
+                />
+              ))}
+            </video>
+          ) : null}
 
-        {!nativeGateway && !hasStarted && !errorMessage ? (
+        {!nativeGateway && !hasStarted && !failureText ? (
           <VideoPoster
             urls={posterUrls}
             title={installationName}
             itemName={currentItem ? mediaItemName(currentItem) : t("media.noItems")}
           />
         ) : null}
-        {!nativeGateway ? <span className="video-player-vignette" aria-hidden="true" /> : null}
-
-        {errorMessage ? (
+        {failureText ? (
           <div className="video-player-error" role="alert">
             <AlertTriangle aria-hidden="true" />
-            <strong>{errorMessage}</strong>
+            <strong>{failureText}</strong>
             <span>{currentItem ? mediaItemName(currentItem) : t("media.noItems")}</span>
             <button type="button" onClick={retry}><RotateCw aria-hidden="true" />{t("media.video.retry")}</button>
+            {gateway.openVideoExternally && currentItem && !probe.failure ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setExternalError("");
+                  void gateway.openVideoExternally?.(session.id, currentItem.ordinal).catch((error: unknown) => {
+                    setExternalError(errorMessage(error));
+                  });
+                }}
+              >
+                <ExternalLink aria-hidden="true" />{t("media.video.openExternally")}
+              </button>
+            ) : null}
+            {externalError ? <small>{t("common.requestFailed", { error: externalError })}</small> : null}
           </div>
         ) : null}
 
@@ -891,11 +1155,7 @@ export function VideoPlayer({
 }
 
 function VideoPoster({ urls, title, itemName }: { urls: string[]; title: string; itemName: string }) {
-  const [candidate, setCandidate] = useState(0);
-
-  useEffect(() => setCandidate(0), [urls]);
-
-  const source = urls[candidate];
+  const { source, advance } = useImageSourceChain(urls);
   return (
     <div className="video-player-poster" aria-hidden="true">
       {source ? (
@@ -904,13 +1164,30 @@ function VideoPoster({ urls, title, itemName }: { urls: string[]; title: string;
           alt=""
           decoding="async"
           referrerPolicy="no-referrer"
-          onError={() => setCandidate((current) => current + 1)}
+          onError={advance}
         />
       ) : (
         <span><Film /><strong>{title}</strong><small>{itemName}</small></span>
       )}
     </div>
   );
+}
+
+/**
+ * The position to show while the native player works through a seek. Its
+ * reports lag a flushing seek, can fail into 0 during the flush, and a
+ * scrub's preview seeks land on keyframes, so the page keeps the chosen
+ * position until an accurate seek is reported near it or the wait runs out.
+ */
+export function settleNativeSeek(
+  pending: PendingNativeSeek | null,
+  reported: number,
+  now: number,
+): { position: number; pending: PendingNativeSeek | null } {
+  if (!pending) return { position: reported, pending: null };
+  const settled = now - pending.at >= NATIVE_SEEK_SETTLE_MS
+    || (!pending.preview && Math.abs(reported - pending.target) <= NATIVE_SEEK_TOLERANCE_SECONDS);
+  return settled ? { position: reported, pending: null } : { position: pending.target, pending };
 }
 
 function videoControlsAreFocused(): boolean {

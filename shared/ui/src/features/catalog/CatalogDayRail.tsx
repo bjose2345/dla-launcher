@@ -43,7 +43,7 @@ export function CatalogDayRail({
 
   if (days.length === 0) return null;
   return (
-    <div className="catalog-day-rail-scroll" ref={scroller}>
+    <div className="catalog-day-rail-scroll scrollbar-hidden" ref={scroller}>
       <div
         className="catalog-day-rail"
         role="group"

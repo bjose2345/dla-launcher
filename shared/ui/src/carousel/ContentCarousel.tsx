@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 
+import { useResizeObserver } from "../app/useResizeObserver";
 import { usePresentation } from "../preferences/PresentationProvider";
 
 const EDGE_FADE = "36px";
@@ -125,17 +126,13 @@ export function ContentCarousel({ label, children }: { label: string; children: 
     track.scrollTo({ left: target, behavior: "smooth" });
   };
 
+  useResizeObserver(trackRef, () => measure(), [measure]);
   useEffect(() => {
     const track = trackRef.current;
     if (!track) return;
     track.addEventListener("scroll", syncFromScroll, { passive: true });
-    const observer = new ResizeObserver(() => measure());
-    observer.observe(track);
-    return () => {
-      track.removeEventListener("scroll", syncFromScroll);
-      observer.disconnect();
-    };
-  }, [syncFromScroll, measure]);
+    return () => track.removeEventListener("scroll", syncFromScroll);
+  }, [syncFromScroll]);
 
   useEffect(() => {
     measure();
@@ -279,7 +276,7 @@ export function ContentCarousel({ label, children }: { label: string; children: 
       ) : null}
 
       <div
-        className="content-carousel-track"
+        className="content-carousel-track scrollbar-hidden"
         ref={trackRef}
         role="group"
         aria-label={label}

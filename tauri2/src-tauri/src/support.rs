@@ -596,13 +596,16 @@ pub fn install_logging(app: &tauri::App, runtime: &SupportRuntime) -> Result<(),
     if cfg!(debug_assertions) {
         targets.push(Target::new(TargetKind::Stdout));
     }
+    // u128 in Tauri 2's log plugin, u64 (the same type) in Tauri 3's.
+    #[allow(clippy::useless_conversion)]
+    let max_file_size = SUPPORT_LOG_FILE_BYTES.into();
     app.handle()
         .plugin(
             tauri_plugin_log::Builder::default()
                 .level(log::LevelFilter::Info)
                 .file_open_strategy(FileOpenStrategy::Rotate)
                 .rotation_strategy(RotationStrategy::KeepSome(SUPPORT_LOG_FILE_COUNT - 1))
-                .max_file_size(SUPPORT_LOG_FILE_BYTES as u128)
+                .max_file_size(max_file_size)
                 .targets(targets)
                 .format(move |out, message, record| {
                     let message = redact_text(&message.to_string(), &roots);
@@ -628,23 +631,34 @@ pub fn install_logging(app: &tauri::App, runtime: &SupportRuntime) -> Result<(),
 }
 
 #[tauri::command]
-pub fn read_support_status(runtime: tauri::State<'_, SupportRuntime>) -> SupportStatus {
-    runtime.status()
+pub async fn read_support_status(
+    runtime: tauri::State<'_, SupportRuntime>,
+) -> Result<SupportStatus, String> {
+    let runtime = runtime.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || runtime.status())
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub fn acknowledge_unclean_shutdown(
+pub async fn acknowledge_unclean_shutdown(
     runtime: tauri::State<'_, SupportRuntime>,
 ) -> Result<(), String> {
-    runtime.acknowledge_previous_run()
+    let runtime = runtime.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || runtime.acknowledge_previous_run())
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub fn record_frontend_fault(
+pub async fn record_frontend_fault(
     runtime: tauri::State<'_, SupportRuntime>,
     report: FrontendFaultReport,
-) {
-    runtime.record_frontend_fault(report);
+) -> Result<(), String> {
+    let runtime = runtime.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || runtime.record_frontend_fault(report))
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(desktop)]

@@ -1,3 +1,4 @@
+use dla_application::paths::resolve_within;
 use std::{
     collections::BTreeSet,
     fs::File,
@@ -13,11 +14,13 @@ use dla_domain::{
         PackageSourceSet, PackageSourceSetKind,
     },
 };
+use encoding_rs::SHIFT_JIS;
 use zip::ZipArchive;
 
 mod folder_transfer;
 mod installer;
 mod maintenance;
+mod names;
 mod rar;
 mod rar_tool;
 mod source;
@@ -25,6 +28,7 @@ mod source;
 pub use folder_transfer::{FolderTransfer, FolderTransferError, TransferMode, TransferOutcome};
 pub use installer::DesktopPackageInstaller;
 pub use maintenance::DesktopLibraryMaintenance;
+pub use names::DesktopInstalledFileNames;
 
 const MAX_MANIFEST_ENTRIES: usize = 100_000;
 
@@ -94,18 +98,9 @@ impl PackageManifestReader for ZipPackageManifestReader {
             .ok_or_else(|| {
                 PackageManifestError::Unavailable("package source set is empty".to_owned())
             })?;
-        let root = Path::new(root_path)
-            .canonicalize()
-            .map_err(|error| PackageManifestError::Unavailable(error.to_string()))?;
-        let archive_path = root.join(portable_path(archive_relative_path));
-        let archive_path = archive_path
-            .canonicalize()
-            .map_err(|error| PackageManifestError::Unavailable(error.to_string()))?;
-        if !archive_path.starts_with(&root) {
-            return Err(PackageManifestError::Unavailable(
-                "package source escapes the selected scan root".to_owned(),
-            ));
-        }
+        let archive_path =
+            resolve_within(Path::new(root_path), &portable_path(archive_relative_path))
+                .map_err(|error| PackageManifestError::Unavailable(error.to_string()))?;
         if !archive_path
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
@@ -146,10 +141,14 @@ impl PackageManifestReader for ZipPackageManifestReader {
             let entry = archive
                 .by_index(index)
                 .map_err(|error| PackageManifestError::Inspection(error.to_string()))?;
-            let raw_name = entry.name().to_owned();
-            let relative_path = entry
-                .enclosed_name()
-                .and_then(|path| portable_relative_path(&path));
+            let japanese = shift_jis_name(entry.name_raw());
+            let raw_name = japanese.clone().unwrap_or_else(|| entry.name().to_owned());
+            let relative_path = match &japanese {
+                Some(name) => decoded_relative_path(name),
+                None => entry
+                    .enclosed_name()
+                    .and_then(|path| portable_relative_path(&path)),
+            };
             let is_directory = entry.is_dir();
             let is_symlink = entry
                 .unix_mode()
@@ -246,6 +245,37 @@ pub(crate) fn portable_relative_path(path: &Path) -> Option<RelativePath> {
     RelativePath::parse(parts.join("/")).ok()
 }
 
+/// Japanese archives made on Windows store names in Shift-JIS without the
+/// UTF-8 flag, which the zip crate reads as CP437: `タイトル画面.png` became
+/// `â^âCâgâïëµû╩.png`. A name that is not UTF-8 but is valid Shift-JIS is
+/// read as Shift-JIS; any other keeps the zip crate's reading.
+fn shift_jis_name(raw: &[u8]) -> Option<String> {
+    if std::str::from_utf8(raw).is_ok() {
+        return None;
+    }
+    let (name, had_errors) = SHIFT_JIS.decode_without_bom_handling(raw);
+    (!had_errors).then(|| name.into_owned())
+}
+
+/// The safe path of a name decoded here, split only after decoding: the
+/// second byte of ソ or 表 in Shift-JIS is `\`, which the zip crate takes
+/// for a folder break. Folders are split at `/` or `\` like the zip crate
+/// does; a root, a drive or `..` makes the entry unsafe.
+fn decoded_relative_path(name: &str) -> Option<RelativePath> {
+    if name.contains('\0') || name.starts_with(['/', '\\']) || name.get(1..2) == Some(":") {
+        return None;
+    }
+    let parts = name
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty() && *part != ".")
+        .map(|part| (part != "..").then(|| part.to_owned()))
+        .collect::<Option<Vec<_>>>()?;
+    if parts.is_empty() {
+        return None;
+    }
+    RelativePath::parse(parts.join("/")).ok()
+}
+
 pub(crate) fn common_root(entries: &[PackageManifestEntry]) -> Option<RelativePath> {
     let roots = entries
         .iter()
@@ -314,5 +344,142 @@ mod tests {
         );
         assert_eq!(manifest.safety, PackageSafety::Safe);
         assert!(!directory.path().join("Work").exists());
+    }
+
+    /// Writes a ZIP whose names are the given bytes without the UTF-8 flag,
+    /// as Japanese Windows makes them: the zip crate writes ASCII stand-ins of
+    /// the same length, whose bytes are then replaced.
+    fn zip_with_raw_names(path: &Path, names: &[Vec<u8>], utf8_names: &[&str]) {
+        let stand_in = |name: &[u8]| {
+            name.iter()
+                .map(|&byte| if byte.is_ascii() { byte } else { b'x' })
+                .collect::<Vec<_>>()
+        };
+        let mut writer = ZipWriter::new(File::create(path).expect("archive file"));
+        for name in names {
+            let stand_in = String::from_utf8(stand_in(name)).expect("ascii stand-in");
+            writer
+                .start_file(stand_in, SimpleFileOptions::default())
+                .expect("entry");
+            writer.write_all(b"fixture").expect("body");
+        }
+        for name in utf8_names {
+            writer
+                .start_file(*name, SimpleFileOptions::default())
+                .expect("utf-8 entry");
+            writer.write_all(b"fixture").expect("body");
+        }
+        writer.finish().expect("complete archive");
+
+        let mut bytes = std::fs::read(path).expect("archive bytes");
+        for name in names {
+            let from = stand_in(name);
+            let mut replaced = 0;
+            let mut at = 0;
+            while let Some(found) = bytes[at..]
+                .windows(from.len())
+                .position(|window| window == from.as_slice())
+            {
+                let start = at + found;
+                bytes[start..start + from.len()].copy_from_slice(name);
+                at = start + from.len();
+                replaced += 1;
+            }
+            // The local header and the central directory.
+            assert_eq!(replaced, 2, "{}", String::from_utf8_lossy(&from));
+        }
+        std::fs::write(path, bytes).expect("patched archive");
+    }
+
+    fn read_manifest(root: &Path, archive: &str) -> PackageManifest {
+        ZipPackageManifestReader::new()
+            .read_manifest(
+                root.to_str().expect("root path"),
+                &PackageSourceSet {
+                    kind: PackageSourceSetKind::SingleArchive,
+                    volumes: vec![dla_domain::package::SourceArtifact {
+                        scan_entry_id: dla_domain::scanner::ScanEntryId("entry".to_owned()),
+                        kind: dla_domain::package::SourceArtifactKind::Archive,
+                        relative_path: RelativePath::parse(archive).expect("archive path"),
+                        size_bytes: None,
+                        sha256: None,
+                    }],
+                },
+            )
+            .expect("manifest")
+    }
+
+    #[test]
+    fn reads_japanese_names_stored_in_shift_jis() {
+        let directory = tempdir().expect("temporary directory");
+        let shift_jis = |name: &str| SHIFT_JIS.encode(name).0.into_owned();
+        zip_with_raw_names(
+            &directory.path().join("RJ000002.zip"),
+            &[
+                shift_jis("生意気 v2/img/titles1/タイトル画面.png"),
+                // The second byte of ソ and of 表 is `\`.
+                shift_jis("生意気 v2/ソフト.txt"),
+                shift_jis("生意気 v2/表紙.png"),
+            ],
+            &["生意気 v2/説明.txt"],
+        );
+
+        let manifest = read_manifest(directory.path(), "RJ000002.zip");
+
+        let paths = manifest
+            .entries
+            .iter()
+            .map(|entry| entry.relative_path.as_ref().map(RelativePath::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            paths,
+            [
+                Some("生意気 v2/img/titles1/タイトル画面.png"),
+                Some("生意気 v2/ソフト.txt"),
+                Some("生意気 v2/表紙.png"),
+                Some("生意気 v2/説明.txt"),
+            ]
+        );
+        assert_eq!(manifest.entries[1].raw_name, "生意気 v2/ソフト.txt");
+        assert_eq!(
+            manifest.common_root.as_ref().map(RelativePath::as_str),
+            Some("生意気 v2")
+        );
+        assert_eq!(manifest.safety, PackageSafety::Safe);
+    }
+
+    #[test]
+    fn keeps_the_old_reading_of_names_that_are_not_shift_jis() {
+        let directory = tempdir().expect("temporary directory");
+        // é in CP437, followed by a byte Shift-JIS cannot pair it with.
+        zip_with_raw_names(
+            &directory.path().join("RJ000003.zip"),
+            &[b"Work/caf\x82.txt".to_vec()],
+            &[],
+        );
+
+        let manifest = read_manifest(directory.path(), "RJ000003.zip");
+
+        assert_eq!(
+            manifest.entries[0]
+                .relative_path
+                .as_ref()
+                .map(RelativePath::as_str),
+            Some("Work/café.txt")
+        );
+    }
+
+    #[test]
+    fn decoded_names_stay_inside_the_package() {
+        let path = |name| decoded_relative_path(name).map(|path| path.as_str().to_owned());
+        assert_eq!(path("作品\\表紙.png").as_deref(), Some("作品/表紙.png"));
+        assert_eq!(path("作品/./表紙.png").as_deref(), Some("作品/表紙.png"));
+        assert_eq!(path("作品/").as_deref(), Some("作品"));
+        assert_eq!(path("../表紙.png"), None);
+        assert_eq!(path("作品/../../表紙.png"), None);
+        assert_eq!(path("/表紙.png"), None);
+        assert_eq!(path("\\表紙.png"), None);
+        assert_eq!(path("C:表紙.png"), None);
+        assert_eq!(path("作品/表紙\0.png"), None);
     }
 }

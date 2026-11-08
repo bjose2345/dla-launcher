@@ -1,14 +1,18 @@
 mod catalog_import;
+#[cfg(feature = "chromium")]
+mod chromium;
 mod commands;
 mod cover_protocol;
 #[cfg(desktop)]
 mod delivery;
 #[cfg(desktop)]
 mod delivery_access;
+mod launch;
 #[cfg(desktop)]
 mod library_add;
 mod media_protocol;
 mod native_video;
+mod operation;
 mod package_preparation;
 mod protocol_workers;
 mod read_only_navigation;
@@ -18,6 +22,7 @@ mod scanner;
 mod search;
 mod support;
 mod system_report;
+mod translation;
 
 use std::sync::Arc;
 
@@ -31,14 +36,19 @@ use dla_application::{
         CatalogImportService, CatalogPackageProfile,
     },
     delivery::InstallFolderStore,
+    game_translation::{GameFolder, GameTranslationService, GameTranslationStore},
     identity::CatalogIdentityReader,
     installation::InstallationStore,
     installation_from_scan::{InstallationFromScanService, InstallationScanSource},
     installation_review::InstallationReviewService,
-    launch::{LaunchActivityStore, LaunchClock, LaunchExecutor, LaunchService},
+    launch::{
+        LaunchActivityStore, LaunchClock, LaunchExecutor, LaunchOptionStore, LaunchService,
+        ObservedLaunchActivityStore,
+    },
     library_shelves::{LibraryActivityReader, LibraryShelvesService},
     maintenance::{
-        LibraryMaintenanceFilesystem, LibraryMaintenanceService, LibraryMaintenanceStore,
+        InstalledFileNames, InstalledPathStore, LauncherFileChanges, LibraryMaintenanceFilesystem,
+        LibraryMaintenanceService, LibraryMaintenanceStore,
     },
     media::{
         AudioTrackStore, AudioWaveformReader, MediaInventoryReader, MediaService,
@@ -59,15 +69,18 @@ use dla_application::{
         ScanRootLocationProvider, ScanRootPreferenceRepository, ScanRootPreferenceService,
     },
     search::{CatalogIndexSource, CatalogSearchIndex, CatalogSearchReader, CatalogSearchService},
+    translation::{TranslationService, TranslationStore},
 };
 use dla_archive::{
-    DesktopLibraryMaintenance, DesktopPackageInstaller, DesktopPackageManifestReader,
+    DesktopInstalledFileNames, DesktopLibraryMaintenance, DesktopPackageInstaller,
+    DesktopPackageManifestReader,
 };
 use dla_catalog_import::{
     CatalogImportAdapter, CatalogPackageAccessRegistry, all_fields, resolve_catalog_path,
 };
 use dla_cover_cache::DesktopCatalogArtworkCache;
-use dla_launch::{DesktopLaunchExecutor, SystemLaunchClock};
+use dla_game_translation::DesktopGameFolder;
+use dla_launch::{DesktopLaunchExecutor, LocaleRemulator, SystemLaunchClock};
 use dla_media::{
     DesktopAudioWaveformReader, DesktopMediaInventory, OwnWorkArtworkFiles, THUMBNAIL_CACHE_LIMIT,
     ThumbnailCache,
@@ -78,9 +91,10 @@ use dla_scanner::{
 };
 use dla_search_tantivy::TantivyCatalogSearch;
 use dla_sqlite::{
-    ReloadableCatalogStore, SqliteCatalogStore, SqliteLibraryStore, StoredCatalogGeneration,
-    current_timestamp, database_size,
+    ReloadableCatalogStore, SqliteCatalogStore, SqliteLibraryStore, SqliteTranslationStore,
+    StoredCatalogGeneration, current_timestamp, database_size,
 };
+use dla_translator::TranslatorSettingsFile;
 use tauri::Manager;
 
 use catalog_import::CatalogImportController;
@@ -92,12 +106,22 @@ use search::SearchIndexController;
 use support::SupportRuntime;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+// Finished scan and media sessions older than this are history the launcher
+// no longer shows; the prune waits until the first screens have loaded,
+// since it holds the library lock while it runs.
+const HISTORY_RETENTION: time::Duration = time::Duration::days(30);
+const HISTORY_PRUNE_DELAY: std::time::Duration = std::time::Duration::from_secs(20);
+
 pub fn run() {
     let arguments = std::env::args_os().collect::<Vec<_>>();
     let diagnostic_mode = arguments
         .iter()
         .any(|argument| argument == "--diagnostic-report");
-    let builder = tauri::Builder::default()
+    let context = tauri::generate_context!();
+    let builder = tauri::Builder::default();
+    #[cfg(feature = "chromium")]
+    let builder = builder.runtime(chromium::runtime(&context.config().identifier));
+    let builder = builder
         .plugin(dla_android_package_tauri::init())
         .manage(read_only_navigation::ReadOnlyNavigationState::from_cli_arguments(&arguments));
     #[cfg(desktop)]
@@ -118,6 +142,7 @@ pub fn run() {
     let media_protocol_workers = Arc::clone(&media_workers);
     let video_protocol_workers = Arc::clone(&media_workers);
     let builder = builder
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_deep_link::init())
         .register_asynchronous_uri_scheme_protocol(
             "dla-media",
@@ -169,6 +194,8 @@ pub fn run() {
             app.manage(support.clone());
             #[cfg(target_os = "linux")]
             install_linux_termination_handlers(app.handle());
+            #[cfg(all(feature = "chromium", target_os = "linux"))]
+            chromium::remove_idle_glib_work_source();
             log::info!(
                 target: "dla::lifecycle",
                 "event=startup_begin run_id={} diagnostic_mode={diagnostic_mode}",
@@ -214,7 +241,7 @@ pub fn run() {
             read_only_navigation::install_open_url_listener(app);
 
             let product_result = (|| -> Result<(), Box<dyn std::error::Error>> {
-            #[cfg(target_os = "linux")]
+            #[cfg(all(target_os = "linux", not(feature = "chromium")))]
             enable_media_protocol_cors(app)?;
 
             let data_directory = app.path().app_data_dir()?;
@@ -384,25 +411,121 @@ pub fn run() {
             let maintenance_store: Arc<dyn LibraryMaintenanceStore> = library.clone();
             let maintenance_filesystem: Arc<dyn LibraryMaintenanceFilesystem> =
                 Arc::new(DesktopLibraryMaintenance::new());
-            let maintenance = Arc::new(LibraryMaintenanceService::new(
-                Arc::clone(&installation_store),
-                Arc::clone(&package_preparation_store),
-                maintenance_store,
-                maintenance_filesystem,
-                package_manifest_reader,
-                Arc::clone(&package_installer),
-            ));
-            let launch_executor: Arc<dyn LaunchExecutor> = Arc::new(DesktopLaunchExecutor::new());
-            let launch_activity_store: Arc<dyn LaunchActivityStore> = library.clone();
+            let launcher_file_changes: Arc<dyn LauncherFileChanges> = library.clone();
+            let installed_file_names: Arc<dyn InstalledFileNames> =
+                Arc::new(DesktopInstalledFileNames::new());
+            let installed_paths: Arc<dyn InstalledPathStore> = library.clone();
+            let maintenance = Arc::new(
+                LibraryMaintenanceService::new(
+                    Arc::clone(&installation_store),
+                    Arc::clone(&package_preparation_store),
+                    maintenance_store,
+                    maintenance_filesystem,
+                    package_manifest_reader,
+                    Arc::clone(&package_installer),
+                )
+                .with_launcher_changes(launcher_file_changes)
+                .with_file_names(installed_file_names, installed_paths),
+            );
+            let locale_remulator =
+                LocaleRemulator::new(data_directory.join("tools").join("locale-remulator"));
+            let launch_executor: Arc<dyn LaunchExecutor> = Arc::new(
+                DesktopLaunchExecutor::new().with_locale_remulator(locale_remulator.clone()),
+            );
+            let launch_activity_store: Arc<dyn LaunchActivityStore> =
+                Arc::new(ObservedLaunchActivityStore::new(
+                    library.clone(),
+                    Arc::new(launch::TauriLaunchActivityEvents::new(app.handle().clone())),
+                ));
             let launch_clock: Arc<dyn LaunchClock> = Arc::new(SystemLaunchClock);
-            let launch = Arc::new(LaunchService::new(
+            let launch_options: Arc<dyn LaunchOptionStore> = library.clone();
+            let launch = Arc::new(
+                LaunchService::new(
+                    Arc::clone(&installation_store),
+                    Arc::clone(&package_preparation_store),
+                    launch_executor,
+                    launch_activity_store,
+                    launch_clock,
+                )
+                .with_launch_options(Arc::clone(&launch_options)),
+            );
+            launch.reconcile_after_restart()?;
+            #[cfg(desktop)]
+            let (delivery_client, delivery_forward) = {
+                use dla_delivery::{DeliveryClient, Endpoint};
+
+                // A plain-HTTP loopback stand-in for the self-test, else the
+                // private route when this build carries the launcher token.
+                let self_test = std::env::var("DLA_LAUNCHER_DOWNLOADS")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty());
+                let (endpoint, forward) = match (self_test, delivery_access::embedded()) {
+                    (Some(base), _) => (Some(Endpoint::self_test(&base)?), None),
+                    (None, Some(access)) => {
+                        let forward = Arc::new(delivery::Forward::new(
+                            access,
+                            delivery::cloudflared_sidecar(),
+                        ));
+                        let ca: Arc<[u8]> =
+                            Arc::from(&include_bytes!("../../certs/dla-upload-ca.crt")[..]);
+                        (
+                            Some(Endpoint::private(ca).through(forward.dial())),
+                            Some(forward),
+                        )
+                    }
+                    (None, None) => (None, None),
+                };
+                let client = endpoint.map(DeliveryClient::new).transpose()?.map(Arc::new);
+                (client, forward)
+            };
+            #[cfg(desktop)]
+            let overlay_source = {
+                use dla_delivery::{Endpoint, OverlayClient};
+                let ca = &include_bytes!(concat!(env!("OUT_DIR"), "/overlays-ca.crt"))[..];
+                let self_test = std::env::var("DLA_LAUNCHER_OVERLAYS").ok()
+                    .filter(|value| !value.trim().is_empty());
+                let (endpoint, forward) = match (self_test, delivery_access::overlays()) {
+                    (Some(base), _) => (Some(Endpoint::self_test(&base)?), None),
+                    (None, Some(access)) if !ca.is_empty() => {
+                        let forward = Arc::new(delivery::Forward::new(access, delivery::cloudflared_sidecar()));
+                        (Some(Endpoint::overlays(Arc::from(ca)).through(forward.dial())), Some(forward))
+                    }
+                    _ => (None, None),
+                };
+                match (endpoint, delivery_client.as_ref()) {
+                    (Some(endpoint), Some(session)) => Some((Arc::new(OverlayClient::new(endpoint, Arc::clone(session))?), forward)),
+                    _ => None,
+                }
+            };
+            let translation_store: Arc<dyn TranslationStore> = Arc::new(
+                SqliteTranslationStore::open(&data_directory.join("translations.sqlite"))?,
+            );
+            let translation_service = Arc::new(
+                TranslationService::new(translation_store)
+                    .with_name_readings(Arc::new(dla_translator::NameList::new())),
+            );
+            let game_translation_store: Arc<dyn GameTranslationStore> = library.clone();
+            let game_folder: Arc<dyn GameFolder> = Arc::new(DesktopGameFolder::new());
+            let mut game_translations = GameTranslationService::new(
                 Arc::clone(&installation_store),
                 Arc::clone(&package_preparation_store),
-                launch_executor,
-                launch_activity_store,
-                launch_clock,
+                game_translation_store,
+                game_folder,
+                Arc::clone(&translation_service),
+            );
+            if let Some(packs) = translation::pack_source(
+                #[cfg(desktop)]
+                overlay_source,
+            ) {
+                game_translations = game_translations.with_packs(packs);
+            }
+            let translation = Arc::new(translation::TranslationController::new(
+                translation_service,
+                Arc::new(game_translations),
+                TranslatorSettingsFile::new(data_directory.join("preferences/translation.json")),
+                Arc::clone(&launch),
+                app.handle().clone(),
             ));
-            launch.reconcile_after_restart()?;
             let media_sessions: Arc<dyn MediaSessionStore> = library.clone();
             let audio_tracks: Arc<dyn AudioTrackStore> = library.clone();
             let media_inventory: Arc<dyn MediaInventoryReader> =
@@ -461,28 +584,7 @@ pub fn run() {
                 use dla_application::delivery::{DeliveryService, DeliveryStore};
                 use dla_delivery::{DeliveryClient, Endpoint, FileTransfer, ManifestLocator};
 
-                // A plain-HTTP loopback stand-in for the self-test, else the
-                // private route when this build carries the launcher token.
-                let self_test = std::env::var("DLA_LAUNCHER_DOWNLOADS")
-                    .ok()
-                    .filter(|value| !value.trim().is_empty());
-                let (endpoint, forward) = match (self_test, delivery_access::embedded()) {
-                    (Some(base), _) => (Some(Endpoint::self_test(&base)?), None),
-                    (None, Some(access)) => {
-                        let forward = Arc::new(delivery::Forward::new(
-                            access,
-                            delivery::cloudflared_sidecar(),
-                        ));
-                        let ca: Arc<[u8]> =
-                            Arc::from(&include_bytes!("../../certs/dla-upload-ca.crt")[..]);
-                        (
-                            Some(Endpoint::private(ca).through(forward.dial())),
-                            Some(forward),
-                        )
-                    }
-                    (None, None) => (None, None),
-                };
-                let client = endpoint.map(DeliveryClient::new).transpose()?.map(Arc::new);
+                let (client, forward) = (delivery_client, delivery_forward);
                 // Without a route the service still lists and removes jobs;
                 // nothing can sign in, so nothing is downloaded.
                 let remote = match &client {
@@ -556,6 +658,33 @@ pub fn run() {
                 ),
             ));
 
+            let history = Arc::clone(&library);
+            if let Err(error) = std::thread::Builder::new()
+                .name("dla-history-prune".to_owned())
+                .spawn(move || {
+                    std::thread::sleep(HISTORY_PRUNE_DELAY);
+                    let cutoff = (time::OffsetDateTime::now_utc() - HISTORY_RETENTION)
+                        .format(&time::format_description::well_known::Rfc3339);
+                    let pruned = cutoff
+                        .map_err(|error| error.to_string())
+                        .and_then(|cutoff| {
+                            history
+                                .prune_history(&cutoff)
+                                .map_err(|error| error.to_string())
+                        });
+                    match pruned {
+                        Ok(report) => log::info!(
+                            target: "dla::lifecycle",
+                            "event=history_pruned scan_sessions={} media_sessions={}",
+                            report.scan_sessions,
+                            report.media_sessions
+                        ),
+                        Err(error) => log::warn!("library history prune failed: {error}"),
+                    }
+                })
+            {
+                log::warn!("library history prune could not start: {error}");
+            }
             let thumbnails = ThumbnailCache::new(cache_directory.join("media/thumbnails"));
             let pruned = thumbnails.clone();
             if let Err(error) = std::thread::Builder::new()
@@ -591,6 +720,9 @@ pub fn run() {
                 package_preparation,
                 maintenance,
                 launch,
+                launch_options,
+                locale_remulator,
+                translation,
                 media,
                 personalized_voice,
                 native_video: Arc::new(native_video::NativeVideoController::default()),
@@ -696,7 +828,12 @@ pub fn run() {
             commands::remove_library_installation,
             commands::uninstall_library_installation,
             commands::open_installation_folder,
+            commands::read_launch_options,
+            commands::save_launch_options,
             commands::cleanup_library_maintenance,
+            commands::check_library_file_names,
+            commands::fix_library_file_names,
+            commands::fix_all_library_file_names,
             commands::inspect_package_destination,
             commands::start_package_preparation,
             commands::cancel_package_preparation,
@@ -705,6 +842,19 @@ pub fn run() {
             commands::stop_library_launch,
             commands::list_recent_launches,
             commands::list_installation_launch_history,
+            translation::read_translation_settings,
+            translation::save_translation_settings,
+            translation::test_translator,
+            translation::read_game_translation,
+            translation::turn_on_game_translation,
+            translation::show_game_translation,
+            translation::remove_game_translation,
+            translation::prepare_game_translation,
+            translation::translate_game_again,
+            translation::pause_game_translation,
+            translation::check_translation_pack,
+            translation::read_translated_works,
+            translation::download_translation_pack,
             commands::open_library_media_session,
             commands::list_library_media_items,
             commands::read_library_audio_waveform,
@@ -713,10 +863,15 @@ pub fn run() {
             commands::update_library_media_progress,
             commands::update_library_media_queue_settings,
             commands::close_library_media_session,
+            commands::read_video_backend,
+            commands::read_video_subtitles,
             commands::open_native_video,
             commands::update_native_video_viewport,
             commands::control_native_video,
             commands::close_native_video,
+            commands::open_video_externally,
+            commands::select_media_player,
+            commands::play_in_player,
             commands::select_catalog_package,
             commands::inspect_catalog_package,
             commands::start_catalog_import,
@@ -765,7 +920,7 @@ pub fn run() {
                 log::warn!(target: "dla::media", "event=native_video_window_sync_failed error={error}");
             }
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building Tauri application");
     app.run(|app, event| {
         if matches!(event, tauri::RunEvent::Ready) {
@@ -780,25 +935,88 @@ pub fn run() {
     });
 }
 
+/// SIGINT and SIGTERM end the launcher the way closing the window does, so
+/// the shutdown is recorded as clean. A signal handler may only write to a
+/// pipe; a thread of its own reads it and asks the app to exit. CEF installs
+/// Chromium's handlers while it starts and its runtime puts the earlier
+/// disposition back afterwards, so these stay in place on both builds.
 #[cfg(target_os = "linux")]
 fn install_linux_termination_handlers(app: &tauri::AppHandle) {
+    use std::sync::atomic::{AtomicI32, Ordering};
+
+    static WRITE_END: AtomicI32 = AtomicI32::new(-1);
+    extern "C" fn on_signal(signal: libc::c_int) {
+        let fd = WRITE_END.load(Ordering::Acquire);
+        if fd >= 0 {
+            let byte = signal as u8;
+            // SAFETY: write(2) is async-signal-safe and the pipe stays open for
+            // the life of the process.
+            unsafe { libc::write(fd, std::ptr::from_ref(&byte).cast(), 1) };
+        }
+    }
+
+    let mut ends = [0 as libc::c_int; 2];
+    // SAFETY: `ends` has room for the two descriptors pipe2 fills in.
+    if unsafe { libc::pipe2(ends.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        log::warn!(
+            target: "dla::lifecycle",
+            "event=termination_handlers_unavailable error={}",
+            std::io::Error::last_os_error()
+        );
+        return;
+    }
+    WRITE_END.store(ends[1], Ordering::Release);
     for signal in [libc::SIGINT, libc::SIGTERM] {
-        let app = app.clone();
-        gtk::glib::source::unix_signal_add_once(signal, move || {
+        // SAFETY: a zeroed sigaction is a valid one to fill in, and the handler
+        // only writes to the pipe.
+        unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+            action.sa_flags = libc::SA_RESTART;
+            libc::sigemptyset(&mut action.sa_mask);
+            libc::sigaction(signal, &action, std::ptr::null_mut());
+        }
+    }
+
+    let app = app.clone();
+    let read_end = ends[0];
+    let spawned = std::thread::Builder::new()
+        .name("dla-termination".to_owned())
+        .spawn(move || {
+            let mut byte = 0u8;
+            loop {
+                // SAFETY: `byte` is a one-byte buffer for the pipe's read end.
+                let read = unsafe { libc::read(read_end, std::ptr::from_mut(&mut byte).cast(), 1) };
+                if read == 1 {
+                    break;
+                }
+                if read < 0
+                    && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+                {
+                    continue;
+                }
+                return;
+            }
+            let signal = i32::from(byte);
             if let Some(support) = app.try_state::<SupportRuntime>() {
                 log::info!(
                     target: "dla::lifecycle",
                     "event=termination_requested signal={signal} run_id={}",
                     support.run_id()
                 );
-                let _ = support.mark_clean_shutdown();
+                if support.mark_clean_shutdown() {
+                    log::info!(target: "dla::lifecycle", "event=clean_shutdown run_id={}", support.run_id());
+                }
             }
-            app.exit(0);
+            let exiting = app.clone();
+            let _ = app.run_on_main_thread(move || exiting.exit(0));
         });
+    if let Err(error) = spawned {
+        log::warn!(target: "dla::lifecycle", "event=termination_handlers_unavailable error={error}");
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(feature = "chromium")))]
 fn enable_media_protocol_cors(app: &tauri::App) -> tauri::Result<()> {
     use webkit2gtk::{SecurityManagerExt, WebContextExt, WebViewExt};
 
@@ -826,7 +1044,7 @@ fn reveal_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let main_window = window.clone();
         let _ = window.run_on_main_thread(move || {
-            #[cfg(target_os = "linux")]
+            #[cfg(all(target_os = "linux", not(feature = "chromium")))]
             {
                 use gtk::prelude::{GtkWindowExt, WidgetExt};
 
@@ -835,7 +1053,7 @@ fn reveal_main_window(app: &tauri::AppHandle) {
                     native_window.present();
                 }
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(any(not(target_os = "linux"), feature = "chromium"))]
             {
                 let _ = main_window.show();
                 let _ = main_window.unminimize();
@@ -865,6 +1083,9 @@ mod tests {
                 .find(|directive| directive.trim_start().starts_with("media-src "))
                 .expect("media-src directive");
             assert!(media.contains("blob:"));
+            // The in-page player's <track> elements load through dla-subtitle.
+            assert!(media.contains("dla-subtitle:"));
+            assert!(media.contains("http://dla-subtitle.localhost"));
         }
     }
 

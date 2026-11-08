@@ -1,3 +1,4 @@
+use dla_application::paths::resolve_within;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -32,14 +33,8 @@ pub(crate) fn resolve_source_files(
                 volume.relative_path
             )));
         }
-        let path = unresolved
-            .canonicalize()
+        let path = resolve_within(&root, &portable_path(&volume.relative_path))
             .map_err(|error| PackageManifestError::Unavailable(error.to_string()))?;
-        if !path.starts_with(&root) {
-            return Err(PackageManifestError::Unavailable(
-                "package volume escapes the selected scan root".to_owned(),
-            ));
-        }
         paths.push(path);
     }
     if paths.is_empty() {

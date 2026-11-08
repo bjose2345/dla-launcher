@@ -126,7 +126,7 @@ export function LibraryPersonalization({
       </h2>
 
       {preference.error ? (
-        <div className="library-callout library-callout-error" role="alert">
+        <div className="app-callout" role="alert">
           {t("library.preferenceError", { error: String(preference.error) })}
         </div>
       ) : null}
@@ -345,7 +345,7 @@ function PersonalizationCard({
           type="button"
           onClick={onAction}
         >
-          {changing ? <LoaderCircle className="library-spin" aria-hidden="true" /> : actionIcon}
+          {changing ? <LoaderCircle className="app-spin" aria-hidden="true" /> : actionIcon}
         </button>
       </div>
     </article>

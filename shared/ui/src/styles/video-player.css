@@ -21,39 +21,6 @@
   color-scheme: dark;
 }
 
-.media-dock-video-display {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--app-border);
-  border-radius: 999px;
-  background: color-mix(in oklch, var(--color-base-300) 42%, transparent);
-}
-
-.media-dock-video-display button {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--app-muted);
-  cursor: pointer;
-}
-
-.media-dock-video-display button:hover,
-.media-dock-video-display button.is-active {
-  background: color-mix(in oklch, var(--color-accent) 16%, transparent);
-  color: var(--color-accent);
-}
-
-.media-dock-video-display button svg {
-  width: 14px;
-  height: 14px;
-}
-
 .media-dock.is-video {
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   grid-template-rows: 18px 38px;
@@ -92,6 +59,76 @@
   border-radius: 9px;
 }
 
+/* In fullscreen the dock lies over the bottom of the picture and leaves with
+   the player's controls; the native surface is told to show it through. */
+/* In fullscreen the dock is a compact box over the picture, as a desktop
+   player's. It slides rather than fades: the Chromium build's video window
+   shows it through a cut-out, which has no half-way state. */
+.media-dock.is-video.is-overlay {
+  position: fixed;
+  z-index: 40;
+  right: auto;
+  bottom: 22px;
+  left: 50%;
+  width: min(820px, 94vw);
+  padding: 7px 16px 9px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 18px;
+  background: rgb(14 13 18 / 97%);
+  box-shadow: 0 18px 50px rgb(0 0 0 / 55%);
+  transform: translateX(-50%);
+  transition: transform 0.26s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.media-dock.is-video.is-overlay.is-hidden {
+  pointer-events: none;
+  transform: translate(-50%, calc(100% + 30px));
+  transition-duration: 0.18s;
+}
+
+.video-player-fullscreen-exit {
+  position: fixed;
+  z-index: 12;
+  top: 16px;
+  right: 16px;
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 58%);
+  color: rgb(255 255 255 / 86%);
+  cursor: pointer;
+  transition: transform 0.26s cubic-bezier(0.2, 0.8, 0.2, 1), background 0.15s ease-out;
+}
+
+.video-player-fullscreen-exit:hover {
+  background: rgb(0 0 0 / 78%);
+  color: #fff;
+}
+
+.video-player-fullscreen-exit svg {
+  width: 16px;
+  height: 16px;
+}
+
+.video-player-page.is-controls-hidden .video-player-fullscreen-exit {
+  pointer-events: none;
+  transform: translateY(-160%);
+  transition-duration: 0.18s;
+}
+
+.video-player-page.is-fullscreen .video-player-workspace {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.video-player-page.is-fullscreen .video-player-viewport {
+  border-radius: 0;
+}
+
 @media (max-width: 940px) {
   .media-dock.is-video {
     grid-template-columns: minmax(0, 1fr);
@@ -109,6 +146,9 @@
 .video-player-viewport {
   position: relative;
   display: grid;
+  /* A definite track, so the <video>'s 100% height resolves and object-fit
+     letterboxes instead of the picture keeping its aspect and overflowing. */
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   flex: 1 1 auto;
@@ -119,11 +159,83 @@
     #050508;
 }
 
+.video-player-ambient {
+  position: absolute;
+  z-index: 0;
+  inset: -12%;
+  width: 124%;
+  height: 124%;
+  opacity: 0;
+  filter: blur(48px) saturate(1.35) brightness(0.5);
+  transition: opacity 0.8s ease-out;
+  pointer-events: none;
+}
+
+.video-player-ambient.is-live {
+  opacity: 1;
+}
+
 .video-player-element {
   position: relative;
-  z-index: 0;
+  z-index: 1;
   display: block;
-  background: #000;
+}
+
+/* Subtitles of the page's own player, styled as the surface document styles
+   its cues; the player sets the variables from the subtitle style. */
+.video-player-element::cue {
+  color: var(--cue-color, #fff);
+  background: var(--cue-background, rgba(0, 0, 0, 0.75));
+  font-family: Inter, "Noto Sans JP", system-ui, sans-serif;
+  font-size: var(--cue-size, clamp(16px, 2.4vw, 34px));
+  line-height: 1.35;
+  text-shadow: 0 2px 5px #000;
+}
+
+/* The play or pause badge a click on the picture shows: in the middle of the
+   picture, gone in half a second as it grows, as YouTube's. */
+.video-player-badge {
+  --badge-size: clamp(52px, 10vmin, 104px);
+  position: absolute;
+  z-index: 3;
+  top: calc(50% - var(--badge-size) / 2);
+  left: calc(50% - var(--badge-size) / 2);
+  display: grid;
+  width: var(--badge-size);
+  height: var(--badge-size);
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  pointer-events: none;
+  animation: video-player-badge 0.5s linear forwards;
+}
+
+.video-player-badge svg {
+  width: 46%;
+  height: 46%;
+}
+
+@keyframes video-player-badge {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(2);
+  }
+}
+
+@keyframes video-player-badge-fade {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
 }
 
 .video-player-page.is-fit-contain .video-player-element {
@@ -209,16 +321,6 @@
   white-space: nowrap;
 }
 
-.video-player-vignette {
-  position: absolute;
-  z-index: 2;
-  inset: 0;
-  background:
-    linear-gradient(to bottom, rgb(0 0 0 / 62%), transparent 24%, transparent 64%, rgb(0 0 0 / 76%)),
-    linear-gradient(90deg, rgb(0 0 0 / 22%), transparent 16%, transparent 84%, rgb(0 0 0 / 22%));
-  pointer-events: none;
-}
-
 .video-player-topbar {
   position: absolute;
   z-index: 12;
@@ -241,7 +343,6 @@
     transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-.video-player-back,
 .video-player-icon-button,
 .video-player-error button,
 .video-player-drawer button {
@@ -251,7 +352,6 @@
   font: inherit;
 }
 
-.video-player-back,
 .video-player-icon-button {
   display: inline-flex;
   min-height: 44px;
@@ -271,20 +371,17 @@
     color 150ms ease-out;
 }
 
-.video-player-back:hover:not(:disabled),
 .video-player-icon-button:hover:not(:disabled) {
   border-color: color-mix(in oklch, var(--color-primary) 70%, var(--app-border));
   background: color-mix(in oklch, var(--color-primary) 18%, var(--color-base-300));
   color: var(--color-primary);
 }
 
-.video-player-back:disabled,
 .video-player-icon-button:disabled {
   cursor: default;
   opacity: 0.42;
 }
 
-.video-player-back svg,
 .video-player-icon-button svg {
   width: 17px;
   height: 17px;
@@ -391,6 +488,18 @@
 .video-player-error span {
   max-width: 100%;
   margin-top: 7px;
+  overflow-wrap: anywhere;
+  color: var(--app-muted);
+  font-size: 0.6rem;
+}
+
+.video-player-error button + button {
+  margin-top: 8px;
+}
+
+.video-player-error small {
+  max-width: 100%;
+  margin-top: 8px;
   overflow-wrap: anywhere;
   color: var(--app-muted);
   font-size: 0.6rem;
@@ -646,14 +755,6 @@
     display: none;
   }
 
-  .video-player-back span {
-    display: none;
-  }
-
-  .video-player-back {
-    width: 44px;
-    padding: 0;
-  }
 }
 
 @media (max-width: 680px) {
@@ -677,7 +778,6 @@
     font-size: 0.7rem;
   }
 
-  .video-player-back,
   .video-player-icon-button {
     width: 40px;
     min-height: 40px;
@@ -699,12 +799,10 @@
   }
 
   .video-player-title > span,
-  .video-player-title small,
-  .video-player-back span {
+  .video-player-title small {
     display: none;
   }
 
-  .video-player-back,
   .video-player-icon-button {
     width: 38px;
     min-height: 38px;
@@ -720,6 +818,10 @@
   .video-player-topbar,
   .video-player-drawer {
     transition: none;
+  }
+
+  .video-player-badge {
+    animation-name: video-player-badge-fade;
   }
 }
 
@@ -862,9 +964,18 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .video-player-topbar,
-  .video-player-drawer {
-    transition: none;
-  }
+/* The Chromium build's video surface (nativeVideoChrome "page") is a window
+   nothing can be drawn over, so the bar takes its own row above the frame and
+   stays visible. */
+.video-player-page.is-page-chrome .video-player-topbar,
+.video-player-page.is-page-chrome.is-controls-hidden .video-player-topbar {
+  position: relative;
+  top: auto;
+  right: auto;
+  left: auto;
+  flex: none;
+  margin-bottom: 10px;
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
 }

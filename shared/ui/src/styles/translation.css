@@ -1,0 +1,456 @@
+/* ── Game translation: the Translation tab ────────────────── */
+
+.translation-offer {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-notch);
+  background: var(--app-panel-raised);
+}
+
+.translation-offer h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.translation-eyebrow {
+  color: var(--app-muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.translation-facts {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 8px 14px;
+  margin: 0;
+  font-size: 0.84rem;
+}
+
+.translation-facts dt {
+  color: var(--app-muted);
+}
+
+.translation-facts dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  min-width: 0;
+}
+
+.translation-chip {
+  padding: 2px 7px;
+  clip-path: var(--app-chip-sm);
+  background: var(--app-panel-raised);
+  color: var(--app-muted);
+  font-size: 0.72rem;
+}
+
+.translation-card {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-notch);
+  background: color-mix(in oklch, var(--app-panel-raised) 92%, var(--app-backdrop));
+}
+
+.translation-card h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.translation-card h3 svg {
+  width: 18px;
+  height: 18px;
+}
+
+.translation-card.is-ready h3 svg {
+  color: var(--color-success);
+}
+
+.translation-card.is-failed h3,
+.translation-card.is-needs_translator h3 {
+  color: var(--color-warning);
+}
+
+.translation-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.translation-card-head strong {
+  color: var(--color-primary);
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+.translation-card-counts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  color: var(--app-muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.translation-card-summary {
+  margin: 0;
+  color: var(--app-muted);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.translation-groups {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.84rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.translation-groups li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.translation-groups li > span:last-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.translation-groups li.is-done > span:last-child {
+  color: var(--color-success);
+}
+
+.translation-groups svg {
+  width: 14px;
+  height: 14px;
+}
+
+.translation-switches {
+  display: grid;
+  gap: 6px;
+  padding-top: 14px;
+  border-top: 1px solid var(--app-border);
+}
+
+/* ── Set up a free translator ─────────────────────────────── */
+
+.translation-help-backdrop {
+  position: fixed;
+  z-index: 90;
+  display: grid;
+  inset: 0;
+  padding: 16px;
+  place-items: center;
+  background: color-mix(in oklch, var(--app-backdrop) 72%, transparent);
+  backdrop-filter: blur(6px);
+}
+
+.translation-help {
+  display: grid;
+  width: min(560px, 100%);
+  max-height: calc(100vh - 32px);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  outline: 0;
+  box-shadow: inset 0 0 0 1px var(--app-border), 0 30px 80px -20px rgb(0 0 0 / 80%);
+  clip-path: var(--app-notch);
+  background: var(--app-panel);
+}
+
+.translation-help-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 22px 12px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.translation-help-head h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 850;
+}
+
+.translation-help-body {
+  display: grid;
+  gap: 16px;
+  overflow-y: auto;
+  padding: 18px 22px;
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.translation-help-body > p {
+  margin: 0;
+}
+
+.translation-help-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.translation-help-tabs button {
+  margin-bottom: -1px;
+  padding: 8px 14px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: var(--app-muted);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.translation-help-tabs button.active {
+  border-bottom-color: var(--color-primary);
+  color: var(--color-base-content);
+}
+
+.translation-help-steps {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding-left: 22px;
+}
+
+.translation-help-steps li > strong {
+  display: block;
+  font-weight: 800;
+}
+
+.translation-help-steps li > span {
+  display: grid;
+  gap: 8px;
+  color: var(--app-muted);
+}
+
+.translation-help-copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.translation-help-copy code,
+.translation-help-body p code {
+  padding: 4px 8px;
+  background: var(--app-backdrop);
+  color: var(--color-base-content);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.translation-help-facts {
+  display: grid;
+  gap: 4px 14px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  margin: 0;
+  padding: 12px 14px;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  clip-path: var(--app-notch-sm);
+}
+
+.translation-help-facts dt {
+  font-weight: 800;
+}
+
+.translation-help-facts dd {
+  margin: 0;
+  color: var(--app-muted);
+}
+
+.translation-help-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 22px 18px;
+  border-top: 1px solid var(--app-border);
+}
+
+.translation-help-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ── Settings › Translation ───────────────────────────────── */
+
+.translation-settings-choice {
+  margin: 0 0 14px;
+  padding: 0;
+  border: 0;
+}
+
+.translation-settings-choice legend {
+  margin-bottom: 8px;
+  padding: 0;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.translation-settings-choice .settings-option small.translation-settings-option-help {
+  margin-top: 2px;
+  font-family: inherit;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.translation-settings-fields {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin-bottom: 14px;
+}
+
+.translation-settings-field {
+  display: grid;
+  gap: 5px;
+  align-content: start;
+}
+
+.translation-settings-field label {
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.translation-settings-field small {
+  color: var(--app-subtle);
+  font-size: 0.72rem;
+}
+
+.translation-settings-test {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  margin-bottom: 14px;
+}
+
+.translation-settings-result {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.translation-settings-result svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin-top: 2px;
+}
+
+.translation-settings-result.is-ok svg {
+  color: var(--color-success);
+}
+
+.translation-settings-result.is-problem {
+  color: var(--color-warning);
+}
+
+.translation-settings-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+/* ── A better translation from the Archive ────────────────── */
+
+.translation-pack {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border-left: 3px solid var(--color-primary);
+  background: color-mix(in oklch, var(--color-primary) 8%, var(--app-panel-raised));
+}
+
+.translation-pack-offer,
+.translation-pack-installed {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.translation-pack-offer {
+  flex-direction: column;
+  gap: 2px;
+}
+
+.translation-pack-installed svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin-top: 2px;
+  color: var(--color-success);
+}
+
+.translation-pack-installed span {
+  display: grid;
+  gap: 2px;
+}
+
+.translation-pack small {
+  color: var(--app-muted);
+  font-size: 0.76rem;
+  font-weight: 500;
+}
+
+.translation-pack-access {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
+
+.translation-pack-access .translation-pack-offer span {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.translation-pack-access svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  margin-top: 2px;
+}
+
+.translation-pack-help {
+  margin: 0;
+  color: var(--app-muted);
+  font-size: 0.78rem;
+}
+
+.translation-problem {
+  display: grid;
+  gap: 4px;
+}

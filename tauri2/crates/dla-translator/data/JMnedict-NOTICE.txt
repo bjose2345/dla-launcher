@@ -1,0 +1,20 @@
+DLA Launcher spells Japanese character names with the help of a trimmed copy
+of JMnedict, the Japanese Proper Names Dictionary.
+
+JMnedict is the property of the Electronic Dictionary Research and
+Development Group (EDRDG), and is used in conformance with the Group's
+licence:
+
+  https://www.edrdg.org/edrdg/licence.html
+
+It is licensed under the Creative Commons Attribution-ShareAlike Licence
+(V4.0):
+
+  https://creativecommons.org/licenses/by-sa/4.0/
+
+About JMnedict: https://www.edrdg.org/enamdict/enamdict_doc.html
+
+DLA Launcher keeps only the entries for surnames and given names, with their
+readings written in romaji (names.tsv.gz). That file is distributed under
+the same licence. tauri2/scripts/build-name-list.py in the DLA Launcher
+source rebuilds it from JMnedict.xml.gz.

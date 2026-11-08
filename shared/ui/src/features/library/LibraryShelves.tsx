@@ -13,6 +13,7 @@ import { launchActionMessageKey } from "../../i18n/domainLabels";
 import { formatDateTime } from "../../i18n/formatters";
 import type { MessageKey } from "../../preferences/preferences";
 import { LibraryArtwork } from "./LibraryArtwork";
+import { LibraryCoverFlags } from "./LibraryCoverFlags";
 import type { ManageTab } from "./LibraryManageDrawer";
 import { LibraryWorkMenu } from "./LibraryWorkMenu";
 import { ContentCarousel } from "../../carousel/ContentCarousel";
@@ -238,6 +239,7 @@ function RecentShelfCard({
       <span className="library-shelf-card-art">
         <LibraryArtwork kind={kind} title={title} work={work} cover={own.coverUrl(installation.id)} />
         <span className="library-shelf-card-overlay" aria-hidden="true" />
+        <LibraryCoverFlags kind={kind} code={effectiveIdentity(installation)} />
         <span className="library-shelf-card-kicker">
           {label}
           {activity.active ? <b>{t("library.shelf.active")}</b> : null}
@@ -276,6 +278,7 @@ function ResumeShelfCard({
       <span className="library-shelf-card-art">
         <LibraryArtwork kind={kind} title={title} work={work} cover={own.coverUrl(installation.id)} />
         <span className="library-shelf-card-overlay" aria-hidden="true" />
+        <LibraryCoverFlags kind={kind} code={effectiveIdentity(installation)} />
         <span className="library-shelf-card-kicker">{t(mediaActionMessageKey(resume.action))}</span>
       </span>
       <strong>{title}</strong>
@@ -315,6 +318,7 @@ function NeverLaunchedShelfCard({
       <span className="library-shelf-card-art">
         <LibraryArtwork kind={kind} title={title} work={work} cover={own.coverUrl(installation.id)} />
         <span className="library-shelf-card-overlay" aria-hidden="true" />
+        <LibraryCoverFlags kind={kind} code={effectiveIdentity(installation)} />
         <span className="library-shelf-card-kicker">{t("library.shelf.ready")}</span>
       </span>
       <strong>{title}</strong>

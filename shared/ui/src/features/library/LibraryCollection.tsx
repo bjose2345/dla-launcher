@@ -6,10 +6,11 @@ import type { CatalogWork } from "../catalog";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import type { MessageKey } from "../../i18n/catalogs";
 import { LibraryArtwork } from "./LibraryArtwork";
+import { LibraryCoverFlags } from "./LibraryCoverFlags";
+import { effectiveIdentity } from "./libraryPresentation";
 import type { ManageTab } from "./LibraryManageDrawer";
 import {
   libraryContentKind,
-  libraryContentKindLabel,
   libraryDisplayCreator,
   libraryDisplayCode,
   libraryDisplayTitle,
@@ -219,7 +220,7 @@ const LibraryCollectionCard = memo(function LibraryCollectionCard({
         >
           <LibraryArtwork kind={kind} title={title} work={work} cover={own.coverUrl(installation.id)} />
           <span className="library-collection-shade" aria-hidden="true" />
-          <span className="library-collection-kind">{libraryContentKindLabel(kind, t)}</span>
+          <LibraryCoverFlags kind={kind} code={effectiveIdentity(installation)} />
           <CollectionStateChip entry={entry} />
           <NowPlayingBars installationId={installation.id} alwaysVisible={kind === "audio"} />
           {progress !== null ? (

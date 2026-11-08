@@ -1,0 +1,102 @@
+diff --git a/media/base/supported_types.cc b/media/base/supported_types.cc
+index efc7246c8cd3e..8bf82bebd6287 100644
+--- a/media/base/supported_types.cc
++++ b/media/base/supported_types.cc
+@@ -228,6 +228,24 @@ bool IsAudioCodecProprietary(AudioCodec codec) {
+ }
+ #endif  // !BUILDFLAG(USE_PROPRIETARY_CODECS)
+ 
++// Profiles FFmpeg's HEVC software decoder handles. Chromium's FFmpeg config
++// leaves that decoder out; this build turns it on (third_party/ffmpeg's
++// Chrome/linux/x64 config), so these play without a platform decoder.
++bool IsDecoderBuiltInHevcProfile(VideoCodecProfile profile) {
++  if (!IsDecoderBuiltInVideoCodec(VideoCodec::kHEVC)) {
++    return false;
++  }
++  switch (profile) {
++    case HEVCPROFILE_MAIN:
++    case HEVCPROFILE_MAIN10:
++    case HEVCPROFILE_MAIN_STILL_PICTURE:
++    case HEVCPROFILE_REXT:
++      return true;
++    default:
++      return false;
++  }
++}
++
+ bool IsDecoderHevcProfileSupported(const VideoType& type) {
+   if (!IsColorSpaceSupported(type.color_space)) {
+     return false;
+@@ -241,7 +259,8 @@ bool IsDecoderHevcProfileSupported(const VideoType& type) {
+   }
+ #endif  // BUILDFLAG(IS_CHROMEOS)
+   return GetSupplementalDecoderVideoProfileCache()->IsProfileSupported(
+-      type.profile);
++             type.profile) ||
++         IsDecoderBuiltInHevcProfile(type.profile);
+ #else
+   return true;
+ #endif  // BUIDFLAG(PLATFORM_HAS_OPTIONAL_HEVC_DECODE_SUPPORT)
+@@ -583,6 +602,13 @@ bool IsDecoderBuiltInVideoCodec(VideoCodec codec) {
+   if (codec == VideoCodec::kH264) {
+     return true;
+   }
++#if BUILDFLAG(ENABLE_PLATFORM_HEVC) && BUILDFLAG(IS_LINUX)
++  // FFmpeg is built with hevc_decoder on this platform (third_party/ffmpeg's
++  // Chrome/linux/x64 config).
++  if (codec == VideoCodec::kHEVC) {
++    return true;
++  }
++#endif  // BUILDFLAG(ENABLE_PLATFORM_HEVC) && BUILDFLAG(IS_LINUX)
+ #endif  // BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS) &&
+         // BUILDFLAG(USE_PROPRIETARY_CODECS)
+ #if BUILDFLAG(ENABLE_LIBVPX)
+diff --git a/media/ffmpeg/ffmpeg_common.cc b/media/ffmpeg/ffmpeg_common.cc
+index 280dce68853c1..7fd3d4753da74 100644
+--- a/media/ffmpeg/ffmpeg_common.cc
++++ b/media/ffmpeg/ffmpeg_common.cc
+@@ -69,7 +69,12 @@ VideoColorSpace GetGuessedColorSpace(const VideoColorSpace& color_space) {
+ const char* GetAllowedVideoDecoders() {
+   // This should match the configured lists in //third_party/ffmpeg.
+ #if BUILDFLAG(USE_PROPRIETARY_CODECS) && BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
++#if BUILDFLAG(ENABLE_PLATFORM_HEVC) && BUILDFLAG(IS_LINUX)
++  // hevc_decoder is in the Chrome/linux/x64 FFmpeg config of this build.
++  return "h264,hevc";
++#else
+   return "h264";
++#endif  // BUILDFLAG(ENABLE_PLATFORM_HEVC) && BUILDFLAG(IS_LINUX)
+ #else
+   return "";
+ #endif
+diff --git a/media/filters/ffmpeg_video_decoder.cc b/media/filters/ffmpeg_video_decoder.cc
+index 3e351538d12f0..2248cce2902c0 100644
+--- a/media/filters/ffmpeg_video_decoder.cc
++++ b/media/filters/ffmpeg_video_decoder.cc
+@@ -73,7 +73,6 @@ static int GetFFmpegVideoDecoderThreadCount(const VideoDecoderConfig& config) {
+     case VideoCodec::kUnknown:
+     case VideoCodec::kVC1:
+     case VideoCodec::kMPEG2:
+-    case VideoCodec::kHEVC:
+     case VideoCodec::kVP9:
+     case VideoCodec::kAV1:
+     case VideoCodec::kDolbyVision:
+@@ -84,6 +83,7 @@ static int GetFFmpegVideoDecoderThreadCount(const VideoDecoderConfig& config) {
+       NOTREACHED();
+ 
+     case VideoCodec::kH264:
++    case VideoCodec::kHEVC:
+       // Normalize to three threads for 1080p content, then scale linearly
+       // with number of pixels.
+       // Examples:
+@@ -117,8 +117,9 @@ static void ReleaseVideoBufferImpl(void* opaque, uint8_t* data) {
+ 
+ // static
+ bool FFmpegVideoDecoder::IsCodecSupported(VideoCodec codec) {
+-  // We only build support for H.264.
+-  return codec == VideoCodec::kH264 && IsDecoderBuiltInVideoCodec(codec);
++  // We only build support for H.264 and, on Linux, H.265.
++  return (codec == VideoCodec::kH264 || codec == VideoCodec::kHEVC) &&
++         IsDecoderBuiltInVideoCodec(codec);
+ }
+ 
+ FFmpegVideoDecoder::FFmpegVideoDecoder(std::unique_ptr<MediaLog> media_log)

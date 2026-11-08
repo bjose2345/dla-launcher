@@ -1,12 +1,10 @@
 use std::{
     collections::HashMap,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex},
 };
 
 use dla_application::{
+    cancellation::CancellationToken,
     scan_execution::{PreparedScan, ScanExecutionService},
     scanner::{
         PrepareScanRequest, ScanCancellation, ScanIssuePage, ScanIssueRequest, ScanProgressSink,
@@ -50,7 +48,7 @@ pub struct ScanController {
     service: Arc<ScanExecutionService>,
     access: Arc<ScanAccessRegistry>,
     preferences: Arc<ScanRootPreferenceService>,
-    active: Mutex<HashMap<ScanSessionId, Arc<AtomicScanCancellation>>>,
+    active: Mutex<HashMap<ScanSessionId, CancellationToken>>,
 }
 
 impl ScanController {
@@ -115,8 +113,8 @@ impl ScanController {
         })?;
         let view = prepared.view();
         let session_id = prepared.session.id.clone();
-        let cancellation = Arc::new(AtomicScanCancellation::default());
-        active.insert(session_id.clone(), Arc::clone(&cancellation));
+        let cancellation = CancellationToken::default();
+        active.insert(session_id.clone(), cancellation.clone());
         drop(active);
         log::info!(target: "dla::scanner", "event=scan_started session_id={}", session_id.0);
 
@@ -138,7 +136,7 @@ impl ScanController {
         cancellation: &dyn ScanCancellation,
     ) -> Result<ScanSessionView, ScannerError> {
         let approved = self.access.approve(path)?;
-        let registered = Arc::new(AtomicScanCancellation::default());
+        let registered = CancellationToken::default();
         let prepared = loop {
             if cancellation.is_cancelled() {
                 return Err(ScannerError::InvalidRequest(
@@ -160,7 +158,7 @@ impl ScanController {
                         ..ScanOptions::default()
                     },
                 })?;
-                active.insert(prepared.session.id.clone(), Arc::clone(&registered));
+                active.insert(prepared.session.id.clone(), registered.clone());
                 break prepared;
             }
             drop(active);
@@ -171,7 +169,7 @@ impl ScanController {
             prepared,
             &EitherCancellation {
                 caller: cancellation,
-                registered: registered.as_ref(),
+                registered: &registered,
             },
         );
         if let Ok(mut active) = self.active.lock() {
@@ -213,9 +211,9 @@ impl ScanController {
         &self,
         session_id: ScanSessionId,
         prepared: PreparedScan,
-        cancellation: Arc<AtomicScanCancellation>,
+        cancellation: CancellationToken,
     ) {
-        match self.service.execute(prepared, cancellation.as_ref()) {
+        match self.service.execute(prepared, &cancellation) {
             Ok(_) => {
                 log::info!(target: "dla::scanner", "event=scan_completed session_id={}", session_id.0)
             }
@@ -232,27 +230,10 @@ impl ScanController {
     }
 }
 
-#[derive(Default)]
-struct AtomicScanCancellation {
-    cancelled: AtomicBool,
-}
-
-impl AtomicScanCancellation {
-    fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Release);
-    }
-}
-
-impl ScanCancellation for AtomicScanCancellation {
-    fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
-    }
-}
-
 #[cfg(desktop)]
 struct EitherCancellation<'a> {
     caller: &'a dyn ScanCancellation,
-    registered: &'a AtomicScanCancellation,
+    registered: &'a CancellationToken,
 }
 
 #[cfg(desktop)]

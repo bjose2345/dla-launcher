@@ -15,7 +15,7 @@ impl LibraryActivityReader for SqliteLibraryStore {
     fn read_library_activity(&self) -> Result<LibraryActivitySnapshot, LibraryShelvesError> {
         self.with_connection(|connection| {
             let mut recent = HashMap::new();
-            let mut launch_statement = connection.prepare(
+            let mut launch_statement = connection.prepare_cached(
                 "SELECT installation_id, action_kind, started_at,
                         status IN ('running', 'stopping')
                  FROM (
@@ -36,7 +36,7 @@ impl LibraryActivityReader for SqliteLibraryStore {
                 recent.insert(activity.installation_id.clone(), activity);
             }
 
-            let mut media_statement = connection.prepare(
+            let mut media_statement = connection.prepare_cached(
                 "SELECT installation_id, action_kind, updated_at,
                         status IN ('active', 'paused')
                  FROM (
@@ -69,7 +69,7 @@ impl LibraryActivityReader for SqliteLibraryStore {
                 }
             }
 
-            let mut resume_statement = connection.prepare(
+            let mut resume_statement = connection.prepare_cached(
                 "SELECT installation_id, action_kind, relative_path, position_ms,
                         duration_ms, completed, updated_at
                  FROM library_media_resume
@@ -79,7 +79,7 @@ impl LibraryActivityReader for SqliteLibraryStore {
                 .query_map([], resume_from_row)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
 
-            let mut totals_statement = connection.prepare(
+            let mut totals_statement = connection.prepare_cached(
                 "SELECT installation_id, COUNT(*), COALESCE(SUM(COALESCE(duration_ms, 0)), 0)
                  FROM library_launch_activity
                  WHERE started_at IS NOT NULL

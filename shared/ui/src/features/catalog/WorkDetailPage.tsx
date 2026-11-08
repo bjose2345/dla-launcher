@@ -1,10 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Copy, Heart, LoaderCircle, Smartphone } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { AlertTriangle, Check, Copy, Heart, LoaderCircle, Smartphone } from "lucide-react";
+import { useCallback, useMemo, useRef, useState, type CSSProperties } from "react";
 
+import { errorMessage } from "../../app/errorMessage";
+import { useCopyFeedback } from "../../app/useCopyFeedback";
 import { ImageGalleryModal } from "./ImageGalleryModal";
 import { GalleryLayoutToggle, useGalleryLayout, WorkGallery } from "./WorkGallery";
 import { RelatedWorks } from "./RelatedWorks";
+import { catalogKeys } from "./catalogQueryKeys";
+import { localizedName } from "./localizedNames";
 import type { CatalogDetailGateway, CatalogFacetGroup, CatalogWorkDetail } from "./types";
 import { WorkAgeBadge } from "./WorkAgeBadge";
 import { WorkFilesInfo } from "./WorkFilesInfo";
@@ -12,7 +16,6 @@ import { WorkDescription } from "./WorkDescription";
 import { WorkDetailSection } from "./WorkDetailSection";
 import {
   archiveTotals,
-  displayName,
   dlsiteWorkUrl,
   formatArchiveSize,
   heroImageUrls,
@@ -31,6 +34,7 @@ import { isMediaLaunchAction, mediaActionMessageKey } from "../library/mediaSess
 import { useMediaPlayback } from "../library/MediaPlaybackProvider";
 import type { LaunchActivity, LibraryGateway, WorkPreference } from "../library/types";
 import { launchActivityIsActive } from "../library/types";
+import { launchPollInterval } from "../library/ActiveLaunchPill";
 import type { DeliveryGateway } from "../delivery/types";
 import { WorkInstall } from "../delivery/WorkInstall";
 
@@ -66,7 +70,7 @@ export function WorkDetailPage({
 }: WorkDetailPageProps) {
   const { t } = usePresentation();
   const query = useQuery({
-    queryKey: ["catalog-work", code],
+    queryKey: catalogKeys.work(code),
     queryFn: () => gateway.read(code),
   });
 
@@ -75,7 +79,7 @@ export function WorkDetailPage({
     return (
       <main className="work-detail-state">
         <strong>{t("detail.loadFailed", { code })}</strong>
-        <span>{t("common.technicalDetail", { detail: query.error instanceof Error ? query.error.message : String(query.error) })}</span>
+        <span>{t("common.technicalDetail", { detail: errorMessage(query.error) })}</span>
         <div>
           <button type="button" onClick={onBack}>{t("detail.back")}</button>
           <button type="button" onClick={() => void query.refetch()}>{t("detail.tryAgain")}</button>
@@ -138,7 +142,7 @@ function WorkDetail({
   const [sourceError, setSourceError] = useState("");
   const [galleryIndex, setGalleryIndex] = useState<number | null>(null);
   const recommendations = useQuery({
-    queryKey: ["catalog-recommendations", work.code],
+    queryKey: catalogKeys.recommendations(work.code),
     queryFn: () => gateway.readRecommendations(work.code),
     staleTime: 5 * 60 * 1_000,
   });
@@ -179,7 +183,7 @@ function WorkDetail({
     try {
       await onOpenExternal(sourceUrl);
     } catch (error) {
-      setSourceError(error instanceof Error ? error.message : String(error));
+      setSourceError(errorMessage(error));
     }
   };
   const openFacet = useCallback((group: CatalogFacetGroup, key: string) => {
@@ -220,7 +224,7 @@ function WorkDetail({
                     onClick={() => replaceFavorite.mutate()}
                   >
                     {replaceFavorite.isPending
-                      ? <LoaderCircle className="library-spin" aria-hidden="true" />
+                      ? <LoaderCircle className="app-spin" aria-hidden="true" />
                       : <Heart aria-hidden="true" />}
                     <span>{t("detail.favorite")}</span>
                   </button>
@@ -244,10 +248,10 @@ function WorkDetail({
                       {index > 0 && " · "}
                       <button
                         type="button"
-                        title={t("detail.filterBy", { label: displayName(circle.name, circle.nameEnglish, preferEnglish) })}
+                        title={t("detail.filterBy", { label: localizedName(circle.name, circle.nameEnglish, preferEnglish) })}
                         onClick={() => openFacet("circles", circle.name)}
                       >
-                        {displayName(circle.name, circle.nameEnglish, preferEnglish)}
+                        {localizedName(circle.name, circle.nameEnglish, preferEnglish)}
                       </button>
                     </span>
                   ))
@@ -259,33 +263,33 @@ function WorkDetail({
               <AgeMetadataRow age={work.ageRating} label={t("facet.age")} onSelect={() => openFacet("ages", work.ageRating)} />
               <MetadataRow
                 label={t("detail.supportedLanguages")}
-                values={work.supportedLanguages.map((language) => ({ key: language.code, label: displayName(language.name, language.nameEnglish, preferEnglish) }))}
+                values={work.supportedLanguages.map((language) => ({ key: language.code, label: localizedName(language.name, language.nameEnglish, preferEnglish) }))}
                 onSelect={(key) => openFacet("languages", key)}
                 muted={!work.supportedLanguages.length}
               />
               <MetadataRow
                 label={t("detail.productFormat")}
                 tone="pink"
-                values={work.categories.map((category) => ({ key: category.code, label: displayName(category.name, category.nameEnglish, preferEnglish) }))}
+                values={work.categories.map((category) => ({ key: category.code, label: localizedName(category.name, category.nameEnglish, preferEnglish) }))}
                 onSelect={(key) => openFacet("categories", key)}
               />
               <MetadataRow
                 label={t("detail.fileFormat")}
                 tone="blue"
-                values={work.fileFormats.map((format) => ({ key: format.code, label: displayName(format.name, format.nameEnglish, preferEnglish) }))}
+                values={work.fileFormats.map((format) => ({ key: format.code, label: localizedName(format.name, format.nameEnglish, preferEnglish) }))}
                 onSelect={(key) => openFacet("fileTypes", key)}
                 muted={!work.fileFormats.length}
               />
               <MetadataRow
                 label={t("detail.genre")}
                 tone="red"
-                values={work.tags.map((tag) => ({ key: tag.name, label: displayName(tag.name, tag.nameEnglish, preferEnglish) }))}
+                values={work.tags.map((tag) => ({ key: tag.name, label: localizedName(tag.name, tag.nameEnglish, preferEnglish) }))}
                 onSelect={(key) => openFacet("genres", key)}
               />
               <MetadataRow
                 label={t("detail.miscellaneous")}
                 tone="green"
-                values={work.miscellanies.map((item) => ({ key: item.code, label: displayName(item.name, item.nameEnglish, preferEnglish) }))}
+                values={work.miscellanies.map((item) => ({ key: item.code, label: localizedName(item.name, item.nameEnglish, preferEnglish) }))}
                 onSelect={(key) => openFacet("miscellanies", key)}
                 muted={!work.miscellanies.length}
               />
@@ -430,7 +434,7 @@ export function WorkLocalActionButton({
     enabled: installationId !== null,
     refetchInterval: (launchQuery) => launchQuery.state.data?.some((activity) => (
       launchActivityIsActive(activity.status)
-    )) ? 750 : false,
+    )) ? launchPollInterval(launchQuery.state.data, Boolean(gateway.subscribeLaunchActivity)) : false,
   });
   const updateHistory = (updated: LaunchActivity) => {
     queryClient.setQueryData<LaunchActivity[]>(historyKey, (current) => [
@@ -480,7 +484,7 @@ export function WorkLocalActionButton({
     || action?.kind === "installed";
   const title = operationError
     ? t("detail.launchFailed", {
-      error: operationError instanceof Error ? operationError.message : String(operationError),
+      error: errorMessage(operationError),
     })
     : undefined;
   const activate = () => {
@@ -508,7 +512,7 @@ export function WorkLocalActionButton({
         : messageKey;
   const launchFeedback = operationError
       ? t("detail.launchFailed", {
-        error: operationError instanceof Error ? operationError.message : String(operationError),
+        error: errorMessage(operationError),
       })
       : latestActivity
         ? launchActivityFeedback(latestActivity, t)
@@ -666,32 +670,29 @@ export function MetadataRow({
   );
 }
 
-/** The work code, copied with one click; the icon turns into a check for a
- *  moment and screen readers hear that it was copied. */
+/** The work code, copied with one click anywhere on the chip; the icon turns
+ *  into a check for a moment, or a warning when the copy was refused, and
+ *  screen readers hear which. */
 export function WorkCodeCopy({ code }: { code: string }) {
   const { t } = usePresentation();
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!copied) return undefined;
-    const timer = window.setTimeout(() => setCopied(false), 1500);
-    return () => window.clearTimeout(timer);
-  }, [copied]);
-  const copy = () => {
-    void navigator.clipboard?.writeText(code).then(() => setCopied(true)).catch(() => undefined);
-  };
+  const { result, copy } = useCopyFeedback();
   return (
     <>
       <button
-        className={`work-code${copied ? " copied" : ""}`}
+        className={`work-code${result ? ` ${result}` : ""}`}
         type="button"
-        title={t("detail.copyCode")}
+        title={t(result === "failed" ? "detail.copyFailed" : "detail.copyCode")}
         aria-label={`${t("detail.copyCode")}: ${code}`}
-        onClick={copy}
+        onClick={() => copy(code)}
       >
         UID: {code}
-        {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+        {result === "copied"
+          ? <Check aria-hidden="true" />
+          : result === "failed" ? <AlertTriangle aria-hidden="true" /> : <Copy aria-hidden="true" />}
       </button>
-      <span className="screen-reader-only" aria-live="polite">{copied ? t("detail.codeCopied") : ""}</span>
+      <span className="screen-reader-only" aria-live="polite">
+        {result === "copied" ? t("detail.codeCopied") : result === "failed" ? t("detail.copyFailed") : ""}
+      </span>
     </>
   );
 }

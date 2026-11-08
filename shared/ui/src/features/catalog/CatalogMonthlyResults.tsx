@@ -15,11 +15,12 @@ import {
   CatalogFiltersDrawer,
 } from "./CatalogFiltersDrawer";
 import { catalogFacetCounts } from "./catalogFilters";
+import { catalogKeys } from "./catalogQueryKeys";
 import {
+  CatalogGridDays,
+  CatalogLineDay,
   CatalogPager,
   CatalogViewBar,
-  CatalogWorkCard,
-  DateMarker,
 } from "./CatalogResults";
 import { CatalogDayRail } from "./CatalogDayRail";
 import { CatalogMonthRail } from "./CatalogMonthRail";
@@ -189,7 +190,7 @@ export function CatalogMonthlyResults({
       />
       <div className="catalog-scroll-frame">
         <div
-          className="catalog-scroll catalog-timeline-scroll"
+          className="catalog-scroll catalog-timeline-scroll scrollbar-hidden"
           id="catalog-timeline-scroll"
           ref={viewport}
         >
@@ -203,39 +204,14 @@ export function CatalogMonthlyResults({
           ) : view === "grid" ? (
             <div className="catalog-grid-view">
               <div className="catalog-grid-page">
-                {groups ? groups.map((group) => (
-                  <section className="catalog-grid-day" data-timeline-day={group.day ?? "unknown"} key={group.key}>
-                    <div className="catalog-grid-day-heading">
-                      <DateMarker day={group.day} count={dayCounts.get(group.key) ?? group.works.length} />
-                      <span aria-hidden="true" />
-                    </div>
-                    <div className="catalog-work-grid catalog-flat-grid">
-                      {group.works.map((work, index) => (
-                        <CatalogWorkCard
-                          work={work}
-                          englishLabels={englishLabels}
-                          showActivity={route.timeline === "activity"}
-                          onOpenWork={onOpenWork}
-                          animationIndex={index}
-                          key={work.code}
-                        />
-                      ))}
-                    </div>
-                  </section>
-                )) : (
-                  <div className="catalog-work-grid catalog-flat-grid">
-                    {listing.items.map((work, index) => (
-                      <CatalogWorkCard
-                        work={work}
-                        englishLabels={englishLabels}
-                        showActivity={route.timeline === "activity"}
-                        onOpenWork={onOpenWork}
-                        animationIndex={index}
-                        key={work.code}
-                      />
-                    ))}
-                  </div>
-                )}
+                <CatalogGridDays
+                  groups={groups}
+                  works={listing.items}
+                  dayCounts={dayCounts}
+                  englishLabels={englishLabels}
+                  showActivity={route.timeline === "activity"}
+                  onOpenWork={onOpenWork}
+                />
               </div>
               <CatalogPager
                 currentPage={route.page}
@@ -315,7 +291,7 @@ function CatalogMonthlyLineDay({
   const { t } = usePresentation();
   const [expanded, setExpanded] = useState(false);
   const result = useInfiniteQuery({
-    queryKey: ["catalog-month-day", filters, facetFilters, route.timeline, route.month, day],
+    queryKey: catalogKeys.monthDay(filters, facetFilters, route.timeline, route.month, day),
     initialPageParam: 0,
     queryFn: ({ pageParam }) => gateway.browse(catalogRequest(
       filters,
@@ -340,45 +316,28 @@ function CatalogMonthlyLineDay({
   }, [expanded, result.fetchNextPage, result.hasNextPage, result.isFetchingNextPage]);
 
   return (
-    <section
-      className="catalog-line-day"
-      data-index={dataIndex}
-      data-timeline-day={day}
-      ref={measure}
-      style={{ transform: `translateY(${offset}px)` }}
+    <CatalogLineDay
+      day={day}
+      count={count}
+      works={works}
+      englishLabels={englishLabels}
+      showActivity={route.timeline === "activity"}
+      onOpenWork={onOpenWork}
+      onShowAll={!result.isError && !expanded && count > works.length ? () => setExpanded(true) : undefined}
+      dataIndex={dataIndex}
+      measure={measure}
+      offset={offset}
     >
-      <div className="catalog-day-spine">
-        <DateMarker day={day} count={count} />
-        <span aria-hidden="true" />
-      </div>
-      <div className="catalog-work-grid catalog-line-grid">
-        {works.map((work, index) => (
-          <CatalogWorkCard
-            work={work}
-            englishLabels={englishLabels}
-            lead={index === 0 && count >= 3}
-            showActivity={route.timeline === "activity"}
-            onOpenWork={onOpenWork}
-            animationIndex={index}
-            key={work.code}
-          />
-        ))}
-        {!result.isError && !expanded && count > works.length && (
-          <button className="catalog-show-all" type="button" onClick={() => setExpanded(true)}>
-            {t("catalog.showAll", { count })}
-          </button>
-        )}
-        {(result.isPending || result.isFetchingNextPage) && (
-          <span className="loading-more">{t("catalog.loadingMore")}</span>
-        )}
-        {result.isError && (
-          <div className="catalog-day-query-error" role="alert">
-            <span>{t("catalog.dayLoadFailed")}</span>
-            <button type="button" onClick={() => void result.refetch()}>{t("detail.tryAgain")}</button>
-          </div>
-        )}
-      </div>
-    </section>
+      {(result.isPending || result.isFetchingNextPage) && (
+        <span className="loading-more">{t("catalog.loadingMore")}</span>
+      )}
+      {result.isError && (
+        <div className="catalog-day-query-error" role="alert">
+          <span>{t("catalog.dayLoadFailed")}</span>
+          <button type="button" onClick={() => void result.refetch()}>{t("detail.tryAgain")}</button>
+        </div>
+      )}
+    </CatalogLineDay>
   );
 }
 

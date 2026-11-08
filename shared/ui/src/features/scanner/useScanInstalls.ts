@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+
+import { useGatewaySubscription } from "../../app/useGatewaySubscription";
 
 import { newestView } from "../../app/revisionedView";
 import {
@@ -25,11 +26,9 @@ export function useScanInstalls(gateway: ScanInstallGateway | undefined) {
     ),
     enabled: gateway !== undefined,
   });
-  useEffect(() => {
-    if (!gateway) return undefined;
-    let unsubscribe: (() => void) | undefined;
-    let disposed = false;
-    void gateway.subscribeInstalls((view) => {
+  useGatewaySubscription(
+    gateway?.subscribeInstalls.bind(gateway),
+    (view) => {
       const previous = queryClient.getQueryData<ScanInstallView>(scanInstallsKey);
       acceptScanInstallView(queryClient, view);
       const settled = view.installs.some((install) => (
@@ -42,14 +41,8 @@ export function useScanInstalls(gateway: ScanInstallGateway | undefined) {
         void queryClient.invalidateQueries({ queryKey: ["library"] });
         void queryClient.invalidateQueries({ queryKey: ["scanner", "findings"] });
       }
-    }).then((listener) => {
-      if (disposed) listener();
-      else unsubscribe = listener;
-    });
-    return () => {
-      disposed = true;
-      unsubscribe?.();
-    };
-  }, [gateway, queryClient]);
+    },
+    [gateway],
+  );
   return query;
 }

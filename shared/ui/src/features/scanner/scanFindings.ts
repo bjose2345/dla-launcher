@@ -1,3 +1,4 @@
+import { basename } from "../../basename";
 import type { ScanFinding, ScanMatchConfidence } from "./types";
 
 export type FindingSection = "ready" | "choose" | "unknown" | "blocked" | "library" | "ignored";
@@ -59,7 +60,7 @@ export function findingConfidence(finding: ScanFinding): ScanMatchConfidence | n
 /** The finding's own name: its folder or file name, or the scanned folder's. */
 export function findingName(finding: ScanFinding, rootPath: string): string {
   const path = finding.relativePath || rootPath;
-  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+  return basename(path);
 }
 
 const workCodePattern = /^[A-Z]{2}\d{5,10}$/i;

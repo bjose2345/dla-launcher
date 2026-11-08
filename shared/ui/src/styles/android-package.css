@@ -498,20 +498,8 @@
   margin-top: 26px;
 }
 
-.android-package-error {
+.android-package-panel .app-callout {
   margin-top: 18px;
-  border-left: 3px solid var(--color-error);
-  background: color-mix(in oklch, var(--color-error) 8%, transparent);
-  padding: 14px 18px;
-}
-
-.android-package-error details {
-  margin-top: 6px;
-  color: var(--app-muted);
-}
-
-.android-package-error p {
-  overflow-wrap: anywhere;
 }
 
 .android-package-loading {
@@ -519,14 +507,6 @@
   align-items: center;
   gap: 12px;
   color: var(--app-muted);
-}
-
-.android-package-spin {
-  animation: android-package-spin 0.8s linear infinite;
-}
-
-@keyframes android-package-spin {
-  to { transform: rotate(360deg); }
 }
 
 @media (max-width: 720px) {

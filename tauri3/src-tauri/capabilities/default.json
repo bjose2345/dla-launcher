@@ -1,0 +1,44 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "enables the default permissions",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "clipboard-manager:allow-write-text",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        {
+          "url": "https://dlsite.com/*"
+        },
+        {
+          "url": "https://*.dlsite.com/*"
+        },
+        {
+          "url": "https://img.dlsitearchive.com/*"
+        },
+        {
+          "url": "https://img.dlsite.jp/*"
+        },
+        {
+          "url": "https://dlsitearchive.com/*"
+        },
+        {
+          "url": "https://ollama.com/*"
+        },
+        {
+          "url": "https://lmstudio.ai/*"
+        },
+        {
+          "url": "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+        },
+        {
+          "url": "https://aka.ms/vs/17/release/vc_redist.x86.exe"
+        }
+      ]
+    }
+  ]
+}

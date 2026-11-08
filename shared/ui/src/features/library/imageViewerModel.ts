@@ -1,4 +1,4 @@
-import { browserStorage, type PreferenceStorage } from "../../preferences/browserStorage";
+import { browserStorage, readStoredRecord, writeStoredJson, type PreferenceStorage } from "../../preferences/browserStorage";
 import type { PageBox } from "./readerModel";
 import type { MediaSessionItem } from "./types";
 
@@ -50,21 +50,16 @@ export function readImageViewerPreferences(
   storage: PreferenceStorage | undefined = browserStorage(),
 ): ImageViewerPreferences {
   const defaults = defaultImageViewerPreferences();
-  if (!storage) return defaults;
-  try {
-    const value = JSON.parse(storage.getItem(storageKey(installationId)) ?? "{}") as Record<string, unknown>;
-    return {
-      fit: oneOf(value.fit, ["screen", "width", "original"] as const, defaults.fit),
-      background: oneOf(value.background, ["black", "gray", "ambient"] as const, defaults.background),
-      interval: oneOf(value.interval, SLIDESHOW_INTERVALS, defaults.interval),
-      loop: typeof value.loop === "boolean" ? value.loop : defaults.loop,
-      hideControls: typeof value.hideControls === "boolean" ? value.hideControls : defaults.hideControls,
-      openIn: oneOf(value.openIn, ["viewer", "reader"] as const, defaults.openIn),
-      gallerySize: oneOf(value.gallerySize, ["small", "medium", "large"] as const, defaults.gallerySize),
-    };
-  } catch {
-    return defaults;
-  }
+  const value = readStoredRecord(storageKey(installationId), storage);
+  return {
+    fit: oneOf(value.fit, ["screen", "width", "original"] as const, defaults.fit),
+    background: oneOf(value.background, ["black", "gray", "ambient"] as const, defaults.background),
+    interval: oneOf(value.interval, SLIDESHOW_INTERVALS, defaults.interval),
+    loop: typeof value.loop === "boolean" ? value.loop : defaults.loop,
+    hideControls: typeof value.hideControls === "boolean" ? value.hideControls : defaults.hideControls,
+    openIn: oneOf(value.openIn, ["viewer", "reader"] as const, defaults.openIn),
+    gallerySize: oneOf(value.gallerySize, ["small", "medium", "large"] as const, defaults.gallerySize),
+  };
 }
 
 export function writeImageViewerPreferences(
@@ -72,12 +67,7 @@ export function writeImageViewerPreferences(
   preferences: ImageViewerPreferences,
   storage: PreferenceStorage | undefined = browserStorage(),
 ): void {
-  if (!storage) return;
-  try {
-    storage.setItem(storageKey(installationId), JSON.stringify(preferences));
-  } catch {
-    return;
-  }
+  writeStoredJson(storageKey(installationId), preferences, storage);
 }
 
 /** Folders in the order their first image comes, named below the folder they all share. */

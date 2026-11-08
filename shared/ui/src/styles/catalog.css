@@ -163,11 +163,6 @@
   min-width: 0;
   flex: 1;
   overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.catalog-month-rail-scroll::-webkit-scrollbar {
-  display: none;
 }
 
 .catalog-month-rail-months {
@@ -359,11 +354,6 @@
   width: 0;
   min-width: 100%;
   overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.catalog-day-rail-scroll::-webkit-scrollbar {
-  display: none;
 }
 
 .catalog-day-rail {
@@ -515,12 +505,6 @@
   min-height: 0;
   overflow-x: hidden;
   overflow-y: scroll;
-  scrollbar-width: none;
-}
-
-.catalog-scroll::-webkit-scrollbar {
-  width: 0;
-  height: 0;
 }
 
 .catalog-scroll.grab-scroll-enabled {
@@ -2450,6 +2434,11 @@ button.catalog-page.ellipsis {
 .work-code.copied {
   border-color: color-mix(in oklch, var(--color-success) 55%, transparent);
   color: var(--color-success);
+}
+
+.work-code.failed {
+  border-color: color-mix(in oklch, var(--color-error) 55%, transparent);
+  color: var(--color-error);
 }
 
 .work-code svg {

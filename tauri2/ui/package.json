@@ -15,8 +15,9 @@
     "@dla-launcher/shared-ui": "workspace:*",
     "@tanstack/react-query": "catalog:",
     "@tanstack/react-router": "catalog:",
-    "@tauri-apps/api": "2.12.1",
-    "@tauri-apps/plugin-opener": "2.7.0",
+    "@tauri-apps/api": "2.12.4",
+    "@tauri-apps/plugin-clipboard-manager": "2.5.0",
+    "@tauri-apps/plugin-opener": "2.7.2",
     "react": "catalog:",
     "react-dom": "catalog:"
   },

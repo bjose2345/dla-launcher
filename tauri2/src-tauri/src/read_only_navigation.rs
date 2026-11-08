@@ -204,8 +204,7 @@ mod tests {
     use std::{sync::mpsc, time::Duration};
 
     use super::{
-        ReadOnlyNavigationState, parse_exact_work_link, validated_cli_link, validated_os_cli_link,
-        validated_url_link,
+        ReadOnlyNavigationState, parse_exact_work_link, validated_cli_link, validated_url_link,
     };
 
     #[test]
@@ -312,6 +311,8 @@ mod tests {
     #[test]
     fn rejects_non_utf8_platform_arguments_without_panicking() {
         use std::os::unix::ffi::OsStringExt;
+
+        use super::validated_os_cli_link;
 
         let arguments = [
             OsString::from("/opt/dla-launcher"),

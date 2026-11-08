@@ -14,11 +14,15 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { useDocumentScrollLock } from "../../app/useDocumentScrollLock";
+import { errorMessage } from "../../app/errorMessage";
+import { ProgressBar } from "../../app/ProgressBar";
+import { useModalDialog } from "../../app/useModalDialog";
 import { formatByteSize } from "../../formatByteSize";
 import type { MessageKey } from "../../i18n/catalogs";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import { CatalogWorkPicker } from "../catalog/CatalogWorkPicker";
+import { catalogKeys } from "../catalog/catalogQueryKeys";
+import { localizedName, workTitle } from "../catalog/localizedNames";
 import type { CatalogDetailGateway, CatalogWork } from "../catalog/types";
 import { WorkCardImage } from "../catalog/WorkCardImage";
 import { findingWorkCodes } from "../scanner/scanFindings";
@@ -43,6 +47,7 @@ import {
   type LibraryAddView,
 } from "./libraryAdd";
 import { OWN_WORK_DETAILS_KEY } from "./ownWorkDetails";
+import { pluralText } from "../../i18n/pluralText";
 
 const SOURCES: ReadonlyArray<{ source: LibraryAddSource; title: MessageKey; help: MessageKey; icon: typeof FolderInput }> = [
   { source: "folders", title: "library.add.folders", help: "library.add.foldersHelp", icon: FolderInput },
@@ -137,7 +142,7 @@ export function LibraryAddButton({
         onOpen();
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
     }
   };
 
@@ -150,7 +155,7 @@ export function LibraryAddButton({
         aria-expanded={open}
         onClick={() => (busy ? onOpen() : setOpen((value) => !value))}
       >
-        {busy ? <LoaderCircle className="library-spin" aria-hidden="true" /> : <Plus aria-hidden="true" />}
+        {busy ? <LoaderCircle className="app-spin" aria-hidden="true" /> : <Plus aria-hidden="true" />}
         {t(busy ? "library.add.busy" : "library.add.button")}
       </button>
       {open ? (
@@ -203,7 +208,8 @@ export function LibraryAddSheet({
   const [deleteArchives, setDeleteArchives] = useState(view.deleteArchives);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  useDocumentScrollLock(true);
+  const sheetRef = useRef<HTMLElement>(null);
+  useModalDialog({ dialog: sheetRef, onClose: () => void close() });
 
   const codes = useMemo(() => {
     const listed = findingWorkCodes(view.findings.map((item) => item.finding));
@@ -211,7 +217,7 @@ export function LibraryAddSheet({
     return [...new Set([...listed, ...picked])].sort();
   }, [choices, view.findings]);
   const works = useQuery({
-    queryKey: ["catalog-works", codes],
+    queryKey: catalogKeys.works(codes),
     queryFn: () => catalogGateway.readWorks(codes),
     enabled: codes.length > 0,
     staleTime: 5 * 60_000,
@@ -254,7 +260,7 @@ export function LibraryAddSheet({
     try {
       await gateway.confirmLibraryAdd({ batchId: view.batchId, items: items.map(({ request }) => request), deleteArchives });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
     } finally {
       setBusy(false);
     }
@@ -269,7 +275,7 @@ export function LibraryAddSheet({
         onHide();
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
     } finally {
       setBusy(false);
     }
@@ -293,7 +299,7 @@ export function LibraryAddSheet({
   const heading = view.phase === "scanning"
     ? t("library.add.title.scanning")
     : view.phase === "review"
-      ? rows.length === 1 ? t("library.add.title.foundOne") : t("library.add.title.found", { count: rows.length })
+      ? pluralText(t, locale, rows.length, "library.add.title.foundOne", "library.add.title.found")
       : view.phase === "adding"
         ? t("library.add.title.adding")
         : view.phase === "cancelled" ? t("library.add.title.cancelled") : t("library.add.title.done");
@@ -301,7 +307,14 @@ export function LibraryAddSheet({
   return (
     <div className="library-add-layer">
       <div className="library-add-backdrop" aria-hidden="true" onClick={() => void close()} />
-      <section className="library-add-sheet" role="dialog" aria-modal="true" aria-labelledby="library-add-heading">
+      <section
+        ref={sheetRef}
+        className="library-add-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="library-add-heading"
+        tabIndex={-1}
+      >
         <header className="library-add-head">
           <div>
             <span className="library-add-eyebrow">{t("library.add.eyebrow")}</span>
@@ -320,7 +333,7 @@ export function LibraryAddSheet({
                 <li key={source.sourceId}>
                   {source.status === "failed"
                     ? <AlertTriangle aria-hidden="true" />
-                    : source.status === "done" ? <Check aria-hidden="true" /> : <LoaderCircle className="library-spin" aria-hidden="true" />}
+                    : source.status === "done" ? <Check aria-hidden="true" /> : <LoaderCircle className="app-spin" aria-hidden="true" />}
                   <strong>{source.displayName}</strong>
                   <span>
                     {source.status === "failed"
@@ -356,13 +369,13 @@ export function LibraryAddSheet({
             </ul>
           )}
           {view.sources.some((source) => source.status === "failed") && view.phase !== "scanning" ? (
-            <div className="library-callout library-callout-error" role="alert">
+            <div className="app-callout" role="alert">
               <AlertTriangle aria-hidden="true" />
               {view.sources.filter((source) => source.status === "failed").map((source) => `${source.displayName}: ${source.error ?? ""}`).join(" · ")}
             </div>
           ) : null}
           {error ? (
-            <div className="library-callout library-callout-error" role="alert">
+            <div className="app-callout" role="alert">
               <AlertTriangle aria-hidden="true" />{t("common.requestFailed", { error })}
             </div>
           ) : null}
@@ -382,7 +395,7 @@ export function LibraryAddSheet({
                 </span>
                 {installs ? (
                   <button
-                    className="library-manage-button"
+                    className="app-button"
                     type="button"
                     onClick={() => void installs.selectInstallFolder().then(() => installFolder.refetch())}
                   >
@@ -398,23 +411,23 @@ export function LibraryAddSheet({
               ) : null}
               <div className="library-add-actions">
                 {waiting.length ? <span className="library-add-waiting">{t("library.add.pickFirst", { count: waiting.length })}</span> : null}
-                <button className="library-manage-button" type="button" disabled={busy} onClick={() => void cancel()}>
+                <button className="app-button" type="button" disabled={busy} onClick={() => void cancel()}>
                   {t("common.cancel")}
                 </button>
-                <button className="library-manage-button is-primary" type="button" disabled={busy || items.length === 0} onClick={() => void confirm()}>
-                  {busy ? <LoaderCircle className="library-spin" aria-hidden="true" /> : null}
-                  {items.length === 1 ? t("library.add.addOne") : t("library.add.addMany", { count: items.length })}
+                <button className="app-button is-primary" type="button" disabled={busy || items.length === 0} onClick={() => void confirm()}>
+                  {busy ? <LoaderCircle className="app-spin" aria-hidden="true" /> : null}
+                  {pluralText(t, locale, items.length, "library.add.addOne", "library.add.addMany")}
                 </button>
               </div>
             </>
           ) : (
             <div className="library-add-actions">
               {view.phase === "scanning" || view.phase === "adding" ? (
-                <button className="library-manage-button" type="button" disabled={busy} onClick={() => void cancel()}>
+                <button className="app-button" type="button" disabled={busy} onClick={() => void cancel()}>
                   {t(view.phase === "scanning" ? "common.cancel" : "library.add.cancelRest")}
                 </button>
               ) : null}
-              <button className="library-manage-button is-primary" type="button" onClick={() => void close()}>
+              <button className="app-button is-primary" type="button" onClick={() => void close()}>
                 {t(libraryAddSettled(view) ? "library.add.close" : "library.add.hide")}
               </button>
             </div>
@@ -496,11 +509,11 @@ function AddRow({
       <div className="library-add-main">
         <strong title={title}>{title}</strong>
         <span className="library-add-meta">
-          {circle ? <span>{preferEnglish && circle.nameEnglish.trim() ? circle.nameEnglish : circle.name}</span> : null}
+          {circle ? <span>{localizedName(circle.name, circle.nameEnglish, preferEnglish)}</span> : null}
           {code ? <code>{code}</code> : null}
           {release ? <span>{release.version ? t("library.add.release", { date: release.date, version: release.version }) : release.date}</span> : null}
           <span>
-            {finding.fileCount === 1 ? t("library.home.filesOne") : t("library.home.files", { count: finding.fileCount.toLocaleString(locale) })}
+            {pluralText(t, locale, finding.fileCount, "library.home.filesOne", "library.home.files")}
             {" · "}{formatByteSize(finding.sizeBytes, locale)}
           </span>
           {addableRow ? <span>{t(placementKey(item.placement))}</span> : null}
@@ -512,7 +525,7 @@ function AddRow({
               {finding.candidates.map((candidate) => {
                 const candidateWork = workByCode.get(candidate.workCode);
                 return (
-                  <button className="library-manage-button" type="button" key={candidate.workCode} onClick={() => onChoose({ kind: "work", workCode: candidate.workCode })}>
+                  <button className="app-button" type="button" key={candidate.workCode} onClick={() => onChoose({ kind: "work", workCode: candidate.workCode })}>
                     <code>{candidate.workCode}</code>{candidateWork ? ` · ${workTitle(candidateWork, preferEnglish)}` : null}
                   </button>
                 );
@@ -536,7 +549,7 @@ function AddRow({
               {t(choice ? (choice.kind === "own" ? "library.add.status.own" : "library.add.status.picked") : STATUS_LABELS[status])}
             </span>
             {reviewing && status === "choose" ? (
-              <button className="library-manage-button" type="button" aria-expanded={choosing} onClick={onChoosing}>
+              <button className="app-button" type="button" aria-expanded={choosing} onClick={onChoosing}>
                 {t(choice ? "library.add.change" : "library.add.pick")}<ChevronDown aria-hidden="true" />
               </button>
             ) : null}
@@ -556,7 +569,7 @@ function JobState({ job, own, onManage }: { job: LibraryAddJob; own: boolean; on
         <span><Check aria-hidden="true" />{t("library.add.job.done")}</span>
         {job.warning ? <small>{job.warning}</small> : null}
         {own && job.installationId ? (
-          <button className="library-manage-button" type="button" onClick={() => onManage(job.installationId!)}>
+          <button className="app-button" type="button" onClick={() => onManage(job.installationId!)}>
             {t("library.add.addMetadata")}
           </button>
         ) : null}
@@ -570,8 +583,8 @@ function JobState({ job, own, onManage }: { job: LibraryAddJob; own: boolean; on
   if (job.state === "queued") return <span className="library-add-job">{t("library.add.job.queued")}</span>;
   return (
     <span className="library-add-job is-running">
-      <span><LoaderCircle className="library-spin" aria-hidden="true" />{t(runningKey(job))}{percent !== null ? ` ${percent}%` : ""}</span>
-      {percent !== null ? <span className="library-add-progress" aria-hidden="true"><i style={{ width: `${percent}%` }} /></span> : null}
+      <span><LoaderCircle className="app-spin" aria-hidden="true" />{t(runningKey(job))}{percent !== null ? ` ${percent}%` : ""}</span>
+      <ProgressBar className="library-add-progress" percent={percent} size="slim" />
     </span>
   );
 }
@@ -617,8 +630,4 @@ function runningKey(job: LibraryAddJob): MessageKey {
     case "unpack": return "library.add.job.unpacking";
     case "add": return "library.add.job.adding";
   }
-}
-
-function workTitle(work: CatalogWork, preferEnglish: boolean): string {
-  return preferEnglish && work.titleEnglish.trim() ? work.titleEnglish : work.title;
 }

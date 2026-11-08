@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 
+import { useResizeObserver } from "../../app/useResizeObserver";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import { formatPlaybackTime } from "./audioPlayer";
 import { useMediaPlayback } from "./MediaPlaybackProvider";
@@ -76,15 +77,9 @@ export function TrackWaveform({
   const progress = duration > 0 ? Math.max(0, Math.min(1, position / duration)) : 0;
   const peaks = resampleWaveformPeaks(waveform.data?.peaks ?? [], bucketCount);
 
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-    const observer = new ResizeObserver(([entry]) => {
-      setBucketCount(waveformBucketCount(entry?.contentRect.width ?? root.clientWidth));
-    });
-    observer.observe(root);
-    return () => observer.disconnect();
-  }, []);
+  useResizeObserver(rootRef, (root, entry) => {
+    setBucketCount(waveformBucketCount(entry?.contentRect.width ?? root.clientWidth));
+  });
 
   useEffect(() => {
     onDuration?.(waveform.data ? waveform.data.durationMs / 1_000 : null);

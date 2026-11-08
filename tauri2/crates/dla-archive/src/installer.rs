@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
     io::{BufReader, Read, Write},
     path::{Path, PathBuf},
@@ -111,6 +111,7 @@ impl PackageInstaller for DesktopPackageInstaller {
             return Err(PackagePreparationError::UnsafePackage);
         }
         validate_internal_paths(&manifest)?;
+        validate_planned_paths(request, &manifest)?;
         let (_, sources) = resolve_source_files(&request.source_root, &request.source_set)
             .map_err(PackagePreparationError::adapter)?;
         validate_source_hashes(request, &sources, cancellation)?;
@@ -443,6 +444,39 @@ fn validate_internal_paths(manifest: &PackageManifest) -> Result<(), PackagePrep
         ));
     }
     Ok(())
+}
+
+/// The folder and the file to start come from the scan. An archive scanned
+/// before the launcher read Shift-JIS names has them under names its files
+/// no longer get, and would install without a way to start it.
+fn validate_planned_paths(
+    request: &PackageInstallExecution,
+    manifest: &PackageManifest,
+) -> Result<(), PackagePreparationError> {
+    let plan = &request.inspection.install_plan;
+    let paths = manifest
+        .entries
+        .iter()
+        .filter_map(|entry| entry.relative_path.as_ref())
+        .map(|path| path.as_str())
+        .collect::<BTreeSet<_>>();
+    let folder_found = plan.content_root.as_ref().is_none_or(|root| {
+        let inside = format!("{}/", root.as_str());
+        paths
+            .iter()
+            .any(|path| *path == root.as_str() || path.starts_with(&inside))
+    });
+    let start_found = plan
+        .preferred_action
+        .as_ref()
+        .is_none_or(|action| paths.contains(action.relative_path.as_str()));
+    if folder_found && start_found {
+        Ok(())
+    } else {
+        Err(PackagePreparationError::adapter(
+            "the archive's files changed since it was scanned; scan it again before installing",
+        ))
+    }
 }
 
 fn validate_destination_parent(path: &str) -> Result<PathBuf, PackagePreparationError> {
@@ -1445,6 +1479,30 @@ mod tests {
                 .expect("progress")
                 .contains(&PackagePreparationStage::Verifying)
         );
+
+        // Scanned before Shift-JIS names were read: the file to start has a
+        // name the archive's files no longer get.
+        let mut stale = PackageInstallExecution {
+            destination_name: "Stale".to_owned(),
+            ..request.clone()
+        };
+        stale.inspection.install_plan.preferred_action = stale
+            .inspection
+            .install_plan
+            .preferred_action
+            .map(|action| PackageLaunchCandidate {
+                relative_path: RelativePath::parse("Work/â^âC.exe").expect("garbled"),
+                ..action
+            });
+        let error = DesktopPackageInstaller::new()
+            .extract(
+                &stale,
+                &PackagePreparationCancellationToken::default(),
+                &progress,
+            )
+            .expect_err("stale scan");
+        assert!(error.to_string().contains("scan it again"), "{error}");
+        assert!(!directory.path().join("Stale").exists());
 
         let occupied = directory.path().join("Occupied");
         fs::create_dir(&occupied).expect("occupied destination");

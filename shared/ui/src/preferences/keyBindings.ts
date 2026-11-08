@@ -1,4 +1,5 @@
 import type { MessageKey } from "../i18n/catalogs";
+import { readStoredJson, writeStoredJson } from "./browserStorage";
 
 export const bindingScopes = ["global", "playback", "video", "reader"] as const;
 
@@ -133,22 +134,11 @@ export function ariaKeyShortcuts(combos: readonly string[]): string | undefined 
 }
 
 export function readKeyBindingOverrides(): KeyBindingOverrides {
-  if (typeof window === "undefined") return {};
-  try {
-    const stored = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "{}") as unknown;
-    return sanitizeOverrides(stored);
-  } catch {
-    return {};
-  }
+  return sanitizeOverrides(readStoredJson(STORAGE_KEY) ?? {});
 }
 
 export function writeKeyBindingOverrides(overrides: KeyBindingOverrides): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides));
-  } catch {
-    return;
-  }
+  writeStoredJson(STORAGE_KEY, overrides);
 }
 
 export function sanitizeOverrides(value: unknown): KeyBindingOverrides {

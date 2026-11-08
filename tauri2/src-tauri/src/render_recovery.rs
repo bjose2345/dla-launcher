@@ -4,7 +4,7 @@
 //! restarts it; hiding only the web view does not. The page asks for this when
 //! frames stop arriving while someone is using the window.
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(feature = "chromium")))]
 #[tauri::command]
 pub fn recover_webview_rendering(window: tauri::WebviewWindow) -> Result<(), String> {
     use std::time::Duration;
@@ -39,7 +39,7 @@ pub fn recover_webview_rendering(window: tauri::WebviewWindow) -> Result<(), Str
         .map_err(|error| error.to_string())
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(any(not(target_os = "linux"), feature = "chromium"))]
 #[tauri::command]
 pub fn recover_webview_rendering() -> Result<(), String> {
     Ok(())

@@ -7,7 +7,8 @@
     "resources": {
       "binaries/7zip/windows/7z.dll": "7z.dll",
       "binaries/7zip/windows/License.txt": "licenses/7-Zip.txt",
-      "binaries/cloudflared/LICENSE": "licenses/cloudflared.txt"
+      "binaries/cloudflared/LICENSE": "licenses/cloudflared.txt",
+      "../crates/dla-translator/data/JMnedict-NOTICE.txt": "licenses/JMnedict.txt"
     }
   }
 }

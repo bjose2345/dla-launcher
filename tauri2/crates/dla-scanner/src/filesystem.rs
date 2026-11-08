@@ -1,3 +1,4 @@
+use dla_application::paths::resolve_within;
 use std::{
     fmt::Write as _,
     fs::{self, File},
@@ -276,26 +277,11 @@ fn normalize_relative_key(relative_path: &str) -> String {
 
 fn resolve_child_path(root: &Path, relative_path: &str) -> Result<PathBuf, String> {
     let relative = Path::new(relative_path);
-    if relative.is_absolute()
-        || relative.components().any(|component| {
-            matches!(
-                component,
-                Component::ParentDir | Component::RootDir | Component::Prefix(_)
-            )
-        })
-    {
-        return Err("the scan entry path is outside the approved root".to_owned());
-    }
-    let path = root.join(relative);
-    let metadata = fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
+    let metadata = fs::symlink_metadata(root.join(relative)).map_err(|error| error.to_string())?;
     if metadata.file_type().is_symlink() {
         return Err("symbolic-link files cannot be hashed".to_owned());
     }
-    let canonical = path.canonicalize().map_err(|error| error.to_string())?;
-    if !canonical.starts_with(root) {
-        return Err("the scan entry resolved outside the approved root".to_owned());
-    }
-    Ok(canonical)
+    resolve_within(root, relative).map_err(|error| error.to_string())
 }
 
 fn digest_reader<D: Digest + Default>(

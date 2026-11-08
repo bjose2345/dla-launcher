@@ -1,3 +1,4 @@
+import { timeLeftText } from "../../app/ProgressBar";
 import { formatByteSize } from "../../formatByteSize";
 import type { MessageKey } from "../../i18n/catalogs";
 import type { DeliveryJob, DeliveryProblem, DeliveryProgress } from "./types";
@@ -63,8 +64,5 @@ export function jobProgressFraction(job: DeliveryJob, progress: DeliveryProgress
 /** Remaining time, phrased for people, from a measured rate in bytes per second. */
 export function remainingText(t: Translate, remainingBytes: number, bytesPerSecond: number): string | null {
   if (!(bytesPerSecond > 0) || remainingBytes <= 0) return null;
-  const minutes = Math.ceil(remainingBytes / bytesPerSecond / 60);
-  if (minutes <= 1) return t("delivery.eta.soon");
-  if (minutes < 60) return t("delivery.eta.minutes", { minutes });
-  return t("delivery.eta.hours", { hours: Math.floor(minutes / 60), minutes: minutes % 60 });
+  return timeLeftText(t, remainingBytes / bytesPerSecond);
 }

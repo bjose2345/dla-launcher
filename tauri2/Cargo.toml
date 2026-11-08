@@ -11,11 +11,14 @@ members = [
   "crates/dla-cover-cache",
   "crates/dla-detection",
   "crates/dla-domain",
+  "crates/dla-game-translation",
   "crates/dla-launch",
   "crates/dla-media",
   "crates/dla-scanner",
   "crates/dla-search-tantivy",
   "crates/dla-sqlite",
+  "crates/dla-translation-relay",
+  "crates/dla-translator",
   "src-tauri",
 ]
 
@@ -37,13 +40,17 @@ dla-delivery = { path = "crates/dla-delivery" }
 dla-cover-cache = { path = "crates/dla-cover-cache" }
 dla-detection = { path = "crates/dla-detection" }
 dla-domain = { path = "crates/dla-domain" }
+dla-game-translation = { path = "crates/dla-game-translation" }
 dla-launch = { path = "crates/dla-launch" }
 dla-media = { path = "crates/dla-media" }
 dla-scanner = { path = "crates/dla-scanner" }
 dla-search-tantivy = { path = "crates/dla-search-tantivy" }
 dla-sqlite = { path = "crates/dla-sqlite" }
+dla-translation-relay = { path = "crates/dla-translation-relay" }
+dla-translator = { path = "crates/dla-translator" }
 base64 = "=0.22.1"
 encoding_rs = "=0.8.42"
+flate2 = { version = "=1.1.10", default-features = false, features = ["zlib-rs"] }
 lindera = { version = "=5.2.0", default-features = false, features = ["embed-ipadic"] }
 lindera-tantivy = { version = "=5.0.1", default-features = false, features = ["embed-ipadic"] }
 libc = "=0.2.190"
@@ -54,6 +61,7 @@ rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled
 rusqlite_migration = "=2.6.0"
 fs2 = "=0.4.3"
 hex = "=0.4.3"
+# Verifies the signatures `cargo tauri signer` makes, as in DLA Collab.
 image = { version = "=0.25.9", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
 quick-xml = "=0.41.0"
 serde = { version = "=1.0.229", features = ["derive"] }
@@ -64,6 +72,7 @@ symphonia = { version = "=0.6.1", features = ["all"] }
 tar = "=0.4.46"
 tantivy = { version = "=0.26.2", default-features = true }
 thiserror = "=2.0.21"
+tiny_http = "=0.12.0"
 time = { version = "=0.3.55", features = ["formatting"] }
 ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
 url = "=2.5.8"

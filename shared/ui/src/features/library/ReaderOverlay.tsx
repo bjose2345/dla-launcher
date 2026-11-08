@@ -6,13 +6,12 @@ import {
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from "react";
 
 import { AlertTriangle, X } from "lucide-react";
 
-import { useDocumentScrollLock } from "../../app/useDocumentScrollLock";
+import { useModalDialog } from "../../app/useModalDialog";
 import { useBoundKeys } from "../../preferences/KeyBindingsProvider";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import { readImageViewerPreferences, type ImageSetViewer } from "./imageViewerModel";
@@ -29,7 +28,12 @@ export function ReaderOverlay({ gateway }: { gateway: LibraryGateway }) {
   const { locale, t } = usePresentation();
   const overlayRef = useRef<HTMLDivElement>(null);
   const [moved, setMoved] = useState<{ sessionId: string; viewer: ImageSetViewer } | null>(null);
-  useDocumentScrollLock(Boolean(reader.session));
+  // Escape is one of the reader's own keys, bound below.
+  useModalDialog({
+    open: Boolean(reader.session),
+    dialog: overlayRef,
+    initialFocus: () => readerElement(overlayRef.current),
+  });
   const readerHandlers = useMemo(() => ({
     readerClose: () => void reader.close(),
   }), [reader.close]);
@@ -37,16 +41,6 @@ export function ReaderOverlay({ gateway }: { gateway: LibraryGateway }) {
     enabled: Boolean(reader.session),
     ignoreInteractive: false,
   });
-
-  useEffect(() => {
-    if (!reader.session) return;
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const frame = requestAnimationFrame(() => focusReader(overlayRef.current));
-    return () => {
-      cancelAnimationFrame(frame);
-      if (previousFocus?.isConnected) previousFocus.focus();
-    };
-  }, [reader.session]);
 
   const { handOver } = reader;
   const sessionId = reader.session?.id;
@@ -88,7 +82,6 @@ export function ReaderOverlay({ gateway }: { gateway: LibraryGateway }) {
       aria-modal="true"
       aria-label={`${readerLabel}: ${reader.title(locale !== "ja-JP")}`}
       tabIndex={-1}
-      onKeyDown={trapFocus}
     >
       <Suspense fallback={null}>
         {viewer === "viewer" ? (
@@ -115,40 +108,10 @@ function FocusLoadedReader({ overlay }: { overlay: RefObject<HTMLDivElement | nu
 
 // The reader itself takes focus rather than its first button, so the page
 // keys work at once and Space turns the page instead of pressing Back.
+function readerElement(overlay: HTMLElement | null): HTMLElement | null {
+  return overlay ? overlay.querySelector<HTMLElement>(".reader") ?? overlay : null;
+}
+
 function focusReader(overlay: HTMLElement | null) {
-  if (!overlay) return;
-  (overlay.querySelector<HTMLElement>(".reader") ?? overlay).focus();
-}
-
-const focusableSelector = [
-  "a[href]",
-  "button:not([disabled])",
-  "input:not([disabled])",
-  "select:not([disabled])",
-  "textarea:not([disabled])",
-  "[tabindex]:not([tabindex='-1'])",
-].join(",");
-
-function focusableElements(container: HTMLElement): HTMLElement[] {
-  return [...container.querySelectorAll<HTMLElement>(focusableSelector)]
-    .filter((element) => !element.hidden && element.tabIndex >= 0 && element.getAttribute("aria-hidden") !== "true");
-}
-
-function trapFocus(event: ReactKeyboardEvent<HTMLDivElement>) {
-  if (event.key !== "Tab") return;
-  const focusable = focusableElements(event.currentTarget);
-  if (!focusable.length) {
-    event.preventDefault();
-    event.currentTarget.focus();
-    return;
-  }
-  const first = focusable[0]!;
-  const last = focusable[focusable.length - 1]!;
-  if (event.shiftKey && (document.activeElement === first || !event.currentTarget.contains(document.activeElement))) {
-    event.preventDefault();
-    last.focus();
-  } else if (!event.shiftKey && (document.activeElement === last || !event.currentTarget.contains(document.activeElement))) {
-    event.preventDefault();
-    first.focus();
-  }
+  readerElement(overlay)?.focus();
 }

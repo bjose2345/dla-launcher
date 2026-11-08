@@ -157,7 +157,7 @@
   width: 22px;
   flex: 0 0 auto;
   color: var(--color-primary);
-  animation: search-spin 900ms linear infinite;
+  animation: app-spin 900ms linear infinite;
 }
 
 .search-index-state.failed > svg {
@@ -185,24 +185,8 @@
 }
 
 .search-index-progress {
-  position: relative;
   width: min(420px, 100%);
-  height: 4px;
   margin: 3px 0;
-  overflow: hidden;
-  background: color-mix(in oklch, var(--color-base-content) 14%, transparent);
-}
-
-.search-index-progress i {
-  display: block;
-  height: 100%;
-  background: var(--color-primary);
-  transition: width 160ms ease-out;
-}
-
-.search-index-progress.is-indeterminate i {
-  width: 34%;
-  animation: search-progress 1.1s ease-in-out infinite;
 }
 
 .search-index-state button,
@@ -399,7 +383,7 @@
 }
 
 .search-progress svg {
-  animation: search-spin 900ms linear infinite;
+  animation: app-spin 900ms linear infinite;
 }
 
 .search-error svg {
@@ -521,17 +505,9 @@
   height: 13px;
 }
 
-@keyframes search-spin {
-  to { transform: rotate(360deg); }
-}
-
-@keyframes search-progress {
-  from { transform: translateX(-110%); }
-  to { transform: translateX(310%); }
-}
-
 .scanner-page {
   --scanner-gutter: max(16px, calc((100% - 1060px) / 2));
+  --page-gutter: var(--scanner-gutter);
 
   min-height: 0;
   width: 100%;
@@ -548,48 +524,6 @@
 
 /* ── masthead ─────────────────────────────────────────────── */
 
-.scanner-masthead {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 34px var(--scanner-gutter) 26px;
-  border-bottom: 1px solid var(--app-border);
-  background-color: var(--app-backdrop);
-  background-image: radial-gradient(color-mix(in oklch, var(--color-base-content) 13%, transparent) 0.8px, transparent 0.8px);
-  background-size: 17px 17px;
-}
-
-.scanner-masthead-title {
-  min-width: 0;
-}
-
-.scanner-eyebrow {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-bottom: 6px;
-  color: var(--color-primary);
-  font-size: 0.62rem;
-  font-weight: 850;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-}
-
-.scanner-eyebrow svg {
-  width: 13px;
-  height: 13px;
-}
-
-.scanner-masthead h1 {
-  margin: 0;
-  font-size: clamp(1.7rem, 3.4vw, 2.5rem);
-  font-weight: 850;
-  letter-spacing: -0.045em;
-  line-height: 1;
-}
-
 .scanner-actions {
   display: flex;
   flex-wrap: wrap;
@@ -597,51 +531,6 @@
 }
 
 /* ── buttons ──────────────────────────────────────────────── */
-
-.scanner-button {
-  display: inline-flex;
-  min-height: 38px;
-  align-items: center;
-  gap: 8px;
-  padding: 0 16px;
-  border: 0;
-  box-shadow: inset 0 0 0 1px var(--app-border);
-  clip-path: var(--app-chip);
-  background: var(--app-panel-raised);
-  color: var(--app-muted);
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.77rem;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.scanner-button svg {
-  width: 15px;
-  height: 15px;
-}
-
-.scanner-button:hover:not(:disabled) {
-  color: var(--color-base-content);
-}
-
-.scanner-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.scanner-button-primary {
-  background: var(--color-primary);
-  box-shadow: none;
-  color: var(--color-primary-content);
-  font-weight: 850;
-}
-
-.scanner-button-danger {
-  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-error) 45%, transparent);
-  background: color-mix(in oklch, var(--color-error) 12%, transparent);
-  color: var(--color-error);
-}
 
 /* ── progress ─────────────────────────────────────────────── */
 
@@ -727,36 +616,6 @@
   height: 16px;
 }
 
-.scanner-callout {
-  display: flex;
-  align-items: flex-start;
-  gap: 11px;
-  padding: 13px 15px;
-  border-left: 2px solid var(--color-error);
-  background: color-mix(in oklch, var(--color-error) 10%, transparent);
-  color: var(--color-error);
-  font-size: 0.8rem;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.scanner-callout svg {
-  width: 16px;
-  height: 16px;
-  flex: none;
-  margin-top: 1px;
-}
-
-.scanner-spin {
-  animation: scanner-spin 900ms linear infinite;
-}
-
-@keyframes scanner-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 @media (max-width: 760px) {
   .search-modal-footer > span {
     display: none;
@@ -771,16 +630,5 @@
   .scanner-masthead {
     align-items: flex-start;
     flex-direction: column;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .search-index-progress.is-indeterminate i {
-    animation: none;
-    transform: translateX(95%);
-  }
-
-  .scanner-spin {
-    animation: none;
   }
 }

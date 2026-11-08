@@ -20,6 +20,10 @@ pub fn embedded() -> Option<EmbeddedAccess> {
     unmask(option_env!("DLA_LAUNCHER_ACCESS_BLOB")?)
 }
 
+pub fn overlays() -> Option<EmbeddedAccess> {
+    unmask(option_env!("DLA_LAUNCHER_OVERLAYS_ACCESS_BLOB")?)
+}
+
 fn unmask(blob: &str) -> Option<EmbeddedAccess> {
     let bytes = decode_hex(blob)?;
     if bytes.is_empty() || bytes.len() % 2 != 0 {

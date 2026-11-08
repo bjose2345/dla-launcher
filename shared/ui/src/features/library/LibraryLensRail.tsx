@@ -43,7 +43,7 @@ export function LibraryLensRail({
 }) {
   const { t } = usePresentation();
   return (
-    <nav className="library-lens-rail" aria-label={t("library.home.filterLabel")}>
+    <nav className="library-lens-rail scrollbar-hidden" aria-label={t("library.home.filterLabel")}>
       {libraryLenses.map((candidate) => {
         const count = counts.get(candidate) ?? 0;
         if (candidate !== "all" && count === 0) return null;

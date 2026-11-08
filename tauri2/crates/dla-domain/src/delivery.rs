@@ -55,6 +55,8 @@ pub enum DeliveryProblem {
     /// The catalog release has no complete set of archives with SHA-256
     /// values, or the server does not hold them.
     NotInArchive,
+    /// The account may not read it, such as a translation for Elite members.
+    Forbidden,
     /// The account's monthly download allowance is used up.
     Allowance,
     /// The account is already downloading from another device.

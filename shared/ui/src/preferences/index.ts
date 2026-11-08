@@ -1,4 +1,4 @@
-export { SettingsPage } from "./SettingsPage";
+export { SettingsPage, type FileNameGateway } from "./SettingsPage";
 export {
   parseSettingsSearch,
   parseSettingsTab,

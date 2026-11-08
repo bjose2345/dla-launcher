@@ -4,6 +4,7 @@ import type {
   CatalogRecommendationLaneKey,
   CatalogRecommendations,
 } from "./types";
+import { localizedName } from "./localizedNames";
 
 const laneOrder: readonly CatalogRecommendationLaneKey[] = ["same_circle", "similar"];
 
@@ -23,9 +24,7 @@ export function recommendationReasonLabels(
 ): string[] {
   const seen = new Set<string>();
   return item.reasons.flatMap((reason) => {
-    const label = englishLabels && reason.labelEnglish.trim()
-      ? reason.labelEnglish.trim()
-      : reason.label.trim();
+    const label = localizedName(reason.label, reason.labelEnglish, englishLabels).trim();
     const key = label.toLocaleLowerCase();
     if (!label || seen.has(key)) return [];
     seen.add(key);

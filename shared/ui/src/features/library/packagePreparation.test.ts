@@ -4,11 +4,11 @@ import {
   mergePackagePreparationProgress,
   packagePreparationCanCancel,
   packagePreparationIsIndeterminate,
-  packagePreparationIsTerminal,
   packagePreparationNeedsPreparedRefresh,
   type PackagePreparationProgress,
   type PackagePreparationStage,
 } from "./types";
+import { operationIsTerminal } from "../../app/operationStage";
 
 function progress(
   stage: PackagePreparationStage,
@@ -33,7 +33,7 @@ function progress(
 describe("package preparation presentation state", () => {
   it.each<PackagePreparationStage>(["completed", "cancelled", "failed"])(
     "treats %s as terminal",
-    (stage) => expect(packagePreparationIsTerminal(stage)).toBe(true),
+    (stage) => expect(operationIsTerminal(stage)).toBe(true),
   );
 
   it.each<PackagePreparationStage>(["queued", "validating", "extracting", "activating", "cleaning_sources"])(
@@ -43,7 +43,7 @@ describe("package preparation presentation state", () => {
 
   it("reserves determinate progress for verification and terminal states", () => {
     expect(packagePreparationIsIndeterminate("verifying")).toBe(false);
-    expect(packagePreparationIsTerminal("verifying")).toBe(false);
+    expect(operationIsTerminal("verifying")).toBe(false);
   });
 
   it.each<PackagePreparationStage>(["queued", "validating", "extracting", "verifying", "activating"])(

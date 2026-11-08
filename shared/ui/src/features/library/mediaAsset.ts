@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 
+import { errorMessage } from "../../app/errorMessage";
+import type { MediaDelivery } from "./types";
+
 export interface MaterializedMediaSource {
   source: string;
   url: string;
@@ -72,7 +75,7 @@ export function useMediaAssetProbe(source: string, retryVersion = 0): MediaAsset
         setState({
           source,
           loading: false,
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage(error),
           failure: error instanceof MediaAssetError ? error.failure : "unavailable",
         });
       });
@@ -87,7 +90,13 @@ export function useMediaAssetProbe(source: string, retryVersion = 0): MediaAsset
     : { source, loading: true, error: "", failure: null };
 }
 
-export function useMaterializedMediaSource(source: string): MaterializedMediaSource {
+/**
+ * The URL the audio element plays: the media URL itself once a HEAD request
+ * has confirmed the asset (stream delivery), or a blob of the whole track
+ * (blob delivery, for a webview that cannot stream the protocol). Either way a
+ * missing or refused asset reports its failure before anything plays.
+ */
+export function useMaterializedMediaSource(source: string, delivery: MediaDelivery = "blob"): MaterializedMediaSource {
   const [state, setState] = useState<MaterializedMediaSource>({
     source,
     url: "",
@@ -105,11 +114,15 @@ export function useMaterializedMediaSource(source: string): MaterializedMediaSou
     let disposed = false;
     let objectUrl = "";
     setState({ source, url: "", loading: true, error: "", failure: null });
-    void fetchMediaAsset(source, controller.signal)
-      .then((blob) => {
-        if (disposed) return;
+    const materialize = delivery === "stream"
+      ? probeMediaAsset(source, controller.signal).then(() => source)
+      : fetchMediaAsset(source, controller.signal).then((blob) => {
         objectUrl = URL.createObjectURL(blob);
-        setState({ source, url: objectUrl, loading: false, error: "", failure: null });
+        return objectUrl;
+      });
+    void materialize
+      .then((url) => {
+        if (!disposed) setState({ source, url, loading: false, error: "", failure: null });
       })
       .catch((error: unknown) => {
         if (disposed || (error instanceof DOMException && error.name === "AbortError")) return;
@@ -117,7 +130,7 @@ export function useMaterializedMediaSource(source: string): MaterializedMediaSou
           source,
           url: "",
           loading: false,
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage(error),
           failure: error instanceof MediaAssetError ? error.failure : "unavailable",
         });
       });
@@ -127,7 +140,7 @@ export function useMaterializedMediaSource(source: string): MaterializedMediaSou
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [source]);
+  }, [delivery, source]);
 
   return state.source === source
     ? state

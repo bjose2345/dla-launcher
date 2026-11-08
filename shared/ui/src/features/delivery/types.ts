@@ -1,3 +1,5 @@
+import { errorMessage } from "../../app/errorMessage";
+
 export type DeliveryStatus =
   | "queued"
   | "downloading"
@@ -14,6 +16,7 @@ export type DeliveryProblem =
   | "too_many_attempts"
   | "unreachable"
   | "not_in_archive"
+  | "forbidden"
   | "allowance"
   | "busy"
   | "disk_space"
@@ -99,6 +102,7 @@ const PROBLEMS: readonly DeliveryProblem[] = [
   "too_many_attempts",
   "unreachable",
   "not_in_archive",
+  "forbidden",
   "allowance",
   "busy",
   "disk_space",
@@ -115,7 +119,7 @@ export function deliveryFailure(error: unknown): DeliveryFailure {
       return { problem: problem as DeliveryProblem, detail: typeof detail === "string" ? detail : "" };
     }
   }
-  return { problem: "unavailable", detail: error instanceof Error ? error.message : String(error) };
+  return { problem: "unavailable", detail: errorMessage(error) };
 }
 
 export function isActive(job: DeliveryJob): boolean {

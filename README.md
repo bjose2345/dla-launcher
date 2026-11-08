@@ -1,8 +1,10 @@
 # DLA Launcher
 
 DLA Launcher is an open-source, local-first catalog, library, scanner, reader,
-player, and launcher for a user's DLsite works. It is built with Tauri 2, Rust,
-React, TypeScript, Vite, TanStack, SQLite, and Tantivy.
+player, and launcher for a user's DLsite works. It is built with Tauri, Rust,
+React, TypeScript, Vite, TanStack, SQLite, and Tantivy: Tauri 2 on the system
+webview for Windows, and on Linux Tauri 3 with the Chromium Embedded Framework
+(CEF), so the launcher carries its own browser engine there.
 
 This repository is the distributable product source. It contains no catalog
 database, imported package, user library, ROM collection, or personal path.
@@ -43,23 +45,32 @@ runtime coverage. macOS and iOS are not currently release targets.
 
 ## Linux support
 
-The supported Linux desktop baseline is x86_64 Debian 12 or Ubuntu 22.04 and
-newer. Native Wayland and X11 sessions are tested. RPM builds for other modern
-distributions are supported on a best-effort basis until each distribution
-receives a native runtime gate.
+Two Linux builds exist, from the same code:
 
-AppImage distribution is temporarily withheld. The Tauri 2.11 AppImage bundler
-mixes build-host GLib, Wayland, and GStreamer libraries with newer host graphics
-stacks, which can leave a blank window on current Mesa systems. AppImage will
-return only after the upstream incompatibility is resolved and the artifact
-passes launch and multimedia gates on both the supported baseline and a current
-Wayland system.
+- The Chromium build (`tauri3/`, Tauri 3 with CEF) is the Linux release build
+  since 0.1.0-alpha.5: the only Linux package the releases carry, a DEB for
+  x86_64 (package `dla-launcher`, which replaces an installed WebKitGTK package
+  in place). It needs GTK 4.14 or newer: Ubuntu 24.04, Debian 13, Fedora 40 or
+  later. Chromium ships inside the package, so it is a few hundred MB, decodes
+  video itself (H.264, AAC, VP9, AV1; H.265 not yet) and plays it in the page.
+  It runs as an X11 client, under XWayland on a Wayland session. Other
+  distributions build it from source; no RPM is published.
+- The WebKitGTK build (`tauri2/`, Tauri 2 on the system webview) is no longer
+  published. It stays buildable from source as DEB and RPM for x86_64 Debian 12
+  or Ubuntu 22.04 and newer, as the fallback and for the Wine and Linux
+  verification gates, and keeps WebKit's media limits: audio is copied into a
+  blob per track and video plays through a separate webview window.
+
+AppImage distribution is withheld. The Tauri 2.11 AppImage bundler mixes
+build-host GLib, Wayland, and GStreamer libraries with newer host graphics
+stacks, which can leave a blank WebKitGTK window on current Mesa systems; the
+Chromium build's AppImage builds but has not passed a release gate yet.
 
 DLA Launcher requires a graphical Wayland or X11-compatible session; headless
-and direct-framebuffer systems are not supported. GTK selects the available
-display backend automatically, and WebKitGTK GPU compositing remains enabled by
-default. Users should launch the installed application normally rather than
-setting `GDK_BACKEND` or disabling compositing.
+and direct-framebuffer systems are not supported. For the WebKitGTK build, GTK
+selects the available display backend automatically and GPU compositing
+remains enabled by default; launch the installed application normally rather
+than setting `GDK_BACKEND` or disabling compositing.
 
 ## Build from source
 
@@ -70,7 +81,7 @@ git clone https://github.com/bjose2345/dla-launcher.git
 cd dla-launcher
 corepack enable
 pnpm install --frozen-lockfile
-cargo install tauri-cli --version 2.12.1 --locked
+cargo install tauri-cli --version 2.12.4 --locked
 sh tauri2/scripts/fetch-cloudflared.sh
 sh tauri2/scripts/fetch-7zip.sh
 cd tauri2
@@ -84,9 +95,20 @@ cd tauri2
 cargo tauri build --ci
 ```
 
-Windows produces MSI and NSIS installers. Linux produces DEB and RPM packages;
-AppImage is currently excluded by the Linux release configuration. Android
-setup and release signing are documented in [Building](docs/BUILDING.md#android).
+Windows produces MSI and NSIS installers. From `tauri2/`, Linux produces DEB
+and RPM packages of the WebKitGTK build, which the releases no longer carry;
+the Chromium build, the Linux release build, has its own prerequisites and
+CLI, described in [Building](docs/BUILDING.md#linux-chromium-build):
+
+```bash
+bash tauri3/scripts/install-tauri-cli.sh
+bash tauri3/scripts/prepare-runtime-cef.sh
+cd tauri3
+cargo tauri build --ci --bundles deb
+```
+
+Android setup and release signing are documented in
+[Building](docs/BUILDING.md#android).
 
 The desktop packages bundle [cloudflared](https://github.com/cloudflare/cloudflared)
 (Apache-2.0) and the official [7-Zip](https://www.7-zip.org/) console tool
@@ -107,7 +129,13 @@ cargo fmt --all --check
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo tauri build --ci --no-bundle
+cd ../tauri3
+cargo clippy -p dla-launcher-chromium --all-targets -- -D warnings
+cargo test -p dla-launcher-chromium
 ```
+
+The last two need the Chromium build's prerequisites from
+[Building](docs/BUILDING.md#linux-chromium-build).
 
 Platform-specific runtime checks remain necessary; a cross-compile alone does
 not prove that native dialogs, storage, launch, media, or Android flows work.
@@ -123,6 +151,8 @@ tauri2/src-tauri/    Tauri composition root and platform configuration
 tauri2/ui/           Thin Tauri frontend gateway and router
 tauri2/scripts/      Sidecar fetch, Windows build, and Android verification scripts
 tauri2/tests/        Native Android test applications
+tauri3/              The Chromium build: Tauri 3 manifests, runtime patches and scripts
+tauri3/cef-build/    Scripts that build the project's CEF with the video decoders
 docs/                Public build documentation
 ```
 

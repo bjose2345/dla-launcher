@@ -1,5 +1,5 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 import { AnchoredPopover } from "../../app/AnchoredPopover";
 import {
@@ -9,6 +9,7 @@ import {
   catalogPageRange,
   catalogPageSlice,
 } from "./catalogPagination";
+import { localizedName } from "./localizedNames";
 import {
   catalogActivityKind,
   catalogUpdateLabel,
@@ -161,7 +162,7 @@ export function CatalogResults({
       />
       <div className="catalog-scroll-frame">
         <div
-          className="catalog-scroll catalog-timeline-scroll"
+          className="catalog-scroll catalog-timeline-scroll scrollbar-hidden"
           id="catalog-timeline-scroll"
           ref={viewport}
         >
@@ -463,37 +464,7 @@ function CatalogGridView({
   return (
     <div className="catalog-grid-view">
       <div className={`catalog-grid-page ${ready ? "" : "is-loading"}`} aria-busy={!ready}>
-        {groups ? groups.map((group) => (
-          <section className="catalog-grid-day" key={group.key}>
-            <div className="catalog-grid-day-heading">
-              <DateMarker day={group.day} count={dayCounts.get(group.key) ?? group.works.length} />
-              <span aria-hidden="true" />
-            </div>
-            <div className="catalog-work-grid catalog-flat-grid">
-              {group.works.map((work, index) => (
-                <CatalogWorkCard
-                  work={work}
-                  englishLabels={englishLabels}
-                  onOpenWork={onOpenWork}
-                  animationIndex={index}
-                  key={work.code}
-                />
-              ))}
-            </div>
-          </section>
-        )) : (
-          <div className="catalog-work-grid catalog-flat-grid">
-            {works.map((work, index) => (
-              <CatalogWorkCard
-                work={work}
-                englishLabels={englishLabels}
-                onOpenWork={onOpenWork}
-                animationIndex={index}
-                key={work.code}
-              />
-            ))}
-          </div>
-        )}
+        <CatalogGridDays groups={groups} works={works} dayCounts={dayCounts} englishLabels={englishLabels} onOpenWork={onOpenWork} />
         {!ready && <div className="catalog-page-loading">{t("catalog.loadingPage", { page })}</div>}
       </div>
       <CatalogPager
@@ -526,37 +497,121 @@ function CatalogLineGroup({
   measure: (node: Element | null) => void;
   offset: number;
 }) {
-  const { t } = usePresentation();
   const shown = expanded ? group.works : group.works.slice(0, catalogLinePreviewSize);
-  const hidden = group.works.length - shown.length;
+  return (
+    <CatalogLineDay
+      day={group.day}
+      count={group.works.length}
+      works={shown}
+      englishLabels={englishLabels}
+      onOpenWork={onOpenWork}
+      onShowAll={shown.length < group.works.length ? onExpand : undefined}
+      dataIndex={dataIndex}
+      measure={measure}
+      offset={offset}
+    />
+  );
+}
+
+/** The works of a page, grouped under a date marker per day when the page knows their days. */
+export function CatalogGridDays({
+  groups,
+  works,
+  dayCounts,
+  englishLabels,
+  showActivity = false,
+  onOpenWork,
+}: {
+  groups: CatalogDateGroup[] | null;
+  works: CatalogWork[];
+  dayCounts: Map<string, number>;
+  englishLabels: boolean;
+  showActivity?: boolean;
+  onOpenWork?: (code: string) => void | Promise<void>;
+}) {
+  const cards = (list: CatalogWork[]) => list.map((work, index) => (
+    <CatalogWorkCard
+      work={work}
+      englishLabels={englishLabels}
+      showActivity={showActivity}
+      onOpenWork={onOpenWork}
+      animationIndex={index}
+      key={work.code}
+    />
+  ));
+  if (!groups) return <div className="catalog-work-grid catalog-flat-grid">{cards(works)}</div>;
+  return groups.map((group) => (
+    <section className="catalog-grid-day" data-timeline-day={group.day ?? "unknown"} key={group.key}>
+      <div className="catalog-grid-day-heading">
+        <DateMarker day={group.day} count={dayCounts.get(group.key) ?? group.works.length} />
+        <span aria-hidden="true" />
+      </div>
+      <div className="catalog-work-grid catalog-flat-grid">{cards(group.works)}</div>
+    </section>
+  ));
+}
+
+/**
+ * One day of the line view: its date marker beside the works, a "show all"
+ * button while some are held back, and whatever the day still has to say
+ * (loading, an error) after its cards.
+ */
+export function CatalogLineDay({
+  day,
+  count,
+  works,
+  englishLabels,
+  showActivity = false,
+  onOpenWork,
+  onShowAll,
+  dataIndex,
+  measure,
+  offset,
+  children,
+}: {
+  day: string | null;
+  count: number;
+  works: CatalogWork[];
+  englishLabels: boolean;
+  showActivity?: boolean;
+  onOpenWork?: (code: string) => void | Promise<void>;
+  onShowAll?: () => void;
+  dataIndex: number;
+  measure: (node: Element | null) => void;
+  offset: number;
+  children?: ReactNode;
+}) {
+  const { t } = usePresentation();
   return (
     <section
       className="catalog-line-day"
       data-index={dataIndex}
-      data-timeline-day={group.day ?? "unknown"}
+      data-timeline-day={day ?? "unknown"}
       ref={measure}
       style={{ transform: `translateY(${offset}px)` }}
     >
       <div className="catalog-day-spine">
-        <DateMarker day={group.day} count={group.works.length} />
+        <DateMarker day={day} count={count} />
         <span aria-hidden="true" />
       </div>
       <div className="catalog-work-grid catalog-line-grid">
-        {shown.map((work, index) => (
+        {works.map((work, index) => (
           <CatalogWorkCard
             work={work}
             englishLabels={englishLabels}
-            lead={index === 0 && group.works.length >= 3}
+            lead={index === 0 && count >= 3}
+            showActivity={showActivity}
             onOpenWork={onOpenWork}
             animationIndex={index}
             key={work.code}
           />
         ))}
-        {hidden > 0 && (
-          <button className="catalog-show-all" type="button" onClick={onExpand}>
-            {t("catalog.showAll", { count: group.works.length })}
+        {onShowAll && (
+          <button className="catalog-show-all" type="button" onClick={onShowAll}>
+            {t("catalog.showAll", { count })}
           </button>
         )}
+        {children}
       </div>
     </section>
   );
@@ -626,11 +681,7 @@ export const CatalogWorkCard = memo(function CatalogWorkCard({
       <span className="catalog-work-card-copy">
         <strong>{work.title}</strong>
         <small>
-          {circle
-            ? englishLabels && circle.nameEnglish
-              ? circle.nameEnglish
-              : circle.name
-            : work.code}
+          {circle ? localizedName(circle.name, circle.nameEnglish, englishLabels) : work.code}
         </small>
       </span>
     </article>

@@ -1,0 +1,24 @@
+[package]
+name = "dla-game-translation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+dla-application.workspace = true
+dla-detection.workspace = true
+dla-domain.workspace = true
+flate2.workspace = true
+hex.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+walkdir.workspace = true
+
+[dev-dependencies]
+dla-sqlite.workspace = true
+dla-translation-relay.workspace = true
+dla-translator.workspace = true
+tempfile = "=3.27.0"
+time.workspace = true
+zip.workspace = true

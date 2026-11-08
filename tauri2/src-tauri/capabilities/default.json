@@ -7,6 +7,7 @@
   ],
   "permissions": [
     "core:default",
+    "clipboard-manager:allow-write-text",
     {
       "identifier": "opener:allow-open-url",
       "allow": [
@@ -24,6 +25,18 @@
         },
         {
           "url": "https://dlsitearchive.com/*"
+        },
+        {
+          "url": "https://ollama.com/*"
+        },
+        {
+          "url": "https://lmstudio.ai/*"
+        },
+        {
+          "url": "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+        },
+        {
+          "url": "https://aka.ms/vs/17/release/vc_redist.x86.exe"
         }
       ]
     }

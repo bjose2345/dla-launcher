@@ -141,13 +141,16 @@
   opacity: 0.48;
 }
 
+/* Played, then buffered, then the rest; one track, since a pseudo-element on
+   the input draws as a second bar on Chromium and not at all on WebKitGTK. */
 .media-dock-rail::-webkit-slider-runnable-track {
   height: 5px;
   border-radius: 999px;
   background: linear-gradient(
     90deg,
     var(--color-accent) 0 var(--media-dock-progress),
-    color-mix(in oklch, var(--color-base-content) 14%, transparent) var(--media-dock-progress) 100%
+    color-mix(in oklch, var(--color-base-content) 22%, transparent) var(--media-dock-progress) var(--media-dock-buffered, 0%),
+    color-mix(in oklch, var(--color-base-content) 14%, transparent) var(--media-dock-buffered, 0%) 100%
   );
 }
 
@@ -165,7 +168,11 @@
 .media-dock-rail::-moz-range-track {
   height: 5px;
   border-radius: 999px;
-  background: color-mix(in oklch, var(--color-base-content) 14%, transparent);
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklch, var(--color-base-content) 22%, transparent) 0 var(--media-dock-buffered, 0%),
+    color-mix(in oklch, var(--color-base-content) 14%, transparent) var(--media-dock-buffered, 0%) 100%
+  );
 }
 
 .media-dock-rail::-moz-range-progress {
@@ -229,6 +236,61 @@
   height: 15px;
 }
 
+.media-dock-volume-toggle {
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.media-dock-volume-toggle:hover,
+.media-dock-volume-toggle[aria-pressed="true"] {
+  color: var(--color-accent);
+}
+
+/* A hover hint over a dock control, as YouTube's: the action and its key. */
+.media-dock-hint-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.media-dock-hint {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgb(26 24 30 / 94%);
+  color: #fff;
+  font-size: 0.74rem;
+  font-weight: 700;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 4px);
+  transition: opacity 0.12s ease-out, transform 0.12s ease-out;
+}
+
+.media-dock-hint kbd {
+  padding: 1px 6px;
+  border: 1px solid rgb(255 255 255 / 40%);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 0.66rem;
+  line-height: 1.3;
+}
+
+.media-dock-hint-anchor:hover .media-dock-hint,
+.media-dock-hint-anchor:focus-within .media-dock-hint {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
 .media-dock-volume input {
   width: 84px;
   accent-color: var(--color-accent);
@@ -252,107 +314,58 @@
   }
 }
 
-.app-launch-pill {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid color-mix(in oklch, var(--color-success) 42%, transparent);
-  border-radius: 999px;
-  background: color-mix(in oklch, var(--color-success) 14%, transparent);
-}
-
-.app-launch-open {
+/* The word "Running" in the top bar while a game runs: a light sweeps over
+   the letters, the dots pulse, the time runs. Stop lives on the work's card. */
+.app-launch-running {
   display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 10px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--color-base-content);
-  cursor: pointer;
-}
-
-.app-launch-open:hover {
-  background: color-mix(in oklch, var(--color-success) 16%, transparent);
-}
-
-.app-launch-dot {
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-radius: 999px;
-  background: var(--color-success);
-  animation: library-state-pulse 1.6s infinite;
-}
-
-.app-launch-copy {
-  display: flex;
   align-items: baseline;
   gap: 7px;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--color-success);
+  cursor: pointer;
+  font: inherit;
 }
 
-.app-launch-copy strong {
-  font-size: 0.58rem;
-  font-weight: 800;
-  letter-spacing: 0.06em;
+.app-launch-running strong {
+  background:
+    linear-gradient(90deg, var(--color-success) 0%, color-mix(in oklch, var(--color-success) 30%, white) 50%, var(--color-success) 100%)
+    0 0 / 200% 100%;
+  background-clip: text;
+  color: transparent;
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
+  animation: app-shimmer 2.4s linear infinite;
 }
 
-.app-launch-copy small {
+.app-launch-running:hover strong {
+  animation-duration: 1.1s;
+}
+
+.app-launch-running small {
   color: var(--app-muted);
-  font-size: 0.58rem;
+  font-size: 0.6rem;
   font-variant-numeric: tabular-nums;
 }
 
-.app-launch-stop {
-  display: grid;
-  width: 26px;
-  height: 26px;
-  place-items: center;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--app-muted);
-  cursor: pointer;
-  transition: background 160ms cubic-bezier(0, 0, 0.2, 1), color 160ms cubic-bezier(0, 0, 0.2, 1);
-}
+@media (prefers-reduced-motion: reduce) {
+  .app-launch-running strong {
+    background: none;
+    color: var(--color-success);
+    animation: none;
+  }
 
-.app-launch-stop:hover:not(:disabled) {
-  background: color-mix(in oklch, var(--color-error) 22%, transparent);
-  color: var(--color-base-content);
-}
-
-.app-launch-stop:disabled {
-  cursor: progress;
-}
-
-.app-launch-stop svg {
-  width: 13px;
-  height: 13px;
+  .media-dock-hint {
+    transition: none;
+  }
 }
 
 @media (max-width: 600px) {
-  .app-topbar .app-launch-copy {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-  }
-
-  .app-topbar .app-launch-open {
-    padding-inline: 8px;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .app-launch-dot {
-    animation: none;
+  .app-topbar .app-launch-running small {
+    display: none;
   }
 }
 
@@ -525,6 +538,54 @@
   white-space: nowrap;
 }
 
+.library-table-code-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+/* What a work is, and EN when the Archive has a translation of it: flags
+   side by side in a cover's top-left corner, as on the catalog's cards. */
+.library-cover-flags {
+  position: absolute;
+  z-index: 2;
+  top: 9px;
+  left: 9px;
+  display: inline-flex;
+  gap: 3px;
+  max-width: calc(100% - 18px);
+  filter: drop-shadow(0 2px 6px rgb(0 0 0 / 40%));
+  pointer-events: none;
+}
+
+.library-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: rgb(12 12 18 / 86%);
+  color: rgb(255 255 255 / 90%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.5rem;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  line-height: 1.45;
+  text-transform: uppercase;
+  white-space: nowrap;
+  clip-path: var(--app-chip-sm);
+}
+
+.library-flag.is-translation {
+  background: linear-gradient(100deg, oklch(58% 0.2 295), oklch(72% 0.15 295));
+  color: #fff;
+}
+
+.library-flag svg {
+  width: 11px;
+  height: 11px;
+  flex: none;
+}
+
 .library-table-progress {
   display: flex;
   align-items: center;
@@ -620,18 +681,6 @@
   50% { opacity: 0.3; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .library-collection-state-dot {
-    animation: none;
-  }
-
-  .library-collection-frame,
-  .library-collection-cover .library-artwork,
-  .library-collection-copy strong {
-    transition: none;
-  }
-}
-
 .library-collection-card {
   min-width: 0;
 }
@@ -676,30 +725,6 @@
   inset: 0;
   background: linear-gradient(0deg, rgb(4 5 10 / 78%), transparent 58%);
   pointer-events: none;
-}
-
-.library-collection-kind,
-.library-collection-resume {
-  position: absolute;
-  top: 11px;
-  left: 11px;
-  padding: 5px 8px;
-  border: 1px solid rgb(255 255 255 / 20%);
-  background: rgb(8 8 14 / 60%);
-  color: #f4f1f5;
-  font-size: 0.5rem;
-  font-weight: 850;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  backdrop-filter: blur(10px);
-  clip-path: var(--app-chip);
-}
-
-.library-collection-resume {
-  right: 11px;
-  left: auto;
-  border-color: color-mix(in oklch, var(--color-primary) 52%, transparent);
-  color: color-mix(in oklch, var(--color-primary) 78%, white);
 }
 
 .library-collection-copy {
@@ -964,8 +989,6 @@
   min-width: 0;
   overflow: hidden;
 }
-
-
 
 .library-shelf-card-overlay {
   position: absolute;
@@ -1386,270 +1409,6 @@
     color-mix(in oklch, var(--color-base-100) 86%, black);
 }
 
-.media-audio-surface {
-  display: grid;
-  width: min(680px, 100%);
-  padding: clamp(28px, 6vw, 70px);
-  place-items: center;
-  border: 1px solid var(--app-border);
-  border-radius: 8px;
-  background: color-mix(in oklch, var(--color-base-200) 88%, transparent);
-  text-align: center;
-}
-
-.media-audio-surface > svg {
-  width: 76px;
-  height: 76px;
-  margin-bottom: 18px;
-  color: var(--color-primary);
-  filter: drop-shadow(0 0 22px color-mix(in oklch, var(--color-primary) 35%, transparent));
-}
-
-.media-audio-surface > strong {
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--color-base-content);
-  font-size: 1rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.media-audio-surface > span {
-  max-width: 100%;
-  overflow: hidden;
-  margin-top: 5px;
-  color: var(--app-muted);
-  font-size: 0.62rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.media-audio-controls {
-  display: grid;
-  width: 100%;
-  margin-top: 26px;
-  padding: 15px 16px 13px;
-  gap: 13px;
-  border: 1px solid color-mix(in oklch, var(--color-primary) 22%, var(--app-border));
-  border-radius: 7px;
-  background: color-mix(in oklch, var(--color-base-100) 62%, transparent);
-  box-shadow: inset 0 1px rgb(255 255 255 / 3%);
-}
-
-.media-audio-engine {
-  display: none;
-}
-
-.media-audio-timeline {
-  display: grid;
-  grid-template-columns: 42px minmax(80px, 1fr) 42px 48px;
-  align-items: center;
-  gap: 9px;
-}
-
-.media-audio-timeline output {
-  color: var(--color-base-content);
-  font-family: var(--font-mono);
-  font-size: 0.63rem;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-}
-
-.media-audio-timeline .media-audio-remaining {
-  color: var(--color-primary);
-}
-
-.media-audio-range {
-  --media-range-progress: 0%;
-  width: 100%;
-  height: 16px;
-  margin: 0;
-  appearance: none;
-  background: transparent;
-  cursor: pointer;
-}
-
-.media-audio-range:disabled {
-  cursor: wait;
-  opacity: 0.48;
-}
-
-.media-audio-range::-webkit-slider-runnable-track {
-  height: 4px;
-  border-radius: 999px;
-  background: linear-gradient(
-    90deg,
-    var(--color-primary) 0 var(--media-range-progress),
-    color-mix(in oklch, var(--color-base-content) 22%, transparent) var(--media-range-progress) 100%
-  );
-}
-
-.media-audio-range::-webkit-slider-thumb {
-  width: 14px;
-  height: 14px;
-  margin-top: -5px;
-  appearance: none;
-  border: 2px solid var(--color-primary);
-  border-radius: 50%;
-  background: var(--color-base-content);
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-primary) 15%, transparent);
-}
-
-.media-audio-range::-moz-range-track {
-  height: 4px;
-  border-radius: 999px;
-  background: color-mix(in oklch, var(--color-base-content) 22%, transparent);
-}
-
-.media-audio-range::-moz-range-progress {
-  height: 4px;
-  border-radius: 999px;
-  background: var(--color-primary);
-}
-
-.media-audio-range::-moz-range-thumb {
-  width: 11px;
-  height: 11px;
-  border: 2px solid var(--color-primary);
-  border-radius: 50%;
-  background: var(--color-base-content);
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-primary) 15%, transparent);
-}
-
-.media-audio-range:focus-visible {
-  outline: 2px solid color-mix(in oklch, var(--color-primary) 70%, white);
-  outline-offset: 3px;
-}
-
-.media-audio-transport {
-  display: grid;
-  grid-template-columns: minmax(24px, 1fr) auto minmax(80px, 1fr);
-  align-items: center;
-  gap: 12px;
-}
-
-.media-audio-buffering {
-  display: inline-flex;
-  min-height: 18px;
-  align-items: center;
-  justify-self: start;
-  color: var(--color-primary);
-}
-
-.media-audio-buffering > svg {
-  width: 17px;
-  height: 17px;
-}
-
-.media-audio-transport-buttons {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-
-.media-audio-transport-buttons button {
-  position: relative;
-  display: inline-grid;
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  place-items: center;
-  border: 1px solid transparent;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--app-muted);
-  cursor: pointer;
-}
-
-.media-audio-transport-buttons button:hover:not(:disabled),
-.media-audio-transport-buttons button:focus-visible {
-  border-color: color-mix(in oklch, var(--color-primary) 48%, var(--app-border));
-  background: color-mix(in oklch, var(--color-primary) 10%, transparent);
-  color: var(--color-primary);
-}
-
-.media-audio-transport-buttons button:focus-visible {
-  outline: 2px solid color-mix(in oklch, var(--color-primary) 55%, transparent);
-  outline-offset: 2px;
-}
-
-.media-audio-transport-buttons button:disabled {
-  cursor: wait;
-  opacity: 0.4;
-}
-
-.media-audio-transport-buttons button > svg {
-  width: 19px;
-  height: 19px;
-}
-
-.media-audio-transport-buttons button > small {
-  position: absolute;
-  padding-top: 1px;
-  font-family: var(--font-mono);
-  font-size: 0.42rem;
-  font-weight: 900;
-}
-
-.media-audio-transport-buttons .media-audio-play-button {
-  width: 42px;
-  height: 42px;
-  border-color: color-mix(in oklch, var(--color-primary) 58%, var(--app-border));
-  background: var(--color-primary);
-  color: var(--color-primary-content);
-  box-shadow: 0 7px 20px color-mix(in oklch, var(--color-primary) 20%, transparent);
-}
-
-.media-audio-transport-buttons .media-audio-play-button:hover:not(:disabled),
-.media-audio-transport-buttons .media-audio-play-button:focus-visible {
-  background: color-mix(in oklch, var(--color-primary) 86%, white);
-  color: var(--color-primary-content);
-}
-
-.media-audio-transport-buttons .media-audio-play-button > svg {
-  width: 20px;
-  height: 20px;
-}
-
-.media-audio-volume {
-  display: grid;
-  width: min(120px, 100%);
-  grid-template-columns: 18px minmax(55px, 1fr);
-  align-items: center;
-  justify-self: end;
-  gap: 7px;
-  color: var(--app-muted);
-}
-
-.media-audio-volume > svg {
-  width: 17px;
-  height: 17px;
-}
-
-.media-audio-surface > [role="alert"] {
-  color: var(--color-error);
-  white-space: normal;
-}
-
-.media-video-surface,
-.media-image-surface {
-  display: block;
-  max-width: 100%;
-  max-height: min(70dvh, 720px);
-  object-fit: contain;
-  border-radius: 6px;
-  box-shadow: 0 20px 50px rgb(0 0 0 / 30%);
-}
-
-.media-document-surface {
-  width: 100%;
-  min-height: min(68dvh, 760px);
-  border: 0;
-  border-radius: 5px;
-  background: white;
-}
-
 .media-session-queue {
   display: flex;
   min-width: 0;
@@ -1832,31 +1591,10 @@
   font-size: 0.78rem;
 }
 
-.library-callout {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.library-page .app-callout,
+.media-session-page .app-callout,
+.library-discover .app-callout {
   margin-top: 18px;
-  padding: 12px 15px;
-  border: 1px solid var(--app-border);
-  font-size: 0.7rem;
-}
-
-.library-callout svg {
-  width: 18px;
-  height: 18px;
-}
-
-.library-callout-error {
-  border-color: color-mix(in oklch, var(--color-error) 50%, var(--app-border));
-  background: color-mix(in oklch, var(--color-error) 10%, transparent);
-  color: var(--color-error);
-}
-
-.library-callout-success {
-  border-color: color-mix(in oklch, var(--color-success) 50%, var(--app-border));
-  background: color-mix(in oklch, var(--color-success) 10%, transparent);
-  color: var(--color-success);
 }
 
 .library-back-button {
@@ -1864,10 +1602,6 @@
   margin-bottom: 22px;
   padding: 6px 10px;
   background: transparent;
-}
-
-.library-spin {
-  animation: scanner-spin 0.8s linear infinite;
 }
 
 @media (max-width: 920px) {
@@ -1993,11 +1727,6 @@
     position: static;
     flex-direction: row;
     overflow-x: auto;
-    scrollbar-width: none;
-  }
-
-  .library-lens-rail::-webkit-scrollbar {
-    display: none;
   }
 
   .library-lens {
@@ -2064,36 +1793,11 @@
     padding: 14px;
   }
 
-  .media-audio-surface {
-    padding: 28px 18px;
+  
+  
+  
+  
   }
-
-  .media-audio-controls {
-    padding-right: 11px;
-    padding-left: 11px;
-  }
-
-  .media-audio-timeline {
-    grid-template-columns: 38px minmax(70px, 1fr) 38px;
-    gap: 7px;
-  }
-
-  .media-audio-timeline .media-audio-remaining {
-    grid-column: 1 / -1;
-    justify-self: end;
-  }
-
-  .media-audio-transport {
-    gap: 6px;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .description-version-trigger svg,
-  .description-version-menu {
-    transition: none;
-  }
-}
 
 .library-discover {
   padding: 18px 20px;
@@ -2368,5 +2072,19 @@
   .library-discover-lanes button {
     flex: 1;
     justify-content: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .library-collection-state-dot {
+    animation: none;
+  }
+
+  .library-collection-frame,
+  .library-collection-cover .library-artwork,
+  .library-collection-copy strong,
+  .description-version-trigger svg,
+  .description-version-menu {
+    transition: none;
   }
 }

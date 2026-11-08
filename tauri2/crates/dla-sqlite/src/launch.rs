@@ -1,9 +1,9 @@
 use std::io;
 
-use dla_application::launch::{LaunchActivityStore, LaunchError};
+use dla_application::launch::{LaunchActivityStore, LaunchError, LaunchOptionStore, LaunchOptions};
 use dla_domain::{
     installation::{InstallationId, LaunchActionKind},
-    launch::{LaunchActivity, LaunchActivityId, LaunchActivityStatus, LaunchAdapter},
+    launch::{LaunchActivity, LaunchActivityId, LaunchActivityStatus, LaunchAdapter, WindowScale},
 };
 use rusqlite::{Connection, OptionalExtension, Row, params, types::Type};
 
@@ -12,21 +12,75 @@ use crate::SqliteLibraryStore;
 const ACTIVITY_COLUMNS: &str = "activity_id, installation_id, action_kind, target_path, adapter, status, process_id, error, \
      attempted_at, started_at, ended_at, duration_ms, exit_code, stop_requested_at";
 
+impl LaunchOptionStore for SqliteLibraryStore {
+    fn read_launch_options(
+        &self,
+        installation_id: &InstallationId,
+    ) -> Result<LaunchOptions, LaunchError> {
+        self.with_connection(|connection| {
+            connection
+                .prepare_cached("SELECT japanese_locale, video_player, audio_player, window_scale, refresh_rate FROM library_launch_option WHERE installation_id = ?1")?.query_row(
+                    [installation_id.0.as_str()],
+                    |row| Ok((row.get::<_, bool>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<String>>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<u32>>(4)?)),
+                )
+                .optional()
+        })
+        .map(|stored| {
+            let (japanese_locale, video_player, audio_player, window_scale, refresh_rate) = stored.unwrap_or((false, None, None, None, None));
+            LaunchOptions {
+                japanese_locale,
+                video_player,
+                audio_player,
+                window_scale: window_scale.as_deref().and_then(WindowScale::parse),
+                refresh_rate,
+            }
+        })
+        .map_err(LaunchError::persistence)
+    }
+
+    fn save_launch_options(
+        &self,
+        installation_id: &InstallationId,
+        options: LaunchOptions,
+    ) -> Result<(), LaunchError> {
+        self.with_connection(|connection| {
+            connection.prepare_cached("INSERT INTO library_launch_option (installation_id, japanese_locale, video_player, audio_player, window_scale, refresh_rate)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT (installation_id) DO UPDATE
+                 SET japanese_locale = excluded.japanese_locale, video_player = excluded.video_player,
+                     audio_player = excluded.audio_player, window_scale = excluded.window_scale,
+                     refresh_rate = excluded.refresh_rate")?.execute(
+                params![
+                    installation_id.0,
+                    options.japanese_locale,
+                    options.video_player,
+                    options.audio_player,
+                    options.window_scale.map(|scale| scale.to_string()),
+                    options.refresh_rate
+                ],
+            )
+        })
+        .map(|_| ())
+        .map_err(LaunchError::persistence)
+    }
+}
+
 impl LaunchActivityStore for SqliteLibraryStore {
     fn begin_launch_activity(&self, activity: &LaunchActivity) -> Result<(), LaunchError> {
         let result = self
             .with_connection(|connection| {
                 let transaction = connection.transaction()?;
                 let existing = transaction
-                    .query_row(
+                    .prepare_cached(
                         "SELECT activity_id
                          FROM library_launch_activity
                          WHERE installation_id = ?1
                            AND status IN ('starting', 'running', 'stopping')
                          LIMIT 1",
-                        [activity.installation_id.0.as_str()],
-                        |row| row.get::<_, String>(0),
-                    )
+                    )?
+                    .query_row([activity.installation_id.0.as_str()], |row| {
+                        row.get::<_, String>(0)
+                    })
                     .optional()?;
                 if existing.is_none() {
                     insert_activity(&transaction, activity, false)?;
@@ -52,15 +106,12 @@ impl LaunchActivityStore for SqliteLibraryStore {
     ) -> Result<Option<LaunchActivity>, LaunchError> {
         self.with_connection(|connection| {
             connection
-                .query_row(
-                    &format!(
-                        "SELECT {ACTIVITY_COLUMNS}
+                .prepare_cached(&format!(
+                    "SELECT {ACTIVITY_COLUMNS}
                          FROM library_launch_activity
                          WHERE activity_id = ?1"
-                    ),
-                    [activity_id.0.as_str()],
-                    activity_from_row,
-                )
+                ))?
+                .query_row([activity_id.0.as_str()], activity_from_row)
                 .optional()
         })
         .map_err(LaunchError::persistence)
@@ -107,12 +158,12 @@ impl LaunchActivityStore for SqliteLibraryStore {
     ) -> Result<u64, LaunchError> {
         self.with_connection(|connection| {
             connection
-                .execute(
+                .prepare_cached(
                     "UPDATE library_launch_activity
                      SET status = 'interrupted', error = ?1, ended_at = ?2
                      WHERE status IN ('starting', 'running', 'stopping')",
-                    params![reason, interrupted_at],
-                )
+                )?
+                .execute(params![reason, interrupted_at])
                 .map(|count| count as u64)
         })
         .map_err(LaunchError::persistence)
@@ -329,6 +380,50 @@ mod tests {
             })
             .expect("installation");
         (directory, store, installation_id)
+    }
+
+    #[test]
+    fn keeps_each_works_launch_options() {
+        let (_directory, store, installation_id) = store_with_installation();
+        assert_eq!(
+            store.read_launch_options(&installation_id).expect("read"),
+            LaunchOptions::default()
+        );
+        for (japanese_locale, window_scale, refresh_rate) in [
+            (true, Some(WindowScale::Integer), Some(60)),
+            (
+                true,
+                Some(WindowScale::Window {
+                    width: 1280,
+                    height: 960,
+                }),
+                Some(120),
+            ),
+            (false, None, None),
+        ] {
+            store
+                .save_launch_options(
+                    &installation_id,
+                    LaunchOptions {
+                        japanese_locale,
+                        video_player: Some(String::from("/usr/bin/vlc")),
+                        audio_player: Some(String::from("/usr/bin/foobar2000")),
+                        window_scale,
+                        refresh_rate,
+                    },
+                )
+                .expect("save");
+            assert_eq!(
+                store.read_launch_options(&installation_id).expect("read"),
+                LaunchOptions {
+                    japanese_locale,
+                    video_player: Some(String::from("/usr/bin/vlc")),
+                    audio_player: Some(String::from("/usr/bin/foobar2000")),
+                    window_scale,
+                    refresh_rate,
+                }
+            );
+        }
     }
 
     fn starting_activity(id: &str, installation_id: InstallationId) -> LaunchActivity {

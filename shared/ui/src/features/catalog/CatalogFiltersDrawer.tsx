@@ -13,10 +13,10 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-import { useDocumentScrollLock } from "../../app/useDocumentScrollLock";
+import { useModalDialog } from "../../app/useModalDialog";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import type { MessageKey } from "../../preferences/preferences";
 import {
@@ -76,41 +76,7 @@ export function CatalogFiltersDrawer({
   const [activeGroup, setActiveGroup] = useState<CatalogFacetGroup>("ages");
   const counts = catalogFacetCounts(filters);
   const total = counts.include + counts.exclude;
-  useDocumentScrollLock(open);
-
-  useEffect(() => {
-    if (!open) return;
-    const previouslyFocused = document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
-    const focusTimer = window.setTimeout(() => searchRef.current?.focus(), 180);
-    const handleDialogKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const focusable = drawerRef.current?.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
-      );
-      if (!focusable?.length) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last?.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first?.focus();
-      }
-    };
-    window.addEventListener("keydown", handleDialogKey);
-    return () => {
-      window.clearTimeout(focusTimer);
-      window.removeEventListener("keydown", handleDialogKey);
-      previouslyFocused?.focus();
-    };
-  }, [onClose, open]);
+  useModalDialog({ open, dialog: drawerRef, onClose, initialFocus: () => searchRef.current });
 
   const visibleFacets = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();

@@ -138,7 +138,8 @@ fn answer(mut stream: TcpStream, state: &Mutex<State>) {
     }
     let (endpoint, query) = target.split_once('?').unwrap_or((target.as_str(), ""));
     let path = query
-        .strip_prefix("path=")
+        .split('&')
+        .find_map(|field| field.strip_prefix("path="))
         .map(|value| percent_decode_str(value).decode_utf8_lossy().into_owned())
         .unwrap_or_default();
     let mut state = state.lock().unwrap();
@@ -278,6 +279,38 @@ fn signing_in_keeps_only_accepted_credentials() {
     assert_eq!(client.signed_in_as().as_deref(), Some("tier3"));
     client.sign_out();
     assert_eq!(client.signed_in_as(), None);
+}
+
+#[test]
+fn overlays_use_their_own_route_and_the_current_account_without_listing() {
+    let archive = FakeService::start();
+    let overlays = FakeService::start();
+    let session = archive.client();
+    let client = crate::OverlayClient::new(
+        Endpoint::self_test(&overlays.base).unwrap(),
+        Arc::clone(&session),
+    )
+    .unwrap();
+    let path = "/overlays/dlsite/index.json";
+    overlays.put(path, b"index");
+    assert_eq!(client.read(path, 5).unwrap(), b"index");
+    assert_eq!(archive.requests("/v1/file"), 0);
+    assert_eq!(overlays.requests("/v1/list"), 0);
+    for path in [
+        "/dlsite/_overlays.json",
+        "/overlays/dlsite/../x",
+        "/overlays/dlsite/.zfs/snapshot",
+        "/overlays/fanza/index.json",
+    ] {
+        assert_eq!(problem(client.read(path, 5)), DeliveryProblem::NotInArchive);
+    }
+    assert_eq!(overlays.requests("/v1/file"), 1);
+    session.sign_out();
+    assert_eq!(
+        problem(client.read(path, 5)),
+        DeliveryProblem::SignInRequired
+    );
+    assert_eq!(overlays.requests("/v1/file"), 1);
 }
 
 #[test]

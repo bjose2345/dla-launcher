@@ -33,8 +33,7 @@ describe("SearchModal index lifecycle", () => {
     const progressbar = await screen.findByRole("progressbar", {
       name: "Search index rebuild progress",
     });
-    expect(progressbar.getAttribute("aria-valuenow")).toBe("256");
-    expect(progressbar.getAttribute("aria-valuemax")).toBe("1012");
+    expect(progressbar.getAttribute("aria-valuenow")).toBe("25");
     expect(screen.getByText("256 of 1,012 works indexed")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel rebuild" }));

@@ -1,9 +1,17 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
-import { installReadOnlyDeepLinkNavigation, installRenderWatchdog } from "@dla-launcher/shared-ui/app";
+import {
+  installClipboardWriter,
+  installReadOnlyDeepLinkNavigation,
+  installRenderWatchdog,
+  installRenderingCapabilities,
+  installVideoCapabilities,
+} from "@dla-launcher/shared-ui/app";
 import { ReaderProvider, MediaPlaybackProvider } from "@dla-launcher/shared-ui/library/shell";
 import { tauriCatalogGateway } from "./gateways/tauriCatalogGateway";
 import { tauriLibraryGateway } from "./gateways/tauriLibraryGateway";
+import { invoke } from "@tauri-apps/api/core";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import "@dla-launcher/shared-ui/styles.css";
@@ -19,11 +27,19 @@ import { ApplicationErrorBoundary, installGlobalFaultCapture } from "@dla-launch
 import { navigateReadOnlyDeepLink, router } from "./router";
 import { tauriDeepLinkGateway } from "./gateways/tauriDeepLinkGateway";
 import { recoverWebviewRendering } from "./gateways/tauriRenderGateway";
+import { chromiumWebview } from "./gateways/webview";
 import { tauriSupportGateway } from "./gateways/tauriSupportGateway";
 
 const presentation = initializePresentationPreferences();
+// The webview's own context menu (reload, inspect) stays a development tool.
+if (!import.meta.env.DEV) {
+  document.addEventListener("contextmenu", (event) => event.preventDefault());
+}
 installGlobalFaultCapture(tauriSupportGateway);
-installRenderWatchdog(recoverWebviewRendering);
+if (recoverWebviewRendering) installRenderWatchdog(recoverWebviewRendering);
+installRenderingCapabilities({ cssBlur: chromiumWebview });
+installVideoCapabilities({ nativeVideo: (await invoke<string>("read_video_backend")) === "native" });
+installClipboardWriter(writeText);
 await loadLocaleCatalog(presentation.locale);
 
 const queryClient = new QueryClient({

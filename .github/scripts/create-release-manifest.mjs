@@ -51,20 +51,13 @@ const definitions = [
     matches: (name) => name.endsWith(".msi"),
   },
   {
+    // The Chromium build (tauri3/): the only Linux package since 0.1.0-alpha.5.
     id: "linux-deb",
     kind: "installer",
     platform: "linux",
     format: "deb",
     architecture: "x86_64",
     matches: (name) => name.endsWith(".deb"),
-  },
-  {
-    id: "linux-rpm",
-    kind: "installer",
-    platform: "linux",
-    format: "rpm",
-    architecture: "x86_64",
-    matches: (name) => name.endsWith(".rpm"),
   },
   {
     id: "source-zip",

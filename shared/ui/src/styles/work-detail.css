@@ -778,6 +778,11 @@
   height: 120%;
 }
 
+.gallery-modal-backdrop-art.is-filtered {
+  object-fit: cover;
+  filter: blur(32px);
+}
+
 .gallery-modal-backdrop > i {
   position: absolute;
   inset: 0;
@@ -956,41 +961,9 @@
 
 /* The zoom navigator, above the zoomed card. */
 .gallery-minimap {
-  position: absolute;
   z-index: 50;
   right: 16px;
   bottom: 16px;
-  padding: 6px;
-  border: 1px solid rgb(255 255 255 / 20%);
-  border-radius: 12px;
-  background: rgb(0 0 0 / 55%);
-  box-shadow: 0 12px 30px -10px rgb(0 0 0 / 90%);
-  backdrop-filter: blur(12px);
-}
-
-.gallery-minimap > div {
-  position: relative;
-  overflow: hidden;
-  border-radius: 6px;
-  cursor: grab;
-  touch-action: none;
-}
-
-.gallery-minimap > div:active { cursor: grabbing; }
-
-.gallery-minimap img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  user-select: none;
-}
-
-.gallery-minimap span {
-  position: absolute;
-  border: 2px solid var(--color-primary);
-  border-radius: 3px;
-  box-shadow: 0 0 0 999px rgb(0 0 0 / 50%);
-  pointer-events: none;
 }
 
 .gallery-legend {
@@ -1149,10 +1122,7 @@
   gap: 8px;
   overflow-x: auto;
   padding: 12px 16px 16px;
-  scrollbar-width: none;
 }
-
-.gallery-filmstrip::-webkit-scrollbar { display: none; }
 
 .gallery-filmstrip button {
   height: 48px;
@@ -1219,7 +1189,7 @@
   border: 3px solid rgb(255 255 255 / 16%);
   border-top-color: #f25070;
   border-radius: 50%;
-  animation: route-spinner 720ms linear infinite;
+  animation: app-spin 720ms linear infinite;
 }
 
 .work-detail-state {
@@ -1235,10 +1205,6 @@
 .work-detail-state span { color: #929dac; }
 .work-detail-state div { display: flex; gap: 10px; }
 .work-detail-state button { padding: 9px 14px; }
-
-@keyframes route-spinner {
-  to { transform: rotate(360deg); }
-}
 
 @media (prefers-reduced-motion: reduce) {
   .work-detail-loading-layout span,

@@ -9,6 +9,7 @@ import { CatalogMonthlyResults } from "./CatalogMonthlyResults";
 import { catalogFacetFilterKey, catalogFacetCounts } from "./catalogFilters";
 import { reconcileCatalogMonth } from "./catalogMonth";
 import { catalogGridPageSize } from "./catalogPagination";
+import { catalogKeys } from "./catalogQueryKeys";
 import { catalogContextRequest, catalogRequest, isCatalogMonth } from "./query";
 import type {
   CatalogBrowsePage,
@@ -58,7 +59,7 @@ export function CatalogMonthlyPage({
   }, [filterCount, filterKey]);
 
   const context = useQuery({
-    queryKey: ["catalog-context", route.category, route.tag, facetFilters, route.timeline],
+    queryKey: catalogKeys.context(route.category, route.tag, facetFilters, route.timeline),
     queryFn: () => gateway.context(catalogContextRequest(route, route.timeline, facetFilters)),
   });
   const contextValue = context.data;

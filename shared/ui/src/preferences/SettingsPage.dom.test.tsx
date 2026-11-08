@@ -11,7 +11,7 @@ import {
   parseSettingsTab,
   type SettingsTab,
 } from "./settingsRoute";
-import { SettingsPage, type WorkPreferenceGateway } from "./SettingsPage";
+import { SettingsPage, type FileNameGateway, type WorkPreferenceGateway } from "./SettingsPage";
 import type { WindowGateway, WindowMetrics } from "./windowSizing";
 import type { CoverCacheGateway, CoverCacheSummary } from "./coverCache";
 
@@ -240,6 +240,19 @@ describe("SettingsPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "RJ00000001" }));
     expect(onOpenWork).toHaveBeenCalledWith("RJ00000001");
   });
+
+  it("fixes wrongly unpacked Japanese file names in every work", async () => {
+    const fileNameGateway = {
+      fixAllFileNames: vi.fn().mockResolvedValue({ works: 2, files: 1300, skipped: 1 }),
+    };
+    renderSettings({ tab: "library", fileNameGateway });
+
+    fireEvent.click(screen.getByRole("button", { name: "Check all works" }));
+
+    expect(await screen.findByText("Fixed 1,300 file names in 2 works.")).toBeTruthy();
+    expect(screen.getByText("1 work was left as it was: it is in use, or a fixed name is already taken.")).toBeTruthy();
+    expect(fileNameGateway.fixAllFileNames).toHaveBeenCalledOnce();
+  });
 });
 
 function renderSettings(props: {
@@ -248,6 +261,7 @@ function renderSettings(props: {
   windowGateway?: WindowGateway;
   coverCacheGateway?: CoverCacheGateway;
   workPreferenceGateway?: WorkPreferenceGateway;
+  fileNameGateway?: FileNameGateway;
   onOpenWork?: (code: string) => void | Promise<void>;
 } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -261,6 +275,7 @@ function renderSettings(props: {
             windowGateway={props.windowGateway}
             coverCacheGateway={props.coverCacheGateway}
             workPreferenceGateway={props.workPreferenceGateway}
+            fileNameGateway={props.fileNameGateway}
             onOpenWork={props.onOpenWork}
           />
         </KeyBindingsProvider>

@@ -1,0 +1,2 @@
+# CEF distributions built on cef-forge (hundreds of MB); install-cef.sh consumes them.
+out/

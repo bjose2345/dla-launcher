@@ -442,3 +442,67 @@ p {
     transition: none;
   }
 }
+
+.sidebar-activity {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 10px;
+  border: 0;
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent);
+  background: color-mix(in oklch, var(--color-primary) 10%, var(--app-panel-raised));
+  color: var(--color-base-content);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  grid-template-columns: 18px minmax(0, 1fr);
+}
+
+.sidebar-activity-icon {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--color-primary);
+}
+
+.sidebar-activity-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.sidebar-activity-text strong {
+  overflow: hidden;
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-activity-text span {
+  color: var(--app-muted);
+}
+
+.sidebar-activity-progress {
+  grid-column: 1 / -1;
+}
+
+.app-sidebar[data-collapsed="true"] .sidebar-activity {
+  padding: 8px 6px;
+  grid-template-columns: 1fr;
+  justify-items: center;
+}
+
+.app-sidebar[data-collapsed="true"] .sidebar-activity-text {
+  display: none;
+}
+
+/* A scroller whose bar stays out of sight; the wheel and touch still move it. */
+.scrollbar-hidden {
+  scrollbar-width: none;
+}
+
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}

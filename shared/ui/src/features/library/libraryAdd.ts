@@ -1,3 +1,4 @@
+import { basename } from "../../basename";
 import type { CatalogWork } from "../catalog";
 import type { ScanFinding } from "../scanner/types";
 
@@ -109,7 +110,7 @@ export function addFindingKey(item: { sourceId: string; finding: { key: string }
 /** The work's own name: its folder or archive, or the picked folder when that is the work. */
 export function addFindingName(item: LibraryAddFinding, sources: readonly LibraryAddSourceView[]): string {
   const path = item.finding.relativePath || sources.find((source) => source.sourceId === item.sourceId)?.displayName || "";
-  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+  return basename(path);
 }
 
 export function addStatus(finding: ScanFinding, name: string, work: CatalogWork | undefined): LibraryAddStatus {

@@ -1,4 +1,4 @@
-export const settingsTabs = ["general", "library", "display", "controls"] as const;
+export const settingsTabs = ["general", "library", "display", "controls", "translation"] as const;
 
 export type SettingsTab = (typeof settingsTabs)[number];
 

@@ -1,0 +1,186 @@
+The resource handler skips to a requested range's first byte and tells CEF the body's
+length. CEF asks the handler to skip when the request carries a Range header; without
+this method the default refuses, and every range past byte 0 fails with
+ERR_REQUEST_RANGE_NOT_SATISFIABLE (ADR 0028). Applied by scripts/prepare-runtime-cef.sh.
+Reported upstream as tauri-apps/tauri#16479; drop the patch when a released runtime has it.
+
+diff -ruN tauri-runtime-cef-3.0.0-alpha.7/src/cef_impl/request_handler.rs tauri-runtime-cef-3.0.0-alpha.7-patched/src/cef_impl/request_handler.rs
+--- a/src/cef_impl/request_handler.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/src/cef_impl/request_handler.rs	2026-11-07 06:50:02.883581060 +0100
+@@ -13,7 +13,7 @@
+ use html5ever::{LocalName, interface::QualName, namespace_url, ns};
+ use http::{
+   HeaderMap, HeaderName, HeaderValue,
+-  header::{CONTENT_SECURITY_POLICY, CONTENT_TYPE, ORIGIN},
++  header::{CONTENT_RANGE, CONTENT_SECURITY_POLICY, CONTENT_TYPE, ORIGIN},
+ };
+ use kuchiki::{Attribute, ExpandedName, NodeRef};
+ use tauri_runtime::{
+@@ -363,6 +363,9 @@
+         let response_store = ThreadSafe(self.response.clone());
+         let initialization_scripts = self.initialization_scripts.clone();
+         let is_main_frame = self.is_main_frame;
++        let method_str = CefString::from(&request.method()).to_string();
++        let method = http::Method::from_bytes(method_str.as_bytes()).unwrap_or(http::Method::GET);
++        let is_head = method == http::Method::HEAD;
+         let responder = Box::new(move |response: http::Response<Cow<'static, [u8]>>| {
+           let is_html = response
+             .headers()
+@@ -381,6 +384,9 @@
+           };
+ 
+           let mut response = http::Response::from_parts(parts, Cursor::new(body_bytes));
++          if is_head {
++            response.extensions_mut().insert(HeadResponse);
++          }
+ 
+           if let Some(csp) = response.headers_mut().get_mut(CONTENT_SECURITY_POLICY) {
+             let csp_string = csp.to_str().unwrap_or_default().to_string();
+@@ -423,9 +429,6 @@
+           }
+         }
+ 
+-        let method_str = CefString::from(&request.method()).to_string();
+-        let method = http::Method::from_bytes(method_str.as_bytes()).unwrap_or(http::Method::GET);
+-
+         (self.main_thread)(Box::new(move || {
+           let mut http_request = http::Request::builder()
+             .method(method)
+@@ -442,6 +445,40 @@
+       }
+     }
+ 
++    /// CEF answers a `Range` request by opening the resource and skipping to its first
++    /// byte before reading, so a handler that returns the whole resource serves any range.
++    /// The app's protocol handler sees the `Range` header and may answer with the partial
++    /// body itself (`206` with `Content-Range: bytes <start>-<end>/<total>`); that body
++    /// already begins at `<start>`, so only the bytes from there to the requested offset
++    /// are dropped. Without this method CEF's default refuses every range past the first
++    /// byte with `ERR_REQUEST_RANGE_NOT_SATISFIABLE`.
++    fn skip(
++      &self,
++      bytes_to_skip: i64,
++      bytes_skipped: Option<&mut i64>,
++      _callback: Option<&mut ResourceSkipCallback>,
++    ) -> ::std::os::raw::c_int {
++      let Some(bytes_skipped) = bytes_skipped else {
++        return 0;
++      };
++      let skipped = self
++        .response
++        .borrow_mut()
++        .as_mut()
++        .and_then(|response| skip_body(response, bytes_to_skip));
++      match skipped {
++        Some(count) => {
++          *bytes_skipped = count;
++          1
++        }
++        None => {
++          // ERR_FAILED: CEF reports the range as not satisfiable.
++          *bytes_skipped = -2;
++          0
++        }
++      }
++    }
++
+     fn read(
+       &self,
+       data_out: *mut u8,
+@@ -507,7 +544,7 @@
+       response.set_mime_type(Some(&mime_type.into()));
+ 
+       if let Some(length) = response_length {
+-        *length = -1;
++        *length = body_length(response_data);
+       }
+ 
+       if let Some(redirect_url) = redirect_url {
+@@ -608,6 +645,47 @@
+ unsafe impl<T> Send for ThreadSafe<T> {}
+ unsafe impl<T> Sync for ThreadSafe<T> {}
+ 
++/// Marks the response to a HEAD request: its empty body says nothing about the length.
++#[derive(Clone, Copy)]
++struct HeadResponse;
++
++/// Positions the body at `offset` bytes into the whole resource and returns `offset`, or
++/// `None` when the body does not reach it.
++fn skip_body(response: &mut http::Response<Cursor<Vec<u8>>>, offset: i64) -> Option<i64> {
++  let offset = u64::try_from(offset).ok()?;
++  let first_body_byte = content_range_start(response.headers()).unwrap_or(0);
++  let within_body = offset.checked_sub(first_body_byte)?;
++  let body = response.body_mut();
++  let position = body.position().checked_add(within_body)?;
++  if position > body.get_ref().len() as u64 {
++    return None;
++  }
++  body.set_position(position);
++  i64::try_from(offset).ok()
++}
++
++/// The resource offset a partial body starts at: `Content-Range: bytes <start>-<end>/<total>`.
++fn content_range_start(headers: &HeaderMap) -> Option<u64> {
++  let value = headers.get(CONTENT_RANGE)?.to_str().ok()?;
++  let (start, _) = value
++    .trim()
++    .strip_prefix("bytes")?
++    .trim_start()
++    .split_once('-')?;
++  start.trim().parse().ok()
++}
++
++/// What `read` will deliver: the whole body is in hand before CEF reads it, less what
++/// `skip` dropped. A HEAD response has no body to measure, so its length stays unknown
++/// and the app's `Content-Length` header stands.
++fn body_length(response: &http::Response<Cursor<Vec<u8>>>) -> i64 {
++  if response.extensions().get::<HeadResponse>().is_some() {
++    return -1;
++  }
++  let body = response.body();
++  i64::try_from((body.get_ref().len() as u64).saturating_sub(body.position())).unwrap_or(-1)
++}
++
+ fn read_request_body(request: &mut Request) -> Vec<u8> {
+   let mut body = Vec::new();
+ 
+@@ -707,4 +785,39 @@
+       assert_eq!(termination_reason(status), expected);
+     }
+   }
++
++  #[test]
++  fn skip_positions_a_partial_body_by_its_content_range() {
++    let mut response = http::Response::builder()
++      .status(206)
++      .header(CONTENT_RANGE, "bytes 1000-1999/5000")
++      .body(Cursor::new(vec![7; 1000]))
++      .unwrap();
++    assert_eq!(skip_body(&mut response, 1000), Some(1000));
++    assert_eq!(response.body().position(), 0);
++    assert_eq!(body_length(&response), 1000);
++    assert_eq!(skip_body(&mut response, 1300), Some(1300));
++    assert_eq!(response.body().position(), 300);
++    assert_eq!(body_length(&response), 700);
++    assert_eq!(skip_body(&mut response, 999), None);
++    assert_eq!(skip_body(&mut response, 2001), None);
++    assert_eq!(skip_body(&mut response, -1), None);
++  }
++
++  #[test]
++  fn skip_drops_the_head_of_a_whole_resource() {
++    let mut response = http::Response::new(Cursor::new(vec![1; 20]));
++    assert_eq!(skip_body(&mut response, 10), Some(10));
++    assert_eq!(response.body().position(), 10);
++    assert_eq!(body_length(&response), 10);
++    assert_eq!(skip_body(&mut response, 21), None);
++  }
++
++  #[test]
++  fn head_response_length_stays_unknown() {
++    let mut response = http::Response::new(Cursor::new(Vec::new()));
++    assert_eq!(body_length(&response), 0);
++    response.extensions_mut().insert(HeadResponse);
++    assert_eq!(body_length(&response), -1);
++  }
+ }

@@ -1,3 +1,6 @@
+/** How far one wheel notch over a volume control turns the volume. */
+export const VOLUME_WHEEL_STEP = 0.05;
+
 export function clampPlaybackPosition(positionSeconds: number, durationSeconds: number | null): number {
   const boundedPosition = Number.isFinite(positionSeconds) ? Math.max(0, positionSeconds) : 0;
   if (durationSeconds === null || !Number.isFinite(durationSeconds) || durationSeconds <= 0) {

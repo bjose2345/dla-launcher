@@ -27,6 +27,9 @@ fn launches_a_pe32_fixture_through_the_desktop_wine_adapter() {
         relative_target: RelativePath::parse(target).expect("relative fixture target"),
         supported_platforms: vec![InstallationPlatform::Windows],
         expected_sha256: None,
+        japanese_locale: false,
+        window_scale: None,
+        refresh_rate: None,
     };
 
     let mut result = DesktopLaunchExecutor::new()

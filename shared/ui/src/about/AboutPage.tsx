@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Check, Copy, ExternalLink, Info, LoaderCircle, Package, Users } from "lucide-react";
-import { useEffect, useState } from "react";
 
+import { useCopyFeedback } from "../app/useCopyFeedback";
 import { BrandMark } from "../app/BrandMark";
 import { formatByteSize } from "../features/importer/CatalogImportPage";
 import { DeveloperEffect } from "../preferences/DeveloperEffect";
@@ -35,8 +35,8 @@ export function AboutPage({
   const { t } = usePresentation();
   return (
     <main className="about-page">
-      <header className="about-page-masthead">
-        <span>{t("settings.eyebrow")}</span>
+      <header className="page-masthead">
+        <span className="page-eyebrow">{t("settings.eyebrow")}</span>
         <h1>{t("nav.about")}</h1>
       </header>
       <div className="about-page-body">
@@ -161,12 +161,12 @@ function AboutBuildSection({
       </dl>
       {system.isPending && gateway ? (
         <p className="settings-note settings-loading">
-          <LoaderCircle className="settings-spin" aria-hidden="true" />
+          <LoaderCircle className="app-spin" aria-hidden="true" />
           {t("settings.systemLoading")}
         </p>
       ) : null}
       {system.error ? (
-        <p className="settings-error" role="alert">
+        <p className="app-callout" role="alert">
           {t("common.requestFailed", { error: String(system.error) })}
         </p>
       ) : null}
@@ -206,7 +206,7 @@ function OpenProjectButton({ onOpen }: { onOpen: () => void | Promise<void> }) {
   };
 
   return (
-    <button className="settings-button" type="button" onClick={() => void open()}>
+    <button className="app-button is-quiet" type="button" onClick={() => void open()}>
       <ExternalLink aria-hidden="true" />
       {t("support.visitGitHub")}
     </button>
@@ -215,21 +215,15 @@ function OpenProjectButton({ onOpen }: { onOpen: () => void | Promise<void> }) {
 
 function CopyBuildInfoButton({ facts }: { facts: Array<[string, string]> }) {
   const { t } = usePresentation();
-  const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    if (!copied) return;
-    const timer = setTimeout(() => setCopied(false), 2000);
-    return () => clearTimeout(timer);
-  }, [copied]);
-
-  const copy = () => {
-    const text = facts.map(([label, value]) => `${label}: ${value}`).join("\n");
-    void navigator.clipboard?.writeText(text).then(() => setCopied(true)).catch(() => undefined);
-  };
+  const { result, copy } = useCopyFeedback(2_000);
+  const copied = result === "copied";
 
   return (
-    <button className="settings-button" type="button" onClick={copy}>
+    <button
+      className="app-button is-quiet"
+      type="button"
+      onClick={() => copy(facts.map(([label, value]) => `${label}: ${value}`).join("\n"))}
+    >
       {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
       {t(copied ? "settings.copiedBuildInfo" : "settings.copyBuildInfo")}
     </button>

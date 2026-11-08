@@ -42,9 +42,10 @@ import { tauriCatalogImportGateway } from "./gateways/tauriCatalogImportGateway"
 import { tauriSearchGateway } from "./gateways/tauriSearchGateway";
 import { tauriScannerGateway } from "./gateways/tauriScannerGateway";
 import { tauriLibraryAddGateway } from "./gateways/tauriLibraryAddGateway";
-import { tauriLibraryGateway } from "./gateways/tauriLibraryGateway";
+import { tauriFileNameGateway, tauriLibraryGateway } from "./gateways/tauriLibraryGateway";
 import { tauriSupportGateway } from "./gateways/tauriSupportGateway";
 import { tauriSystemGateway } from "./gateways/tauriSystemGateway";
+import { tauriTranslationGateway } from "./gateways/tauriTranslationGateway";
 import { includedSoftware } from "./includedSoftware";
 
 // The catalog is the default route and stays in the startup chunk; every other
@@ -132,8 +133,10 @@ function SettingsRoute() {
       <SettingsPage
         workPreferenceGateway={tauriLibraryGateway}
         coverCacheGateway={tauriCoverCacheGateway}
+        fileNameGateway={tauriFileNameGateway}
         scannerRootGateway={tauriScannerGateway}
         windowGateway={tauriSystemGateway}
+        translationGateway={translationGateway}
         tab={tab}
         onOpenWork={(code) => navigate({ to: "/works/$code", params: { code } })}
         onTabChange={(next) => navigate({ search: { tab: next } })}
@@ -207,6 +210,8 @@ const androidPackageRoute = createRoute({
 
 // Install from DLA is offered on the desktop builds only.
 const deliveryGateway = __DLA_TARGET_PLATFORM__ === "android" ? undefined : tauriDeliveryGateway;
+// Games are started, and so translated, on desktop only.
+const translationGateway = __DLA_TARGET_PLATFORM__ === "android" ? undefined : tauriTranslationGateway;
 
 const downloadsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -363,6 +368,10 @@ function ScannerRoute() {
         onShowInLibrary={(installationId) => navigate({ to: "/library", search: { show: installationId } })}
         onOpenLibrary={() => navigate({ to: "/library", search: {} })}
         onOpenWork={(code) => navigate({ to: "/works/$code", params: { code } })}
+        translationGateway={translationGateway}
+        deliveryGateway={deliveryGateway}
+        onOpenTranslationSettings={() => navigate({ to: "/settings", search: { tab: "translation" } })}
+        onOpenExternal={openUrl}
       />
     </LazyRoute>
   );
@@ -409,6 +418,10 @@ function LibraryRoute() {
           to: "/android-packages",
           search: { work },
         })}
+        translationGateway={translationGateway}
+        deliveryGateway={deliveryGateway}
+        onOpenTranslationSettings={() => navigate({ to: "/settings", search: { tab: "translation" } })}
+        onOpenExternal={openUrl}
       />
     </LazyRoute>
   );

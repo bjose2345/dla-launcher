@@ -20,9 +20,9 @@ $RustVersion = '1.99.0'
 $NodeVersion = '26.10.0'
 $NodeSha256 = '9fef7eca6743a6b910989cd8e78712376b394fcb9b6e1e9c44a0799a287f90c5'
 $PnpmVersion = '11.28.5'
-$TauriCliVersion = '2.12.1'
+$TauriCliVersion = '2.12.4'
 $Sidecars = @{
-    'dla-cloudflared-x86_64-pc-windows-msvc.exe' = 'f096265ec2fcbe9bb6e2d64268db167ced3fcbb83d894bdb9e2fcdb26f2ea7e2'
+    'dla-cloudflared-x86_64-pc-windows-msvc.exe' = 'd521b3bf68982165f0d06d76732f22d9a105ef057ff3ae4c0986f3a23190950f'
     'dla-7zip-x86_64-pc-windows-msvc.exe' = '95fff19b73eff77c87c0d7bd32822e43fb90dd2932459f962eb532d8dfb6ba53'
     '7zip\windows\7z.dll' = '899cd73d7fc60e1c1c35c7de0f5bed3dc69bfe2cecbd48014d868a347970a0b1'
 }
@@ -94,6 +94,10 @@ try {
         if ($LASTEXITCODE -eq 0) { pnpm.cmd --dir ..\shared\ui test }
     }
     if (-not $SkipTests) {
+        # Test builds keep no debug info or incremental cache, which grew
+        # the VM's target\debug to 17 GB; release builds are not affected.
+        $env:CARGO_PROFILE_DEV_DEBUG = '0'
+        $env:CARGO_INCREMENTAL = '0'
         Invoke-Checked 'Testing the Rust workspace' { cargo test --workspace }
     }
     $env:CI = 'true'

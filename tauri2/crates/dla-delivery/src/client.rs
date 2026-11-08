@@ -26,6 +26,7 @@ use zeroize::Zeroizing;
 /// The receiver's read-only downloads listener on its private address. The
 /// connection itself goes to the local cloudflared forward.
 pub const PRIVATE_DOWNLOADS: &str = "https://172.30.250.2:5009/v1";
+pub const PRIVATE_OVERLAYS: &str = "https://172.30.250.2:5010/v1";
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -40,8 +41,13 @@ pub type Dial = Arc<dyn Fn() -> Option<SocketAddr> + Send + Sync>;
 
 #[derive(Clone)]
 enum Target {
-    Private { ca_pem: Arc<[u8]> },
-    SelfTest { base: String },
+    Private {
+        ca_pem: Arc<[u8]>,
+        base: &'static str,
+    },
+    SelfTest {
+        base: String,
+    },
 }
 
 /// The downloads service: the private listener, trusted only through the
@@ -55,7 +61,20 @@ pub struct Endpoint {
 impl Endpoint {
     pub fn private(ca_pem: Arc<[u8]>) -> Self {
         Self {
-            target: Target::Private { ca_pem },
+            target: Target::Private {
+                ca_pem,
+                base: PRIVATE_DOWNLOADS,
+            },
+            dial: None,
+        }
+    }
+
+    pub fn overlays(ca_pem: Arc<[u8]>) -> Self {
+        Self {
+            target: Target::Private {
+                ca_pem,
+                base: PRIVATE_OVERLAYS,
+            },
             dial: None,
         }
     }
@@ -97,16 +116,16 @@ impl Endpoint {
         matches!(self.target, Target::SelfTest { .. })
     }
 
-    fn base(&self) -> &str {
+    pub(crate) fn base(&self) -> &str {
         match &self.target {
-            Target::Private { .. } => PRIVATE_DOWNLOADS,
+            Target::Private { base, .. } => base,
             Target::SelfTest { base } => base,
         }
     }
 
-    fn agent(&self, body_timeout: Duration) -> Result<Agent, DeliveryError> {
+    pub(crate) fn agent(&self, body_timeout: Duration) -> Result<Agent, DeliveryError> {
         let tls = match &self.target {
-            Target::Private { ca_pem } => {
+            Target::Private { ca_pem, .. } => {
                 let ca = Certificate::from_pem(ca_pem).map_err(|_| {
                     DeliveryError::problem(
                         DeliveryProblem::Unavailable,
@@ -255,6 +274,17 @@ impl DeliveryClient {
             .map(|credentials| credentials.username.clone())
     }
 
+    pub(crate) fn authorization(&self) -> Result<Zeroizing<String>, DeliveryError> {
+        self.credentials
+            .lock()
+            .expect("credentials lock")
+            .as_ref()
+            .map(Credentials::authorization)
+            .ok_or_else(|| {
+                DeliveryError::problem(DeliveryProblem::SignInRequired, "sign in to DLA first")
+            })
+    }
+
     pub fn list(&self, path: &str) -> Result<Vec<Entry>, DeliveryError> {
         let response = self.signed_in(&self.json, "/list", path, &[])?;
         let mut response = expect_success(response)?;
@@ -375,7 +405,7 @@ impl DeliveryClient {
     }
 }
 
-fn unreachable(error: impl fmt::Display) -> DeliveryError {
+pub(crate) fn unreachable(error: impl fmt::Display) -> DeliveryError {
     DeliveryError::problem(DeliveryProblem::Unreachable, error.to_string())
 }
 
@@ -398,7 +428,9 @@ fn read_json<T: serde::de::DeserializeOwned>(
 }
 
 /// Turns a refusal from the downloads service into its stable problem.
-fn expect_success(mut response: Response<Body>) -> Result<Response<Body>, DeliveryError> {
+pub(crate) fn expect_success(
+    mut response: Response<Body>,
+) -> Result<Response<Body>, DeliveryError> {
     let status = response.status().as_u16();
     if matches!(status, 200 | 206) {
         return Ok(response);
@@ -412,6 +444,7 @@ fn expect_success(mut response: Response<Body>) -> Result<Response<Body>, Delive
         (429, "busy") => DeliveryProblem::Busy,
         (429, _) => DeliveryProblem::TooManyAttempts,
         (403, "allowance") => DeliveryProblem::Allowance,
+        (403, "forbidden") => DeliveryProblem::Forbidden,
         (400 | 403 | 404, _) => DeliveryProblem::NotInArchive,
         (502 | 504, _) => DeliveryProblem::Unreachable,
         _ => DeliveryProblem::Unavailable,

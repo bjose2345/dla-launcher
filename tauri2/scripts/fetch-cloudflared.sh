@@ -8,9 +8,9 @@
 # passes the live downloads check in dla-collab's deploy/RECEIVER_0.5.0.md.
 # Keep tauri2/ui/src/includedSoftware.ts in step with the version.
 set -eu
-version=2026.9.3
-linux_sha256=77e26d8d900e0b8469f416239d14b5f296525fdf79fee6f511ef55609e3fbac2
-windows_sha256=f096265ec2fcbe9bb6e2d64268db167ced3fcbb83d894bdb9e2fcdb26f2ea7e2
+version=2026.10.6
+linux_sha256=1d356dac769d0dbf62ebe588c4034824bbff98d5790c2f844cc99e0e2f57462d
+windows_sha256=d521b3bf68982165f0d06d76732f22d9a105ef057ff3ae4c0986f3a23190950f
 license_sha256=58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd
 base="https://github.com/cloudflare/cloudflared/releases/download/$version"
 dir="$(cd "$(dirname "$0")/.." && pwd)/src-tauri/binaries"

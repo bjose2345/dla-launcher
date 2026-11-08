@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useCatalogFacetFilters } from "./CatalogFacetFiltersProvider";
 import { CatalogResults } from "./CatalogResults";
 import { CatalogEmptyState, catalogSnapshotIsEmpty } from "./CatalogEmptyState";
+import { catalogKeys } from "./catalogQueryKeys";
 import { catalogRequest, nextCatalogOffset } from "./query";
 import type { CatalogGateway, CatalogRouteState, CatalogTimeline } from "./types";
 import { errorMessage } from "../../app/errorMessage";
@@ -39,7 +40,7 @@ function LegacyCatalogPage({ filters, gateway, onOpenWork }: Omit<CatalogPagePro
   const [timeline, setTimeline] = useState<CatalogTimeline>("added");
   const { filters: facetFilters, setFilters: setFacetFilters } = useCatalogFacetFilters();
   const catalog = useInfiniteQuery({
-    queryKey: ["catalog", filters, facetFilters, timeline],
+    queryKey: catalogKeys.browse(filters, facetFilters, timeline),
     initialPageParam: 0,
     queryFn: ({ pageParam }) => gateway.browse(catalogRequest(filters, pageParam, timeline, facetFilters)),
     getNextPageParam: nextCatalogOffset,

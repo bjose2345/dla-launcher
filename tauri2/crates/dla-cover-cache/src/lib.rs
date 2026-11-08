@@ -4,6 +4,7 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    thread::JoinHandle,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -62,6 +63,9 @@ pub struct DesktopCatalogArtworkCache {
     stripes: [Mutex<()>; STRIPE_COUNT],
     commit_lock: Mutex<()>,
     usage: Mutex<CacheUsage>,
+    // The directory count the cache opens with runs off the opening thread,
+    // the launcher's startup thread; `ready` joins it before the first use.
+    startup: Mutex<Option<JoinHandle<Result<CacheUsage, CatalogArtworkError>>>>,
 }
 
 impl DesktopCatalogArtworkCache {
@@ -89,14 +93,27 @@ impl DesktopCatalogArtworkCache {
         fetcher: Arc<dyn RemoteArtworkFetcher>,
     ) -> Result<Self, CatalogArtworkError> {
         prepare_cache_root(&root)?;
-        let usage = reconcile_cache(
-            &root,
-            &policy,
-            preferences.retention,
-            preferences.capacity,
-            true,
-            None,
-        )?;
+        let count = {
+            let root = root.clone();
+            let policy = policy.clone();
+            move || {
+                reconcile_cache(
+                    &root,
+                    &policy,
+                    preferences.retention,
+                    cache_limits(&policy, preferences.capacity),
+                    true,
+                    None,
+                )
+            }
+        };
+        let (usage, startup) = match std::thread::Builder::new()
+            .name("dla-cover-count".to_owned())
+            .spawn(count.clone())
+        {
+            Ok(handle) => (CacheUsage::default(), Some(handle)),
+            Err(_) => (count()?, None),
+        };
         Ok(Self {
             root,
             preference_path,
@@ -107,10 +124,29 @@ impl DesktopCatalogArtworkCache {
             stripes: std::array::from_fn(|_| Mutex::new(())),
             commit_lock: Mutex::new(()),
             usage: Mutex::new(usage),
+            startup: Mutex::new(startup),
         })
     }
 
+    fn ready(&self) -> Result<(), CatalogArtworkError> {
+        let mut startup = self
+            .startup
+            .lock()
+            .map_err(|_| storage_error("cache startup lock is poisoned"))?;
+        if let Some(handle) = startup.take() {
+            let usage = handle
+                .join()
+                .map_err(|_| storage_error("the cover cache count panicked"))??;
+            *self
+                .usage
+                .lock()
+                .map_err(|_| storage_error("cache usage lock is poisoned"))? = usage;
+        }
+        Ok(())
+    }
+
     fn load_validated(&self, source_url: &Url) -> Result<CatalogArtworkAsset, CatalogArtworkError> {
+        self.ready()?;
         let key = cache_key(source_url.as_str());
         let stripe = stripe_for_key(&key);
         let _stripe_guard = self.stripes[stripe]
@@ -244,12 +280,14 @@ impl DesktopCatalogArtworkCache {
         if !previous_entry {
             usage.entries = usage.entries.saturating_add(1);
         }
-        if cache_limits_exceeded(&self.policy, capacity, &usage) {
+        if let Some(limits) = cache_limits(&self.policy, capacity)
+            && (usage.bytes > limits.0 || usage.entries > limits.1)
+        {
             *usage = reconcile_cache(
                 &self.root,
                 &self.policy,
                 retention,
-                capacity,
+                Some(eviction_target(limits)),
                 false,
                 Some(key),
             )?;
@@ -298,6 +336,7 @@ impl CatalogArtworkCache for DesktopCatalogArtworkCache {
     }
 
     fn summary(&self) -> Result<CatalogArtworkCacheSummary, CatalogArtworkError> {
+        self.ready()?;
         let retention = *self
             .retention
             .lock()
@@ -326,6 +365,7 @@ impl CatalogArtworkCache for DesktopCatalogArtworkCache {
         retention: CatalogArtworkRetention,
         capacity: CatalogArtworkCapacity,
     ) -> Result<CatalogArtworkCacheSummary, CatalogArtworkError> {
+        self.ready()?;
         let _commit_guard = self
             .commit_lock
             .lock()
@@ -337,8 +377,8 @@ impl CatalogArtworkCache for DesktopCatalogArtworkCache {
                 capacity,
             },
         )?;
-        let usage = reconcile_cache(&self.root, &self.policy, retention, capacity, false, None)?;
         let limits = cache_limits(&self.policy, capacity);
+        let usage = reconcile_cache(&self.root, &self.policy, retention, limits, false, None)?;
         let summary = CatalogArtworkCacheSummary {
             retention,
             capacity,
@@ -605,7 +645,7 @@ fn reconcile_cache(
     root: &Path,
     policy: &CoverCachePolicy,
     retention: CatalogArtworkRetention,
-    capacity: CatalogArtworkCapacity,
+    evict_to: Option<(u64, usize)>,
     remove_temporary: bool,
     protected_key: Option<&str>,
 ) -> Result<CacheUsage, CatalogArtworkError> {
@@ -680,20 +720,18 @@ fn reconcile_cache(
             remove_regular_file(&item.path())?;
         }
     }
-    entries.sort_by_key(|entry| {
-        (
-            entry.fetched_at,
-            protected_key.is_some_and(|key| key == entry.key),
-        )
-    });
+    entries.sort_by_key(|entry| entry.fetched_at);
     let mut usage = CacheUsage {
         bytes: entries.iter().map(|entry| entry.size).sum(),
         entries: entries.len(),
     };
-    if let Some((maximum_bytes, maximum_entries)) = cache_limits(policy, capacity) {
+    if let Some((maximum_bytes, maximum_entries)) = evict_to {
         for entry in entries {
             if usage.bytes <= maximum_bytes && usage.entries <= maximum_entries {
                 break;
+            }
+            if protected_key == Some(entry.key.as_str()) {
+                continue;
             }
             remove_regular_file(&entry.paths.metadata)?;
             remove_regular_file(&entry.paths.body)?;
@@ -714,13 +752,13 @@ fn cache_limits(
     }
 }
 
-fn cache_limits_exceeded(
-    policy: &CoverCachePolicy,
-    capacity: CatalogArtworkCapacity,
-    usage: &CacheUsage,
-) -> bool {
-    cache_limits(policy, capacity)
-        .is_some_and(|(bytes, entries)| usage.bytes > bytes || usage.entries > entries)
+// A full cache evicts down to this share of its limits, so that one directory
+// scan pays for the next few hundred covers instead of for the next one.
+fn eviction_target((maximum_bytes, maximum_entries): (u64, usize)) -> (u64, usize) {
+    (
+        maximum_bytes - maximum_bytes / 8,
+        (maximum_entries - maximum_entries / 8).max(1),
+    )
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -1121,6 +1159,64 @@ mod tests {
         cache.load(SOURCE).unwrap();
 
         assert_eq!(fetcher.calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn a_full_cache_evicts_a_batch_so_that_one_scan_covers_the_next_inserts() {
+        let directory = tempdir().unwrap();
+        let fetcher = Arc::new(FakeFetcher::new(
+            (0u8..11).map(|seed| FakeOutcome::Download(png(seed))),
+        ));
+        let policy = CoverCachePolicy {
+            max_entries: 8,
+            ..CoverCachePolicy::default()
+        };
+        let cache = cache(directory.path(), Arc::clone(&fetcher), policy);
+        let source = |index: usize| format!("https://img.dlsitearchive.com/cover-{index}.webp");
+
+        for index in 0..8 {
+            cache.load(&source(index)).unwrap();
+        }
+        assert_eq!(cache.summary().unwrap().entry_count, 8);
+        cache.load(&source(8)).unwrap();
+        assert_eq!(cache.summary().unwrap().entry_count, 7);
+        cache.load(&source(9)).unwrap();
+        assert_eq!(cache.summary().unwrap().entry_count, 8);
+        cache.load(&source(10)).unwrap();
+        assert_eq!(cache.summary().unwrap().entry_count, 7);
+        assert_eq!(
+            cache.load(&source(10)).unwrap().cache_status,
+            CatalogArtworkCacheStatus::Hit
+        );
+        assert_eq!(fetcher.calls.load(Ordering::SeqCst), 11);
+    }
+
+    #[test]
+    fn counts_an_existing_cache_before_answering_its_first_request() {
+        let directory = tempdir().unwrap();
+        let source_two = "https://img.dlsitearchive.com/cover-two.webp";
+        let fetcher = Arc::new(FakeFetcher::new([
+            FakeOutcome::Download(png(10)),
+            FakeOutcome::Download(png(11)),
+        ]));
+        let first = cache(
+            directory.path(),
+            Arc::clone(&fetcher),
+            CoverCachePolicy::default(),
+        );
+        first.load(SOURCE).unwrap();
+        first.load(source_two).unwrap();
+        drop(first);
+
+        let reopened = cache(directory.path(), fetcher, CoverCachePolicy::default());
+
+        let summary = reopened.summary().unwrap();
+        assert_eq!(summary.entry_count, 2);
+        assert_eq!(summary.stored_bytes, 2 * png(0).len() as u64);
+        assert_eq!(
+            reopened.load(SOURCE).unwrap().cache_status,
+            CatalogArtworkCacheStatus::Hit
+        );
     }
 
     #[test]

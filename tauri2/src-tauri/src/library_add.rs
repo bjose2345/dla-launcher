@@ -1,14 +1,12 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use dla_application::{
+    cancellation::CancellationToken,
     delivery::InstallFolderStore,
     installation::{InstallationLibrary, InstallationStore},
     library_add::{
@@ -21,7 +19,6 @@ use dla_application::{
         AddScanFinding, AddScanFindingsRequest, AddedScanFinding, ROOT_FINDING_KEY, ScanFinding,
         ScanFindingList, ScanFindingRefusal, ScanFindingService, identity_for_add,
     },
-    scanner::ScanCancellation,
 };
 use dla_archive::{FolderTransfer, FolderTransferError, TransferMode};
 use dla_domain::{
@@ -70,7 +67,7 @@ struct ScannedSource {
 
 struct Batch {
     state: LibraryAddBatch,
-    cancel: Arc<AtomicBool>,
+    cancel: CancellationToken,
     plans: Vec<(String, SourcePlan)>,
     scanned: HashMap<String, ScannedSource>,
     install_folder: PathBuf,
@@ -174,7 +171,7 @@ impl LibraryAddController {
             .map(|source| source.source_id.clone())
             .collect::<Vec<_>>();
         let batch = Batch {
-            cancel: Arc::new(AtomicBool::new(false)),
+            cancel: CancellationToken::default(),
             plans: source_ids
                 .into_iter()
                 .zip(plans)
@@ -222,7 +219,7 @@ impl LibraryAddController {
                 .as_mut()
                 .filter(|batch| batch.state.batch_id() == batch_id)
                 .ok_or_else(|| LibraryAddError::UnknownBatch.to_string())?;
-            batch.cancel.store(true, Ordering::SeqCst);
+            batch.cancel.cancel();
             batch.state.cancel();
         }
         self.emit();
@@ -255,7 +252,7 @@ impl LibraryAddController {
     fn scan_sources(&self) {
         let Some((cancel, plans)) = self.with_batch(|batch| {
             (
-                Arc::clone(&batch.cancel),
+                batch.cancel.clone(),
                 batch
                     .plans
                     .iter()
@@ -274,7 +271,7 @@ impl LibraryAddController {
             if done[index] {
                 continue;
             }
-            if cancel.load(Ordering::SeqCst) {
+            if cancel.is_cancelled() {
                 return;
             }
             let folder = plans[index].1.scanned_folder().to_path_buf();
@@ -289,14 +286,14 @@ impl LibraryAddController {
             });
             let scanned = self
                 .scanner
-                .scan_folder_now(&folder, &FlagCancellation(&cancel))
+                .scan_folder_now(&folder, &cancel)
                 .map_err(|error| error.to_string())
                 .and_then(|view| {
                     self.findings
                         .list(&view.session.id)
                         .map_err(|error| error.to_string())
                 });
-            if cancel.load(Ordering::SeqCst) {
+            if cancel.is_cancelled() {
                 return;
             }
             let mut claimed = std::collections::BTreeSet::new();
@@ -368,14 +365,14 @@ impl LibraryAddController {
         for job in planned {
             let Some((cancel, queued, kind)) = self.with_batch(|batch| {
                 (
-                    Arc::clone(&batch.cancel),
+                    batch.cancel.clone(),
                     batch.state.job_is_queued(job.index),
                     batch.state.view().jobs.get(job.index).map(|job| job.kind),
                 )
             }) else {
                 return;
             };
-            if !queued || cancel.load(Ordering::SeqCst) {
+            if !queued || cancel.is_cancelled() {
                 continue;
             }
             self.update(|batch| batch.state.job_running(job.index));
@@ -409,7 +406,7 @@ impl LibraryAddController {
         &self,
         job: &PlannedLibraryAddJob,
         delete_archives: bool,
-        cancel: &AtomicBool,
+        cancel: &CancellationToken,
     ) -> JobOutcome {
         let Some(scanned) = self.scanned(&job.item.source_id) else {
             return JobOutcome::Failed("the scan of this work is gone".to_owned());
@@ -478,7 +475,7 @@ impl LibraryAddController {
         );
         let mut cancel_sent = false;
         loop {
-            if cancel.load(Ordering::SeqCst) && !cancel_sent {
+            if cancel.is_cancelled() && !cancel_sent {
                 cancel_sent = true;
                 self.installs.cancel(&installation_id);
             }
@@ -502,7 +499,7 @@ impl LibraryAddController {
         }
     }
 
-    fn move_in(&self, job: &PlannedLibraryAddJob, cancel: &AtomicBool) -> JobOutcome {
+    fn move_in(&self, job: &PlannedLibraryAddJob, cancel: &CancellationToken) -> JobOutcome {
         let Some((finding, scanned, install_folder)) = self.with_batch(|batch| {
             let finding = batch
                 .state
@@ -559,7 +556,7 @@ impl LibraryAddController {
             *last = Instant::now();
             self.update(|batch| batch.state.job_progress(index, done, total));
         };
-        let cancelled = || cancel.load(Ordering::SeqCst);
+        let cancelled = || cancel.is_cancelled();
         let outcome =
             match self
                 .transfer
@@ -577,7 +574,7 @@ impl LibraryAddController {
         };
         let list = match self
             .scanner
-            .scan_folder_now(&outcome.destination, &NeverCancelled)
+            .scan_folder_now(&outcome.destination, &CancellationToken::<()>::default())
             .map_err(|error| error.to_string())
             .and_then(|view| {
                 self.findings
@@ -701,22 +698,6 @@ enum JobOutcome {
     },
     Failed(String),
     Cancelled,
-}
-
-struct FlagCancellation<'a>(&'a AtomicBool);
-
-impl ScanCancellation for FlagCancellation<'_> {
-    fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::SeqCst)
-    }
-}
-
-struct NeverCancelled;
-
-impl ScanCancellation for NeverCancelled {
-    fn is_cancelled(&self) -> bool {
-        false
-    }
 }
 
 fn clone_plan(plan: &SourcePlan) -> SourcePlan {

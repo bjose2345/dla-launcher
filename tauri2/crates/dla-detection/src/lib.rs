@@ -5,10 +5,12 @@ use dla_domain::scanner::{
     ScanMatchConfidence, ScanMatchDecision, ScanMatchOutcome,
 };
 
+mod engine;
 mod media;
 mod package;
 mod package_set;
 
+pub use engine::detect_game_engine;
 pub use media::{
     MediaClassificationError, MediaClassificationRequest, classify_media, classify_media_type,
 };

@@ -39,6 +39,7 @@ impl LibraryMaintenanceFilesystem for DesktopLibraryMaintenance {
         expected_files: &[ExpectedInstallationFile],
         expected_file_count: u64,
         expected_bytes: u64,
+        ignored: &[RelativePath],
     ) -> Result<FilesystemHealthSnapshot, LibraryMaintenanceError> {
         let root = Path::new(root_path);
         let metadata = match fs::symlink_metadata(root) {
@@ -72,7 +73,7 @@ impl LibraryMaintenanceFilesystem for DesktopLibraryMaintenance {
                     false
                 }
             };
-        let (actual, inaccessible_files) = collect_files(root, &mut issues)?;
+        let (actual, inaccessible_files) = collect_files(root, ignored, &mut issues)?;
         let present_files = actual.len() as u64;
         let present_bytes = actual.values().copied().sum();
         let mut missing_files = 0;
@@ -246,6 +247,7 @@ impl LibraryMaintenanceFilesystem for DesktopLibraryMaintenance {
 
 fn collect_files(
     root: &Path,
+    ignored: &[RelativePath],
     issues: &mut Vec<InstallationHealthIssue>,
 ) -> Result<(BTreeMap<String, u64>, u64), LibraryMaintenanceError> {
     let mut files = BTreeMap::new();
@@ -280,7 +282,7 @@ fn collect_files(
             }
         };
         let relative = portable_relative(root, entry.path())?;
-        if internal_file(relative.as_str()) {
+        if internal_file(relative.as_str()) || is_ignored(relative.as_str(), ignored) {
             continue;
         }
         files.insert(relative.as_str().to_owned(), metadata.len());
@@ -340,6 +342,13 @@ fn portable_relative(root: &Path, path: &Path) -> Result<RelativePath, LibraryMa
         .collect::<Vec<_>>()
         .join("/");
     RelativePath::parse(portable).map_err(LibraryMaintenanceError::adapter)
+}
+
+fn is_ignored(path: &str, ignored: &[RelativePath]) -> bool {
+    ignored.iter().any(|ignored| {
+        path.strip_prefix(ignored.as_str())
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    })
 }
 
 fn internal_file(path: &str) -> bool {
@@ -573,6 +582,7 @@ mod tests {
                 &expected,
                 2,
                 7,
+                &[],
             )
             .expect("verification");
 
@@ -581,6 +591,52 @@ mod tests {
         assert_eq!(snapshot.missing_files, 1);
         assert_eq!(snapshot.modified_files, 1);
         assert_eq!(snapshot.unexpected_files, 0);
+    }
+
+    #[test]
+    fn verification_leaves_out_what_the_launcher_added() {
+        let directory = tempdir().expect("temporary directory");
+        let installation_id = InstallationId("installation-1".to_owned());
+        fs::create_dir_all(directory.path().join("www/js/plugins")).expect("folders");
+        fs::create_dir_all(directory.path().join("www/dla-translation")).expect("data folder");
+        fs::write(directory.path().join("www/js/plugins.js"), b"game").expect("content");
+        fs::write(
+            directory.path().join("www/js/plugins/DLA_Translate.js"),
+            b"x",
+        )
+        .expect("plugin");
+        fs::write(directory.path().join("www/dla-translation/log.txt"), b"x").expect("log");
+        fs::write(directory.path().join("www/dla-translation-notes.txt"), b"x").expect("lookalike");
+        let expected = vec![ExpectedInstallationFile {
+            relative_path: RelativePath::parse("www/js/plugins.js").expect("path"),
+            size_bytes: Some(4),
+        }];
+
+        let snapshot = DesktopLibraryMaintenance::new()
+            .verify(
+                directory.path().to_str().expect("root"),
+                &installation_id,
+                false,
+                &expected,
+                1,
+                4,
+                &[
+                    RelativePath::parse("www/js/plugins/DLA_Translate.js").expect("path"),
+                    RelativePath::parse("www/dla-translation").expect("path"),
+                ],
+            )
+            .expect("verification");
+
+        assert_eq!(snapshot.present_files, 2);
+        assert_eq!(snapshot.missing_files, 0);
+        assert_eq!(snapshot.unexpected_files, 1);
+        assert_eq!(
+            snapshot.issues[0]
+                .relative_path
+                .as_ref()
+                .map(RelativePath::as_str),
+            Some("www/dla-translation-notes.txt")
+        );
     }
 
     #[test]

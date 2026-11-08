@@ -11,7 +11,7 @@ use dla_application::{
     },
     catalog_import::{CatalogGenerationSummary, CatalogImportPreview, CatalogImportProgress},
     installation_review::{InstallationReviewRequest, InstallationReviewService},
-    launch::{LaunchInstallationRequest, LaunchService},
+    launch::{LaunchInstallationRequest, LaunchOptionStore, LaunchOptions, LaunchService},
     library_shelves::LibraryShelvesService,
     maintenance::LibraryMaintenanceService,
     media::{
@@ -34,9 +34,11 @@ use dla_domain::{
     CatalogRomContents, CatalogWork, CatalogWorkDetail,
     android_app::{AndroidAppAssociationId, AndroidAppView},
     installation::{Installation, InstallationId},
-    launch::{LaunchActivity, LaunchActivityId},
+    launch::{LaunchActivity, LaunchActivityId, WindowScale},
     library::{LibraryShelves, LocalPersonalization, WorkPreference, WorkPreferenceKind},
-    maintenance::{InstallationHealthReport, MaintenanceCleanupReport},
+    maintenance::{
+        FileNameReport, InstallationHealthReport, LibraryFileNameReport, MaintenanceCleanupReport,
+    },
     media::{MediaRepeatMode, MediaSession, MediaSessionId, MediaSessionItem, MediaSessionStatus},
     own_work::{
         ImportOwnWorkArtworkRequest, InstallationImage, OwnWorkDetails, SaveOwnWorkDetailsRequest,
@@ -44,6 +46,8 @@ use dla_domain::{
     package::{ArchiveRetentionPolicy, PackagePreparationProgress, PreparedPackageInstallation},
     scanner::{ScanRootId, ScanSessionId},
 };
+#[cfg(desktop)]
+use dla_scanner::ApprovedScanRoot;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, LogicalSize, WebviewWindow};
 use uuid::Uuid;
@@ -51,14 +55,25 @@ use uuid::Uuid;
 use crate::{
     catalog_import::CatalogImportController,
     native_video::{
-        NativeVideoControlRequest, NativeVideoController, NativeVideoViewport,
-        OpenNativeVideoRequest, OpenNativeVideoResponse,
+        NativeVideoControlRequest, NativeVideoController, NativeVideoRectangle,
+        NativeVideoViewport, OpenNativeVideoRequest, OpenNativeVideoResponse,
     },
     package_preparation::PackagePreparationController,
     scan_installs::{ScanAddResponse, ScanInstallController, ScanInstallView},
     scanner::ScanController,
     search::SearchIndexController,
 };
+
+pub(crate) async fn blocking_value<T>(
+    operation: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, String>
+where
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(operation)
+        .await
+        .map_err(display_error)
+}
 
 pub(crate) async fn blocking<T, E>(
     operation: impl FnOnce() -> Result<T, E> + Send + 'static,
@@ -67,10 +82,67 @@ where
     T: Send + 'static,
     E: std::fmt::Display + Send + 'static,
 {
-    tauri::async_runtime::spawn_blocking(operation)
-        .await
-        .map_err(|error| error.to_string())?
-        .map_err(|error| error.to_string())
+    blocking_value(operation).await?.map_err(display_error)
+}
+
+/// Shows the folder picker off the main thread; `None` when it is closed
+/// without a choice.
+#[cfg(desktop)]
+async fn pick_folder(
+    app: AppHandle,
+    title: &'static str,
+    initial_directory: Option<String>,
+) -> Result<Option<std::path::PathBuf>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let picked = blocking_value(move || {
+        let dialog = app.dialog().file().set_title(title);
+        match initial_directory {
+            Some(directory) => dialog.set_directory(directory).blocking_pick_folder(),
+            None => dialog.blocking_pick_folder(),
+        }
+    })
+    .await?;
+    picked_path(picked)
+}
+
+/// Shows the file picker off the main thread; `None` when it is closed
+/// without a choice.
+#[cfg(desktop)]
+async fn pick_file(
+    app: AppHandle,
+    title: &'static str,
+    filter: Option<(&'static str, &'static [&'static str])>,
+) -> Result<Option<std::path::PathBuf>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let picked = blocking_value(move || {
+        let dialog = app.dialog().file().set_title(title);
+        match filter {
+            Some((name, extensions)) => dialog.add_filter(name, extensions).blocking_pick_file(),
+            None => dialog.blocking_pick_file(),
+        }
+    })
+    .await?;
+    picked_path(picked)
+}
+
+#[cfg(desktop)]
+fn picked_path(
+    picked: Option<tauri_plugin_dialog::FilePath>,
+) -> Result<Option<std::path::PathBuf>, String> {
+    picked
+        .map(|path| path.into_path().map_err(display_error))
+        .transpose()
+}
+
+/// Where the install folder pickers start: the configured default install
+/// root, when it exists.
+#[cfg(desktop)]
+fn default_install_root() -> Option<String> {
+    std::env::var("DLA_DEFAULT_INSTALL_ROOT")
+        .ok()
+        .filter(|path| std::path::Path::new(path).is_dir())
 }
 
 pub struct AppState {
@@ -95,6 +167,9 @@ pub struct AppState {
     pub package_preparation: Arc<PackagePreparationController>,
     pub maintenance: Arc<LibraryMaintenanceService>,
     pub launch: Arc<LaunchService>,
+    pub launch_options: Arc<dyn LaunchOptionStore>,
+    pub locale_remulator: dla_launch::LocaleRemulator,
+    pub translation: Arc<crate::translation::TranslationController>,
     pub media: Arc<MediaService>,
     pub personalized_voice: Arc<PersonalizedVoiceQueueService>,
     pub native_video: Arc<NativeVideoController>,
@@ -117,10 +192,8 @@ pub async fn associate_installed_android_app(
 ) -> Result<AndroidAppView, String> {
     let app_service = Arc::clone(&state.android_app);
     let package_service = Arc::clone(&state.android_package);
-    tauri::async_runtime::spawn_blocking(move || {
-        let package_state = package_service
-            .read_state()
-            .map_err(|error| error.to_string())?;
+    blocking(move || {
+        let package_state = package_service.read_state().map_err(display_error)?;
         app_service
             .associate_installed(
                 &work_code,
@@ -128,10 +201,9 @@ pub async fn associate_installed_android_app(
                 &dla_sqlite::current_timestamp(),
                 &package_state,
             )
-            .map_err(|error| error.to_string())
+            .map_err(display_error)
     })
     .await
-    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -202,10 +274,7 @@ pub async fn request_android_package_install(
 pub async fn read_cover_cache_summary(
     state: tauri::State<'_, AppState>,
 ) -> Result<CatalogArtworkCacheSummary, String> {
-    state
-        .cover_cache
-        .summary()
-        .map_err(|error| error.to_string())
+    state.cover_cache.summary().map_err(display_error)
 }
 
 #[tauri::command]
@@ -231,36 +300,16 @@ pub async fn select_installation_destination(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<Option<SelectedInstallationDestination>, String> {
-    use tauri_plugin_dialog::DialogExt;
-
-    let handle = app.clone();
-    let initial_directory = std::env::var("DLA_DEFAULT_INSTALL_ROOT")
-        .ok()
-        .filter(|path| std::path::Path::new(path).is_dir());
-    let selected = tauri::async_runtime::spawn_blocking(move || {
-        let dialog = handle
-            .dialog()
-            .file()
-            .set_title("Choose where this work will be installed");
-        match initial_directory {
-            Some(directory) => dialog.set_directory(directory).blocking_pick_folder(),
-            None => dialog.blocking_pick_folder(),
-        }
-    })
-    .await
-    .map_err(|error| error.to_string())?;
-    let Some(selected) = selected else {
+    let Some(path) = pick_folder(
+        app,
+        "Choose where this work will be installed",
+        default_install_root(),
+    )
+    .await?
+    else {
         return Ok(None);
     };
-    let path = selected.into_path().map_err(|error| error.to_string())?;
-    let approved = state
-        .package_preparation
-        .approve_destination(&path)
-        .map_err(|error| error.to_string())?;
-    Ok(Some(SelectedInstallationDestination {
-        access_handle: approved.access_handle,
-        display_path: approved.display_path,
-    }))
+    approved_destination(&state, &path).map(Some)
 }
 
 #[cfg(desktop)]
@@ -269,28 +318,26 @@ pub async fn select_installation_location(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<Option<SelectedInstallationDestination>, String> {
-    use tauri_plugin_dialog::DialogExt;
-
-    let selected = tauri::async_runtime::spawn_blocking(move || {
-        app.dialog()
-            .file()
-            .set_title("Locate the existing installation folder")
-            .blocking_pick_folder()
-    })
-    .await
-    .map_err(|error| error.to_string())?;
-    let Some(selected) = selected else {
+    let Some(path) = pick_folder(app, "Locate the existing installation folder", None).await?
+    else {
         return Ok(None);
     };
-    let path = selected.into_path().map_err(|error| error.to_string())?;
+    approved_destination(&state, &path).map(Some)
+}
+
+#[cfg(desktop)]
+fn approved_destination(
+    state: &AppState,
+    path: &std::path::Path,
+) -> Result<SelectedInstallationDestination, String> {
     let approved = state
         .package_preparation
-        .approve_destination(&path)
-        .map_err(|error| error.to_string())?;
-    Ok(Some(SelectedInstallationDestination {
+        .approve_destination(path)
+        .map_err(display_error)?;
+    Ok(SelectedInstallationDestination {
         access_handle: approved.access_handle,
         display_path: approved.display_path,
-    }))
+    })
 }
 
 #[cfg(mobile)]
@@ -349,7 +396,7 @@ pub async fn locate_library_installation(
     let selected_root = state
         .package_preparation
         .resolve_destination(&location_access_handle)
-        .map_err(|error| error.to_string())?;
+        .map_err(display_error)?;
     let service = Arc::clone(&state.maintenance);
     blocking(move || {
         service.relocate(
@@ -398,7 +445,15 @@ pub async fn remove_library_installation(
     let installation_id = InstallationId(installation_id);
     ensure_not_preparing(&state.package_preparation, &installation_id)?;
     let service = Arc::clone(&state.maintenance);
-    blocking(move || service.remove_from_library(&installation_id)).await
+    let translation = Arc::clone(&state.translation);
+    blocking(move || {
+        // The game stays where it is, so it goes back to how it was.
+        if let Err(error) = translation.games().remove(&installation_id) {
+            log::warn!(target: "dla::translation", "event=translation_removal_failed installation_id={} error={error}", installation_id.0);
+        }
+        service.remove_from_library(&installation_id)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -426,27 +481,23 @@ pub async fn open_installation_folder(
     let installation_id = InstallationId(installation_id);
     let review = Arc::clone(&state.installation_review);
     let media = Arc::clone(&state.media);
-    let folder =
-        tauri::async_runtime::spawn_blocking(move || -> Result<std::path::PathBuf, String> {
-            if let Some(prepared) = media
-                .read_prepared_package(&installation_id)
-                .map_err(|error| error.to_string())?
-            {
-                return Ok(std::path::PathBuf::from(prepared.destination_root));
-            }
-            let installation = review
-                .read(&installation_id)
-                .map_err(|error| error.to_string())?;
-            Ok(installation_folder(&installation))
-        })
-        .await
-        .map_err(|error| error.to_string())??;
+    let folder = blocking(move || -> Result<std::path::PathBuf, String> {
+        if let Some(prepared) = media
+            .read_prepared_package(&installation_id)
+            .map_err(display_error)?
+        {
+            return Ok(std::path::PathBuf::from(prepared.destination_root));
+        }
+        let installation = review.read(&installation_id).map_err(display_error)?;
+        Ok(installation_folder(&installation))
+    })
+    .await?;
     if !folder.is_dir() {
         return Err(format!("the folder no longer exists: {}", folder.display()));
     }
     app.opener()
         .open_path(folder.to_string_lossy(), None::<&str>)
-        .map_err(|error| error.to_string())
+        .map_err(display_error)
 }
 
 #[cfg(desktop)]
@@ -476,30 +527,263 @@ pub async fn open_installation_folder(_installation_id: String) -> Result<(), St
     Err("opening folders is available on Windows and Linux".to_owned())
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchOptionsView {
+    japanese_locale: bool,
+    /// Only Windows needs it: Wine always runs games in Japanese.
+    japanese_locale_available: bool,
+    /// The Visual C++ runtimes ("x64", "x86") Locale Remulator needs and
+    /// this Windows lacks.
+    missing_runtimes: Vec<&'static str>,
+    /// A video player program of the user's for the work's videos.
+    video_player: Option<String>,
+    /// An audio player program of the user's for the work's tracks.
+    audio_player: Option<String>,
+    /// How Linux shows the game's window; none leaves it as the game made it.
+    window_scale: Option<WindowScale>,
+    /// Linux with gamescope installed can enlarge a game's window.
+    window_scale_available: bool,
+    /// The refresh rate of the enlarged game, in Hz; none is the default.
+    refresh_rate: Option<u32>,
+}
+
+/// Which of a work's media a player program is for.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MediaPlayerKind {
+    Audio,
+    Video,
+}
+
+/// A chosen player program, or none; one that is not on disk is refused.
+fn chosen_program(program: Option<String>) -> Result<Option<String>, String> {
+    let program = program
+        .map(|program| program.trim().to_owned())
+        .filter(|program| !program.is_empty());
+    if let Some(program) = &program
+        && !std::path::Path::new(program).is_file()
+    {
+        return Err("the player program was not found".to_owned());
+    }
+    Ok(program)
+}
+
+#[tauri::command]
+pub async fn read_launch_options(
+    state: tauri::State<'_, AppState>,
+    installation_id: String,
+) -> Result<LaunchOptionsView, String> {
+    let store = Arc::clone(&state.launch_options);
+    blocking(move || {
+        store
+            .read_launch_options(&InstallationId(installation_id))
+            .map(launch_options_view)
+    })
+    .await
+}
+
+/// Turning the Japanese locale on fetches Locale Remulator at once, so the
+/// game starts without a wait and a failed download shows here.
+#[tauri::command]
+pub async fn save_launch_options(
+    state: tauri::State<'_, AppState>,
+    installation_id: String,
+    japanese_locale: bool,
+    video_player: Option<String>,
+    audio_player: Option<String>,
+    window_scale: Option<WindowScale>,
+    refresh_rate: Option<u32>,
+) -> Result<LaunchOptionsView, String> {
+    if refresh_rate.is_some_and(|rate| !(30..=240).contains(&rate)) {
+        return Err("the refresh rate must be between 30 and 240 Hz".to_owned());
+    }
+    let store = Arc::clone(&state.launch_options);
+    let locale = state.locale_remulator.clone();
+    let video_player = chosen_program(video_player)?;
+    let audio_player = chosen_program(audio_player)?;
+    blocking(move || {
+        if japanese_locale && cfg!(target_os = "windows") {
+            locale.install()?;
+        }
+        let options = LaunchOptions {
+            japanese_locale,
+            video_player,
+            audio_player,
+            window_scale,
+            refresh_rate,
+        };
+        store.save_launch_options(&InstallationId(installation_id), options.clone())?;
+        Ok::<_, dla_application::launch::LaunchError>(launch_options_view(options))
+    })
+    .await
+}
+
+fn launch_options_view(options: LaunchOptions) -> LaunchOptionsView {
+    LaunchOptionsView {
+        japanese_locale: options.japanese_locale,
+        japanese_locale_available: cfg!(target_os = "windows"),
+        missing_runtimes: dla_launch::LocaleRemulator::missing_runtimes()
+            .into_iter()
+            .map(dla_launch::VisualCppRuntime::as_str)
+            .collect(),
+        video_player: options.video_player,
+        audio_player: options.audio_player,
+        window_scale: options.window_scale,
+        window_scale_available: dla_launch::window_scale_available(),
+        refresh_rate: options.refresh_rate,
+    }
+}
+
+/// Lets the user pick the program that plays a work's videos or tracks.
+#[cfg(desktop)]
+#[tauri::command]
+pub async fn select_media_player(app: AppHandle) -> Result<Option<String>, String> {
+    let filter = cfg!(target_os = "windows").then_some(("Programs", PROGRAM_EXTENSIONS));
+    Ok(pick_file(app, "Choose a player", filter)
+        .await?
+        .map(|path| path.to_string_lossy().into_owned()))
+}
+
+#[cfg(desktop)]
+const PROGRAM_EXTENSIONS: &[&str] = &["exe"];
+
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn select_media_player(_app: AppHandle) -> Result<Option<String>, String> {
+    Err("choosing a player is not available on this platform".to_owned())
+}
+
+/// Plays a work's videos or tracks in the player chosen for them, the given
+/// one first and the rest after it, as a playlist.
+#[cfg(desktop)]
+#[tauri::command]
+pub async fn play_in_player(
+    state: tauri::State<'_, AppState>,
+    installation_id: String,
+    kind: MediaPlayerKind,
+    ordinal: Option<u32>,
+) -> Result<(), String> {
+    use dla_domain::installation::MediaType;
+
+    let store = Arc::clone(&state.launch_options);
+    let media = Arc::clone(&state.media);
+    blocking(move || {
+        let installation_id = InstallationId(installation_id);
+        let options = store
+            .read_launch_options(&installation_id)
+            .map_err(display_error)?;
+        let (player, media_type) = match kind {
+            MediaPlayerKind::Audio => (options.audio_player, MediaType::Audio),
+            MediaPlayerKind::Video => (options.video_player, MediaType::Video),
+        };
+        let player = player.ok_or_else(|| "this work has no player chosen".to_owned())?;
+        let (root, items) = media
+            .list_items_in_root(&installation_id, &dla_sqlite::current_timestamp())
+            .map_err(display_error)?;
+        let root = std::path::Path::new(&root);
+        let mut files: Vec<std::path::PathBuf> = items
+            .iter()
+            .filter(|item| item.media_type == media_type)
+            .map(|item| root.join(item.relative_path.as_str()))
+            .collect();
+        if let Some(ordinal) = ordinal
+            && let Some(first) = items
+                .iter()
+                .find(|item| item.ordinal == ordinal)
+                .map(|item| root.join(item.relative_path.as_str()))
+            && let Some(at) = files.iter().position(|path| *path == first)
+        {
+            files.rotate_left(at);
+        }
+        if files.is_empty() {
+            return Err("this work has nothing to play".to_owned());
+        }
+        let mut child = std::process::Command::new(&player)
+            .args(&files)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|error| format!("the player could not start: {error}"))?;
+        // Reaped when it ends, so it does not linger as a zombie; the
+        // launcher does not otherwise follow it.
+        std::thread::Builder::new()
+            .name("dla-media-player".to_owned())
+            .spawn(move || {
+                let _ = child.wait();
+            })
+            .map_err(display_error)?;
+        Ok(())
+    })
+    .await
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn play_in_player(
+    _state: tauri::State<'_, AppState>,
+    _installation_id: String,
+    _kind: MediaPlayerKind,
+    _ordinal: Option<u32>,
+) -> Result<(), String> {
+    Err("playing in another player is not available on this platform".to_owned())
+}
+
 #[tauri::command]
 pub async fn cleanup_library_maintenance(
     state: tauri::State<'_, AppState>,
 ) -> Result<MaintenanceCleanupReport, String> {
-    if state
-        .package_preparation
-        .has_active_operation()
-        .map_err(|error| error.to_string())?
-    {
-        return Err("package preparation is currently active".to_owned());
-    }
+    ensure_nothing_preparing(&state.package_preparation)?;
     let service = Arc::clone(&state.maintenance);
     blocking(move || service.cleanup_abandoned()).await
+}
+
+#[tauri::command]
+pub async fn check_library_file_names(
+    state: tauri::State<'_, AppState>,
+    installation_id: String,
+) -> Result<FileNameReport, String> {
+    let installation_id = InstallationId(installation_id);
+    let service = Arc::clone(&state.maintenance);
+    blocking(move || service.check_file_names(&installation_id)).await
+}
+
+#[tauri::command]
+pub async fn fix_library_file_names(
+    state: tauri::State<'_, AppState>,
+    installation_id: String,
+) -> Result<FileNameReport, String> {
+    let installation_id = InstallationId(installation_id);
+    ensure_not_preparing(&state.package_preparation, &installation_id)?;
+    let service = Arc::clone(&state.maintenance);
+    blocking(move || service.fix_file_names(&installation_id, dla_sqlite::current_timestamp()))
+        .await
+}
+
+#[tauri::command]
+pub async fn fix_all_library_file_names(
+    state: tauri::State<'_, AppState>,
+) -> Result<LibraryFileNameReport, String> {
+    ensure_nothing_preparing(&state.package_preparation)?;
+    let service = Arc::clone(&state.maintenance);
+    blocking(move || service.fix_all_file_names(dla_sqlite::current_timestamp())).await
 }
 
 fn ensure_not_preparing(
     controller: &PackagePreparationController,
     installation_id: &InstallationId,
 ) -> Result<(), String> {
-    if controller
-        .installation_is_active(installation_id)
-        .map_err(|error| error.to_string())?
-    {
+    if controller.installation_is_active(installation_id) {
         Err("package preparation is currently active for this installation".to_owned())
+    } else {
+        Ok(())
+    }
+}
+
+fn ensure_nothing_preparing(controller: &PackagePreparationController) -> Result<(), String> {
+    if controller.has_active_operation() {
+        Err("package preparation is currently active".to_owned())
     } else {
         Ok(())
     }
@@ -577,20 +861,14 @@ pub fn cancel_package_preparation(
     state: tauri::State<'_, AppState>,
     operation_id: String,
 ) -> Result<bool, String> {
-    state
-        .package_preparation
-        .cancel(&operation_id)
-        .map_err(|error| error.to_string())
+    Ok(state.package_preparation.cancel(&operation_id))
 }
 
 #[tauri::command]
 pub fn read_package_preparation_progress(
     state: tauri::State<'_, AppState>,
 ) -> Result<Option<PackagePreparationProgress>, String> {
-    state
-        .package_preparation
-        .latest()
-        .map_err(|error| error.to_string())
+    Ok(state.package_preparation.latest())
 }
 
 #[tauri::command]
@@ -599,9 +877,12 @@ pub async fn launch_library_installation(
     installation_id: String,
 ) -> Result<LaunchActivity, String> {
     let service = Arc::clone(&state.launch);
+    let translation = Arc::clone(&state.translation);
     blocking(move || {
+        let installation_id = InstallationId(installation_id);
+        translation.before_launch(&installation_id);
         let result = service.launch(LaunchInstallationRequest {
-            installation_id: InstallationId(installation_id),
+            installation_id,
             activity_id: LaunchActivityId(format!("launch-{}", Uuid::new_v4())),
             attempted_at: dla_sqlite::current_timestamp(),
         });
@@ -819,10 +1100,15 @@ pub fn update_native_video_viewport(
     session_id: String,
     surface_id: String,
     viewport: NativeVideoViewport,
+    obstructions: Option<Vec<NativeVideoRectangle>>,
 ) -> Result<(), String> {
-    state
-        .native_video
-        .update_viewport(&app, &session_id, &surface_id, viewport)
+    state.native_video.update_viewport(
+        &app,
+        &session_id,
+        &surface_id,
+        viewport,
+        obstructions.unwrap_or_default(),
+    )
 }
 
 #[cfg(mobile)]
@@ -833,6 +1119,7 @@ pub fn update_native_video_viewport(
     _session_id: String,
     _surface_id: String,
     _viewport: NativeVideoViewport,
+    _obstructions: Option<Vec<NativeVideoRectangle>>,
 ) -> Result<(), String> {
     Err("native video playback is not available on this platform".to_owned())
 }
@@ -881,6 +1168,55 @@ pub fn close_native_video(
     Ok(())
 }
 
+/// Which picture this build plays video on: its own native one (a webview
+/// window, or GStreamer over the page) or the page's `<video>` element. The
+/// page asks once at startup and only opens a native surface when told to.
+#[tauri::command]
+pub fn read_video_backend() -> &'static str {
+    if cfg!(any(mobile, native_video_backend = "none")) {
+        "page"
+    } else {
+        "native"
+    }
+}
+
+/// The sidecar subtitle files beside a video, for the page's own player; a
+/// native picture lists them as it opens.
+#[tauri::command]
+pub async fn read_video_subtitles(
+    app: AppHandle,
+    session_id: String,
+    ordinal: u32,
+) -> Result<Vec<dla_media::SidecarSubtitle>, String> {
+    blocking(move || {
+        crate::media_protocol::video_subtitles(&app, &MediaSessionId(session_id), ordinal)
+    })
+    .await
+}
+
+/// Opens a video of a media session in the system's video player, for files the
+/// launcher's own player cannot decode.
+#[cfg(desktop)]
+#[tauri::command]
+pub async fn open_video_externally(
+    app: AppHandle,
+    session_id: String,
+    ordinal: u32,
+) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let path = crate::media_protocol::video_asset_path(&app, &MediaSessionId(session_id), ordinal)?;
+    app.opener()
+        .open_path(path.to_string_lossy(), None::<&str>)
+        .map_err(display_error)
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn open_video_externally(_session_id: String, _ordinal: u32) -> Result<(), String> {
+    Err("opening videos in another player is available on Windows and Linux".to_owned())
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SelectedCatalogPackage {
@@ -894,27 +1230,19 @@ pub async fn select_catalog_package(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<Option<SelectedCatalogPackage>, String> {
-    use tauri_plugin_dialog::DialogExt;
-
-    let handle = app.clone();
-    let selected = tauri::async_runtime::spawn_blocking(move || {
-        handle
-            .dialog()
-            .file()
-            .set_title("Choose a DLA package")
-            .add_filter("DLA package", CATALOG_PACKAGE_FILE_EXTENSIONS)
-            .blocking_pick_file()
-    })
-    .await
-    .map_err(|error| error.to_string())?;
-    let Some(selected) = selected else {
+    let Some(path) = pick_file(
+        app,
+        "Choose a DLA package",
+        Some(("DLA package", CATALOG_PACKAGE_FILE_EXTENSIONS)),
+    )
+    .await?
+    else {
         return Ok(None);
     };
-    let path = selected.into_path().map_err(|error| error.to_string())?;
     let approved = state
         .catalog_import
         .approve_package(&path)
-        .map_err(|error| error.to_string())?;
+        .map_err(display_error)?;
     Ok(Some(SelectedCatalogPackage {
         access_handle: approved.access_handle,
         display_name: approved.display_name,
@@ -953,20 +1281,14 @@ pub fn cancel_catalog_import(
     state: tauri::State<'_, AppState>,
     operation_id: String,
 ) -> Result<bool, String> {
-    state
-        .catalog_import
-        .cancel(&operation_id)
-        .map_err(|error| error.to_string())
+    Ok(state.catalog_import.cancel(&operation_id))
 }
 
 #[tauri::command]
 pub fn read_catalog_import_progress(
     state: tauri::State<'_, AppState>,
 ) -> Result<Option<CatalogImportProgress>, String> {
-    state
-        .catalog_import
-        .latest()
-        .map_err(|error| error.to_string())
+    Ok(state.catalog_import.latest())
 }
 
 #[tauri::command]
@@ -1068,20 +1390,14 @@ pub fn cancel_search_index_rebuild(
     state: tauri::State<'_, AppState>,
     operation_id: String,
 ) -> Result<bool, String> {
-    state
-        .search_index_controller
-        .cancel(&operation_id)
-        .map_err(|error| error.to_string())
+    Ok(state.search_index_controller.cancel(&operation_id))
 }
 
 #[tauri::command]
 pub fn read_search_index_rebuild_progress(
     state: tauri::State<'_, AppState>,
 ) -> Result<Option<SearchRebuildProgress>, String> {
-    state
-        .search_index_controller
-        .latest()
-        .map_err(|error| error.to_string())
+    Ok(state.search_index_controller.latest())
 }
 
 #[tauri::command]
@@ -1117,14 +1433,33 @@ pub struct SelectedScanRoot {
     display_path: String,
 }
 
+#[cfg(desktop)]
+impl From<ApprovedScanRoot> for SelectedScanRoot {
+    fn from(approved: ApprovedScanRoot) -> Self {
+        Self {
+            access_handle: approved.access_handle,
+            display_path: approved.display_path,
+        }
+    }
+}
+
+/// Where the library folder pickers start: the default library folder, when
+/// one is set and present.
+#[cfg(desktop)]
+fn preferred_scan_directory(scanner: &ScanController) -> Option<String> {
+    scanner
+        .read_root_preference()
+        .ok()
+        .filter(|preference| preference.available)
+        .and_then(|preference| preference.display_path)
+}
+
 #[tauri::command]
-pub fn read_scan_root_preference(
+pub async fn read_scan_root_preference(
     state: tauri::State<'_, AppState>,
 ) -> Result<ScanRootPreference, String> {
-    state
-        .scanner
-        .read_root_preference()
-        .map_err(|error| error.to_string())
+    let scanner = Arc::clone(&state.scanner);
+    blocking(move || scanner.read_root_preference()).await
 }
 
 #[cfg(desktop)]
@@ -1133,36 +1468,20 @@ pub async fn select_scan_root(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<Option<SelectedScanRoot>, String> {
-    use tauri_plugin_dialog::DialogExt;
-
-    let handle = app.clone();
-    let initial_directory = state
-        .scanner
-        .read_root_preference()
-        .ok()
-        .filter(|preference| preference.available)
-        .and_then(|preference| preference.display_path);
-    let selected = tauri::async_runtime::spawn_blocking(move || {
-        let dialog = handle.dialog().file().set_title("Choose a library folder");
-        match initial_directory {
-            Some(directory) => dialog.set_directory(directory).blocking_pick_folder(),
-            None => dialog.blocking_pick_folder(),
-        }
-    })
-    .await
-    .map_err(|error| error.to_string())?;
-    let Some(selected) = selected else {
+    let Some(path) = pick_folder(
+        app,
+        "Choose a library folder",
+        preferred_scan_directory(&state.scanner),
+    )
+    .await?
+    else {
         return Ok(None);
     };
-    let path = selected.into_path().map_err(|error| error.to_string())?;
-    let approved = state
+    state
         .scanner
         .approve_root(&path)
-        .map_err(|error| error.to_string())?;
-    Ok(Some(SelectedScanRoot {
-        access_handle: approved.access_handle,
-        display_path: approved.display_path,
-    }))
+        .map(|approved| Some(SelectedScanRoot::from(approved)))
+        .map_err(display_error)
 }
 
 #[cfg(desktop)]
@@ -1171,36 +1490,20 @@ pub async fn select_preferred_scan_root(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<Option<ScanRootPreference>, String> {
-    use tauri_plugin_dialog::DialogExt;
-
-    let handle = app.clone();
-    let initial_directory = state
-        .scanner
-        .read_root_preference()
-        .ok()
-        .filter(|preference| preference.available)
-        .and_then(|preference| preference.display_path);
-    let selected = tauri::async_runtime::spawn_blocking(move || {
-        let dialog = handle
-            .dialog()
-            .file()
-            .set_title("Choose the default library folder");
-        match initial_directory {
-            Some(directory) => dialog.set_directory(directory).blocking_pick_folder(),
-            None => dialog.blocking_pick_folder(),
-        }
-    })
-    .await
-    .map_err(|error| error.to_string())?;
-    let Some(selected) = selected else {
+    let Some(path) = pick_folder(
+        app,
+        "Choose the default library folder",
+        preferred_scan_directory(&state.scanner),
+    )
+    .await?
+    else {
         return Ok(None);
     };
-    let path = selected.into_path().map_err(|error| error.to_string())?;
     state
         .scanner
         .configure_root(&path)
         .map(Some)
-        .map_err(|error| error.to_string())
+        .map_err(display_error)
 }
 
 #[cfg(mobile)]
@@ -1213,33 +1516,27 @@ pub async fn select_preferred_scan_root(
 }
 
 #[tauri::command]
-pub fn reset_scan_root_preference(
+pub async fn reset_scan_root_preference(
     state: tauri::State<'_, AppState>,
 ) -> Result<ScanRootPreference, String> {
-    state
-        .scanner
-        .reset_root_preference()
-        .map_err(|error| error.to_string())
+    let scanner = Arc::clone(&state.scanner);
+    blocking(move || scanner.reset_root_preference()).await
 }
 
 #[cfg(desktop)]
 #[tauri::command]
-pub fn prepare_preferred_scan_root(
+pub async fn prepare_preferred_scan_root(
     state: tauri::State<'_, AppState>,
 ) -> Result<SelectedScanRoot, String> {
-    let approved = state
-        .scanner
-        .approve_preferred_root()
-        .map_err(|error| error.to_string())?;
-    Ok(SelectedScanRoot {
-        access_handle: approved.access_handle,
-        display_path: approved.display_path,
-    })
+    let scanner = Arc::clone(&state.scanner);
+    blocking(move || scanner.approve_preferred_root())
+        .await
+        .map(SelectedScanRoot::from)
 }
 
 #[cfg(mobile)]
 #[tauri::command]
-pub fn prepare_preferred_scan_root(
+pub async fn prepare_preferred_scan_root(
     _state: tauri::State<'_, AppState>,
 ) -> Result<SelectedScanRoot, String> {
     Err("a default scan root is not available on this platform".to_owned())
@@ -1271,7 +1568,7 @@ pub fn cancel_library_scan(
     state
         .scanner
         .cancel(&ScanSessionId(session_id))
-        .map_err(|error| error.to_string())
+        .map_err(display_error)
 }
 
 #[tauri::command]
@@ -1334,16 +1631,15 @@ pub async fn install_library_archive(
     installation_id: String,
 ) -> Result<ScanInstallView, String> {
     let controller = Arc::clone(&state.scan_installs);
-    tauri::async_runtime::spawn_blocking(move || {
-        controller.install_existing(InstallationId(installation_id))
-    })
-    .await
-    .map_err(|error| error.to_string())?
+    blocking(move || controller.install_existing(InstallationId(installation_id))).await
 }
 
 #[tauri::command]
-pub fn read_scan_installs(state: tauri::State<'_, AppState>) -> ScanInstallView {
-    state.scan_installs.view()
+pub async fn read_scan_installs(
+    state: tauri::State<'_, AppState>,
+) -> Result<ScanInstallView, String> {
+    let controller = Arc::clone(&state.scan_installs);
+    blocking_value(move || controller.view()).await
 }
 
 #[tauri::command]
@@ -1352,11 +1648,7 @@ pub async fn cancel_scan_install(
     installation_id: String,
 ) -> Result<ScanInstallView, String> {
     let controller = Arc::clone(&state.scan_installs);
-    tauri::async_runtime::spawn_blocking(move || {
-        controller.cancel(&InstallationId(installation_id))
-    })
-    .await
-    .map_err(|error| error.to_string())
+    blocking_value(move || controller.cancel(&InstallationId(installation_id))).await
 }
 
 /// Opens the picker for "+ Add" and starts finding the picked works; None
@@ -1375,9 +1667,8 @@ pub async fn start_library_add(
 
     let controller = Arc::clone(&state.library_add);
     controller.check_can_start()?;
-    let handle = app.clone();
-    let pick = tauri::async_runtime::spawn_blocking(move || {
-        let dialog = handle.dialog().file();
+    let pick = blocking(move || {
+        let dialog = app.dialog().file();
         let paths = |picked: Option<Vec<tauri_plugin_dialog::FilePath>>| {
             picked
                 .map(|picked| {
@@ -1387,7 +1678,7 @@ pub async fn start_library_add(
                         .collect::<Result<Vec<_>, _>>()
                 })
                 .transpose()
-                .map_err(|error| error.to_string())
+                .map_err(display_error)
         };
         Ok::<_, String>(match request.source {
             LibraryAddSourceRequest::Folders => paths(
@@ -1410,18 +1701,15 @@ pub async fn start_library_add(
                 .blocking_pick_folder()
                 .map(|path| path.into_path())
                 .transpose()
-                .map_err(|error| error.to_string())?
+                .map_err(display_error)?
                 .map(LibraryAddPick::Scan),
         })
     })
-    .await
-    .map_err(|error| error.to_string())??;
+    .await?;
     let Some(pick) = pick else {
         return Ok(None);
     };
-    tauri::async_runtime::spawn_blocking(move || controller.start(pick).map(Some))
-        .await
-        .map_err(|error| error.to_string())?
+    blocking(move || controller.start(pick).map(Some)).await
 }
 
 #[cfg(mobile)]
@@ -1454,9 +1742,7 @@ pub async fn confirm_library_add(
     request: dla_application::library_add::ConfirmLibraryAddRequest,
 ) -> Result<dla_application::library_add::LibraryAddView, String> {
     let controller = Arc::clone(&state.library_add);
-    tauri::async_runtime::spawn_blocking(move || controller.confirm(request))
-        .await
-        .map_err(|error| error.to_string())?
+    blocking(move || controller.confirm(request)).await
 }
 
 #[cfg(mobile)]
@@ -1474,9 +1760,7 @@ pub async fn cancel_library_add(
     batch_id: String,
 ) -> Result<dla_application::library_add::LibraryAddView, String> {
     let controller = Arc::clone(&state.library_add);
-    tauri::async_runtime::spawn_blocking(move || controller.cancel(&batch_id))
-        .await
-        .map_err(|error| error.to_string())?
+    blocking(move || controller.cancel(&batch_id)).await
 }
 
 #[cfg(mobile)]
@@ -1632,23 +1916,15 @@ pub async fn import_own_work_artwork_file(
     state: tauri::State<'_, AppState>,
     installation_id: String,
 ) -> Result<Option<String>, String> {
-    use tauri_plugin_dialog::DialogExt;
-
-    let handle = app.clone();
-    let selected = tauri::async_runtime::spawn_blocking(move || {
-        handle
-            .dialog()
-            .file()
-            .set_title("Choose a picture")
-            .add_filter("Pictures", OWN_WORK_PICTURE_EXTENSIONS)
-            .blocking_pick_file()
-    })
-    .await
-    .map_err(|error| error.to_string())?;
-    let Some(selected) = selected else {
+    let Some(path) = pick_file(
+        app,
+        "Choose a picture",
+        Some(("Pictures", OWN_WORK_PICTURE_EXTENSIONS)),
+    )
+    .await?
+    else {
         return Ok(None);
     };
-    let path = selected.into_path().map_err(|error| error.to_string())?;
     let service = Arc::clone(&state.own_works);
     blocking(move || service.import_artwork_file(&InstallationId(installation_id), &path))
         .await
@@ -1688,8 +1964,8 @@ pub struct WindowMetrics {
 }
 
 #[tauri::command]
-pub fn read_system_report() -> crate::system_report::SystemReport {
-    crate::system_report::read_system_report()
+pub async fn read_system_report() -> Result<crate::system_report::SystemReport, String> {
+    blocking_value(crate::system_report::read_system_report).await
 }
 
 #[tauri::command]
@@ -1779,11 +2055,11 @@ async fn delivery_call(
     + 'static,
 ) -> Result<DeliveryView, DeliveryFailure> {
     let controller = Arc::clone(&state.delivery);
-    tauri::async_runtime::spawn_blocking(move || call(&controller).map_err(DeliveryFailure::from))
+    blocking_value(move || call(&controller).map_err(DeliveryFailure::from))
         .await
-        .map_err(|error| DeliveryFailure {
+        .map_err(|detail| DeliveryFailure {
             problem: dla_domain::delivery::DeliveryProblem::Unavailable,
-            detail: error.to_string(),
+            detail,
         })?
 }
 
@@ -1877,26 +2153,12 @@ pub async fn delivery_remove(
 /// the scanner share. `None` means the picker was closed.
 #[cfg(desktop)]
 async fn pick_install_folder(app: AppHandle) -> Result<Option<std::path::PathBuf>, String> {
-    use tauri_plugin_dialog::DialogExt;
-
-    let initial_directory = std::env::var("DLA_DEFAULT_INSTALL_ROOT")
-        .ok()
-        .filter(|path| std::path::Path::new(path).is_dir());
-    let selected = tauri::async_runtime::spawn_blocking(move || {
-        let dialog = app
-            .dialog()
-            .file()
-            .set_title("Choose where works will be installed");
-        match initial_directory {
-            Some(directory) => dialog.set_directory(directory).blocking_pick_folder(),
-            None => dialog.blocking_pick_folder(),
-        }
-    })
+    pick_folder(
+        app,
+        "Choose where works will be installed",
+        default_install_root(),
+    )
     .await
-    .map_err(|error| error.to_string())?;
-    selected
-        .map(|selected| selected.into_path().map_err(|error| error.to_string()))
-        .transpose()
 }
 
 #[cfg(desktop)]
@@ -1931,15 +2193,12 @@ pub async fn select_install_folder(
     };
     let delivery = Arc::clone(&state.delivery);
     let installs = Arc::clone(&state.scan_installs);
-    tauri::async_runtime::spawn_blocking(move || {
-        delivery
-            .set_install_folder(&path)
-            .map_err(|error| error.to_string())?;
+    blocking(move || {
+        delivery.set_install_folder(&path).map_err(display_error)?;
         installs.changed();
-        Ok(Some(installs.view()))
+        Ok::<_, String>(Some(installs.view()))
     })
     .await
-    .map_err(|error| error.to_string())?
 }
 
 #[cfg(mobile)]

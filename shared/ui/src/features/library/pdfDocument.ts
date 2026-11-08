@@ -1,4 +1,6 @@
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from "pdfjs-dist";
+import { basename } from "../../basename";
+import type { MediaDelivery } from "./types";
 
 // The media protocol answers at most 1 MiB per range request.
 const MAX_RANGE_BYTES = 1024 * 1024;
@@ -53,32 +55,14 @@ function loadPdfjs(): Promise<Pdfjs> {
 }
 
 /**
- * Opens a PDF served by the media protocol, reading only the byte ranges the
- * shown pages need, so a long book opens at any page without loading it whole.
+ * Opens a PDF served by the media protocol. Streaming reads only the byte
+ * ranges the shown pages need, so a long book opens at any page without
+ * loading it whole; "blob" fetches the file first, for a webview whose media
+ * protocol cannot answer ranges (CEF).
  */
-export async function openPdfDocument(url: string): Promise<PdfDocument> {
+export async function openPdfDocument(url: string, delivery: MediaDelivery = "stream"): Promise<PdfDocument> {
   const module = await loadPdfjs();
-  const head = await fetch(url, { method: "HEAD" });
-  const length = Number(head.headers.get("content-length"));
-  if (!head.ok || !Number.isSafeInteger(length) || length <= 0) {
-    throw new Error(`the PDF could not be read (status ${head.status})`);
-  }
-  let failure: unknown = null;
-  let task: PDFDocumentLoadingTask | null = null;
-  class RangeTransport extends module.PDFDataRangeTransport {
-    override requestDataRange(begin: number, end: number) {
-      readRange(url, begin, end).then(
-        (bytes) => this.onDataRange(begin, bytes),
-        (error: unknown) => {
-          failure = error;
-          void task?.destroy();
-        },
-      );
-    }
-  }
-  task = module.getDocument({
-    range: new RangeTransport(length, null),
-    rangeChunkSize: RANGE_CHUNK_BYTES,
+  const common = {
     disableAutoFetch: true,
     disableStream: true,
     useWasm: false,
@@ -86,12 +70,42 @@ export async function openPdfDocument(url: string): Promise<PdfDocument> {
     useWorkerFetch: false,
     BinaryDataFactory: BundledData,
     verbosity: module.VerbosityLevel.ERRORS,
-  });
-  try {
+  };
+  if (delivery === "blob") {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`the PDF could not be read (status ${response.status})`);
+    const task = module.getDocument({ ...common, data: new Uint8Array(await response.arrayBuffer()) });
     return new LoadedPdf(task, await task.promise);
-  } catch (error) {
-    throw failure ?? error;
   }
+  const head = await fetch(url, { method: "HEAD" });
+  const length = Number(head.headers.get("content-length"));
+  if (!head.ok || !Number.isSafeInteger(length) || length <= 0) {
+    throw new Error(`the PDF could not be read (status ${head.status})`);
+  }
+  // A failed range ends the load with its own error: pdf.js keeps waiting
+  // for the bytes otherwise.
+  let fail: (error: unknown) => void = () => undefined;
+  const failed = new Promise<never>((_, reject) => {
+    fail = reject;
+  });
+  let task: PDFDocumentLoadingTask | null = null;
+  class RangeTransport extends module.PDFDataRangeTransport {
+    override requestDataRange(begin: number, end: number) {
+      readRange(url, begin, end).then(
+        (bytes) => this.onDataRange(begin, bytes),
+        (error: unknown) => {
+          fail(error);
+          void task?.destroy();
+        },
+      );
+    }
+  }
+  task = module.getDocument({
+    ...common,
+    range: new RangeTransport(length, null),
+    rangeChunkSize: RANGE_CHUNK_BYTES,
+  });
+  return new LoadedPdf(task, await Promise.race([task.promise, failed]));
 }
 
 class BundledData {
@@ -105,7 +119,7 @@ class BundledData {
 }
 
 function byFileName(urls: Record<string, string>): ReadonlyMap<string, string> {
-  return new Map(Object.entries(urls).map(([path, url]) => [path.slice(path.lastIndexOf("/") + 1), url]));
+  return new Map(Object.entries(urls).map(([path, url]) => [basename(path), url]));
 }
 
 async function readRange(url: string, begin: number, end: number): Promise<Uint8Array> {

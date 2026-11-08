@@ -25,6 +25,7 @@
     "./search": "./src/features/search/index.ts",
     "./support": "./src/support/index.ts",
     "./support/shell": "./src/support/shell.ts",
+    "./translation": "./src/features/translation/index.ts",
     "./styles.css": "./src/styles.css"
   },
   "scripts": {
@@ -41,6 +42,7 @@
     "motion": "catalog:",
     "pdfjs-dist": "catalog:",
     "react": "catalog:",
+    "react-arborist": "catalog:",
     "react-dom": "catalog:"
   },
   "devDependencies": {

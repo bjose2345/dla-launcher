@@ -1,3 +1,4 @@
+import { basename } from "../../basename";
 import type { Installation } from "./types";
 
 export function installationTitle(installation: Installation): string {
@@ -15,7 +16,7 @@ export function installationTitle(installation: Installation): string {
  */
 export function installationName(installation: Installation): string {
   const archive = installation.detection.packageInspection?.source.relativePath;
-  if (archive) return withoutExtension(lastSegment(archive));
+  if (archive) return withoutExtension(basename(archive));
   const paths = installation.detection.contentItems.map((item) => item.relativePath);
   const tops = new Set(paths.map((path) => path.split("/")[0]));
   const [top] = tops;
@@ -23,7 +24,7 @@ export function installationName(installation: Installation): string {
     if (paths.every((path) => path.includes("/"))) return top;
     if (paths.length === 1) return withoutExtension(top);
   }
-  return lastSegment(installation.rootPath) || installation.rootPath;
+  return basename(installation.rootPath) || installation.rootPath;
 }
 
 /**
@@ -57,10 +58,6 @@ export function effectiveIdentity(installation: Installation): string | null {
   if (manual?.kind === "catalog_work") return manual.workCode;
   if (manual?.kind === "unidentified") return null;
   return installation.detection.catalogIdentity?.workCode ?? null;
-}
-
-function lastSegment(path: string): string {
-  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? "";
 }
 
 function withoutExtension(name: string): string {

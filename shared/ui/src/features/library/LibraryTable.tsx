@@ -11,8 +11,10 @@ import {
 import { ChevronDown, ChevronUp, ChevronsUpDown, ListChecks, Play } from "lucide-react";
 
 import { usePresentation } from "../../preferences/PresentationProvider";
+import { ArchiveTranslationBadge } from "../translation/TranslatedWorks";
 import { useOwnWork } from "./ownWorkDetails";
 import { LibraryArtwork } from "./LibraryArtwork";
+import { effectiveIdentity } from "./libraryPresentation";
 import { collectionState, type LibraryCollectionEntry } from "./LibraryCollection";
 import type { ManageTab } from "./LibraryManageDrawer";
 import { LibraryWorkMenu } from "./LibraryWorkMenu";
@@ -31,6 +33,8 @@ interface LibraryRow {
   title: string;
   creator: string;
   code: string;
+  /** The work code packs are found by, even for a work the catalog lacks. */
+  workCode: string | null;
   cover: string | null;
   kind: LibraryContentKind;
   files: number;
@@ -74,6 +78,7 @@ export function LibraryTable({
       title: libraryDisplayTitle(entry.installation, entry.work, preferEnglish),
       creator: libraryDisplayCreator(entry.work, preferEnglish, details),
       code: libraryDisplayCode(entry.installation, details) ?? "",
+      workCode: effectiveIdentity(entry.installation),
       cover: own.coverUrl(entry.installation.id),
       kind: libraryContentKind(entry.installation, entry.action),
       files: entry.fileCount,
@@ -115,7 +120,15 @@ export function LibraryTable({
       header: () => t("library.table.code"),
       cell: (context) => (
         context.getValue()
-          ? <code className="library-table-code">{context.getValue()}</code>
+          ? (
+            <span className="library-table-code-cell">
+              <code className="library-table-code">{context.getValue()}</code>
+              <ArchiveTranslationBadge
+                code={context.row.original.workCode}
+                className="library-flag is-translation"
+              />
+            </span>
+          )
           : <span className="library-table-number">—</span>
       ),
     }),

@@ -2,14 +2,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type CSSProperties, type Ref } from "react";
 import {
   AlertTriangle,
-  AudioLines,
-  AudioWaveform,
+  Square,
+  Gamepad2,
   Grid3X3,
   Library as LibraryIcon,
   List,
   ListChecks,
   LoaderCircle,
-  Pause,
   Play,
   Rows3,
   RefreshCw,
@@ -22,8 +21,13 @@ import {
 
 import type { AndroidAppGateway, AndroidAppRuntimeState, AndroidAppView } from "../../android-package";
 import type { CatalogDetailGateway, CatalogWork } from "../catalog";
+import { catalogKeys } from "../catalog/catalogQueryKeys";
+import { workTitle } from "../catalog/localizedNames";
 import type { ScanInstallGateway } from "../scanner/types";
 import type { SearchGateway } from "../search/types";
+import type { DeliveryGateway } from "../delivery/types";
+import { TranslatedWorksProvider } from "../translation/TranslatedWorks";
+import type { TranslationGateway } from "../translation/types";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import {
   LibraryCollection,
@@ -36,13 +40,12 @@ import { LibraryTable } from "./LibraryTable";
 import { effectiveIdentity } from "./libraryPresentation";
 import { LibraryLensRail } from "./LibraryLensRail";
 import { LibraryManageDrawer, type ManageTab } from "./LibraryManageDrawer";
+import { LibraryCoverFlags } from "./LibraryCoverFlags";
 import { LibraryWorkMenu } from "./LibraryWorkMenu";
 import { useMediaPlayback } from "./MediaPlaybackProvider";
 import { isReaderAction, useReader } from "./ReaderProvider";
 import { mediaItemName } from "./mediaSession";
-import { NowPlayingBars } from "./NowPlayingBars";
 import { playTimeLabel } from "./LibraryPlayTime";
-import { TrackWaveform } from "./TrackWaveform";
 import { OwnWorkDetailsProvider, useOwnWork } from "./ownWorkDetails";
 import type { LibraryAddGateway } from "./libraryAdd";
 import { LibraryAddButton, LibraryAddSheet, useLibraryAdd } from "./LibraryAddSheet";
@@ -73,26 +76,15 @@ import type {
   LaunchActionKind,
   LaunchActivity,
   LibraryGateway,
+  MediaPlayerKind,
   LocalPersonalization,
   MediaSessionItem,
   PreparedPackageInstallation,
 } from "./types";
 import { launchActivityIsActive } from "./types";
-
-const AUDIO_VISUALIZER_STORAGE_KEY = "dla.library.audio-visualizer";
-
-type AudioVisualizerMode = "waveform" | "analyser";
-
-function readAudioVisualizerMode(): AudioVisualizerMode {
-  if (typeof window === "undefined") return "waveform";
-  try {
-    return window.localStorage.getItem(AUDIO_VISUALIZER_STORAGE_KEY) === "analyser"
-      ? "analyser"
-      : "waveform";
-  } catch {
-    return "waveform";
-  }
-}
+import { launchPollInterval } from "./ActiveLaunchPill";
+import { pluralText } from "../../i18n/pluralText";
+import { AnimatedDots } from "../../app/AnimatedDots";
 
 export function LibraryPage({
   gateway,
@@ -109,6 +101,10 @@ export function LibraryPage({
   onOpenOwnWork,
   androidAppGateway,
   onReinstallAndroidApp,
+  translationGateway,
+  deliveryGateway,
+  onOpenTranslationSettings,
+  onOpenExternal,
 }: {
   gateway: LibraryGateway;
   androidAppGateway?: AndroidAppGateway;
@@ -117,6 +113,10 @@ export function LibraryPage({
   installs?: ScanInstallGateway;
   /** Adds work folders and archives into the install folder; absent where that can't be done. */
   addGateway?: LibraryAddGateway;
+  /** Game translation, where the launcher can start games. */
+  translationGateway?: TranslationGateway;
+  /** Signs in to DLA for the Archive's translations, where downloads work. */
+  deliveryGateway?: DeliveryGateway;
   /** The work whose Manage panel is open over the Library. */
   manage?: { installationId: string; tab?: ManageTab };
   /** A work to show in the featured spot, such as one just added. */
@@ -128,6 +128,8 @@ export function LibraryPage({
   /** Opens the page of a work outside the catalog. */
   onOpenOwnWork?: (installationId: string) => void;
   onReinstallAndroidApp?: (workCode: string) => void | Promise<void>;
+  onOpenTranslationSettings?: () => void;
+  onOpenExternal?: (url: string) => Promise<void>;
 }) {
   const { includeUnreviewed, locale, t } = usePresentation();
   const playback = useMediaPlayback();
@@ -161,9 +163,10 @@ export function LibraryPage({
       installationId,
       status,
     })),
-    refetchInterval: (query) => query.state.data?.some((activity) => (
-      launchActivityIsActive(activity.status)
-    )) ? 750 : false,
+    // Idle polling is the pill's job; here only a running launch is followed.
+    refetchInterval: (query) => query.state.data?.some((activity) => launchActivityIsActive(activity.status))
+      ? launchPollInterval(query.state.data, Boolean(gateway.subscribeLaunchActivity))
+      : false,
   });
   const activeLaunchIds = (launches.data ?? []).flatMap((activity) => (
     launchActivityIsActive(activity.status) ? [activity.id] : []
@@ -208,7 +211,7 @@ export function LibraryPage({
     ...androidAppViews.map((item) => item.association.workCode),
   ])];
   const catalogWorks = useQuery({
-    queryKey: ["catalog-works", workCodes],
+    queryKey: catalogKeys.works(workCodes),
     queryFn: () => catalogGateway.readWorks(workCodes),
     enabled: workCodes.length > 0,
     staleTime: 5 * 60_000,
@@ -331,6 +334,10 @@ export function LibraryPage({
       queryClient.invalidateQueries({ queryKey: ["library", "shelves"] }),
     ]);
   };
+  const stop = useMutation({
+    mutationFn: (activityId: string) => gateway.stopLaunch(activityId),
+    onSettled: invalidateActivity,
+  });
   const launch = useMutation({
     mutationFn: (installationId: string) => gateway.launchInstallation(installationId),
     onSuccess: (activity) => {
@@ -376,9 +383,11 @@ export function LibraryPage({
   ) => {
     if (!requestedAction) {
       void onManage(entry.installation.id);
-    } else if (requestedAction === "play_audio") {
-      if (playback.session?.installationId === entry.installation.id) playback.toggle();
-      else void playback.openWork(entry.installation.id);
+    } else if (requestedAction === "play_audio" || requestedAction === "play_video") {
+      const kind = requestedAction === "play_audio" ? "audio" : "video";
+      void playInChosenPlayer(gateway, entry.installation.id, kind, null).then((played) => {
+        if (!played) void onOpenMedia(entry.installation.id);
+      });
     } else if (isReaderAction(requestedAction)) {
       void reader.open(entry.installation.id);
     } else if (isMediaLaunchAction(requestedAction)) {
@@ -404,6 +413,7 @@ export function LibraryPage({
   }
 
   return (
+    <TranslatedWorksProvider gateway={translationGateway}>
     <OwnWorkDetailsProvider gateway={gateway} onOpenPage={onOpenOwnWork}>
       <main className="library-page">
         <section className="library-home-heading">
@@ -449,7 +459,7 @@ export function LibraryPage({
                 onClick={() => { void refresh(); }}
               >
                 {refreshing
-                  ? <LoaderCircle className="library-spin" aria-hidden="true" />
+                  ? <LoaderCircle className="app-spin" aria-hidden="true" />
                   : <RefreshCw aria-hidden="true" />}
               </button>
             </div>
@@ -512,7 +522,14 @@ export function LibraryPage({
                 gateway={gateway}
                 preferEnglish={locale !== "ja-JP"}
                 busy={launch.isPending && launch.variables === featured.installation.id}
+                stopping={stop.isPending}
                 onActivate={() => activate(featured)}
+                onStop={() => {
+                  const active = launches.data?.find((activity) => (
+                    activity.installationId === featured.installation.id && launchActivityIsActive(activity.status)
+                  ));
+                  if (active) stop.mutate(active.id);
+                }}
                 onManage={(tab) => void onManage(featured.installation.id, tab)}
                 onOpenWork={featured.work
                   ? () => void onOpenWork(featured.work!.code)
@@ -592,8 +609,12 @@ export function LibraryPage({
             catalogGateway={catalogGateway}
             searchGateway={searchGateway}
             installs={installs}
+            translationGateway={translationGateway}
+            deliveryGateway={deliveryGateway}
             onClose={() => onCloseManage?.()}
             onOpenWork={(code) => void onOpenWork(code)}
+            onOpenTranslationSettings={onOpenTranslationSettings}
+            onOpenExternal={onOpenExternal}
           />
         ) : null}
       </main>
@@ -612,6 +633,7 @@ export function LibraryPage({
         />
       ) : null}
     </OwnWorkDetailsProvider>
+    </TranslatedWorksProvider>
   );
 }
 
@@ -655,7 +677,7 @@ function AndroidAppLibrary({
           const { association, runtime } = item;
           const work = workByCode.get(association.workCode);
           const title = work
-            ? (preferEnglish && work.titleEnglish ? work.titleEnglish : work.title)
+            ? workTitle(work, preferEnglish)
             : association.workCode;
           const busy = launchingId === association.id || removingId === association.id;
           const confirming = confirmRemoveId === association.id;
@@ -701,7 +723,7 @@ function AndroidAppLibrary({
                     onClick={() => onLaunch(association.id)}
                   >
                     {launchingId === association.id
-                      ? <LoaderCircle className="library-spin" aria-hidden="true" />
+                      ? <LoaderCircle className="app-spin" aria-hidden="true" />
                       : <Play aria-hidden="true" />}
                     {t(launchingId === association.id ? "androidApp.launching" : "androidApp.launch")}
                   </button>
@@ -717,7 +739,7 @@ function AndroidAppLibrary({
                     </button>
                     <button className="is-danger" type="button" disabled={busy} onClick={() => onRemove(association.id)}>
                       {removingId === association.id
-                        ? <LoaderCircle className="library-spin" aria-hidden="true" />
+                        ? <LoaderCircle className="app-spin" aria-hidden="true" />
                         : <Trash2 aria-hidden="true" />}
                       {t("androidApp.confirmRemove")}
                     </button>
@@ -761,7 +783,9 @@ function LibraryFeature({
   gateway,
   preferEnglish,
   busy,
+  stopping,
   onActivate,
+  onStop,
   onManage,
   onOpenWork,
   onBrowse,
@@ -771,7 +795,10 @@ function LibraryFeature({
   gateway: LibraryGateway;
   preferEnglish: boolean;
   busy: boolean;
+  /** Stopping the running game. */
+  stopping: boolean;
   onActivate: () => void;
+  onStop: () => void;
   onManage: (tab: ManageTab) => void;
   onOpenWork?: () => void;
   onBrowse?: () => void;
@@ -779,12 +806,7 @@ function LibraryFeature({
   const { locale, showPlayTime, t } = usePresentation();
   const playback = useMediaPlayback();
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
-  const [waveformDuration, setWaveformDuration] = useState<number | null>(null);
-  const [visualizerMode, setVisualizerMode] = useState<AudioVisualizerMode>(
-    readAudioVisualizerMode,
-  );
   const currentHere = playback.session?.installationId === entry.installation.id;
-  const playingHere = currentHere && playback.playing;
   const running = entry.latestLaunch !== null
     && launchActivityIsActive(entry.latestLaunch.status);
   const playbackFor = async (
@@ -792,6 +814,12 @@ function LibraryFeature({
     ordinal: number,
     positionSeconds = 0,
   ) => {
+    if (
+      (entry.action === "play_video" || entry.action === "play_audio")
+      && await playInChosenPlayer(gateway, installationId, entry.action === "play_audio" ? "audio" : "video", ordinal)
+    ) {
+      return;
+    }
     if (playback.session?.installationId === installationId) {
       playback.selectOrdinal(ordinal, positionSeconds);
       return;
@@ -820,15 +848,13 @@ function LibraryFeature({
     enabled: action === "play_audio",
     staleTime: 5 * 60_000,
   });
-  const waveformOrdinal = currentHere && playback.item
+  const resumeOrdinal = currentHere && playback.item
     ? playback.item.ordinal
     : featureItems.data?.find((item) => item.relativePath === resume?.relativePath)?.ordinal
       ?? featureItems.data?.[0]?.ordinal;
-  const waveformItem = featureItems.data?.find((item) => item.ordinal === waveformOrdinal);
-  const waveformResume = waveformItem?.relativePath === resume?.relativePath ? resume : null;
   const timelineDuration = currentHere
     ? playback.durationSeconds
-    : resume?.durationMs ? resume.durationMs / 1_000 : waveformDuration;
+    : resume?.durationMs ? resume.durationMs / 1_000 : null;
   const timelinePosition = seekPreview ?? (currentHere
     ? playback.positionSeconds
     : resume?.positionMs ? resume.positionMs / 1_000 : 0);
@@ -836,25 +862,14 @@ function LibraryFeature({
     ? Math.round(Math.max(0, Math.min(100, (timelinePosition / timelineDuration) * 100)))
     : null;
 
-  useEffect(() => {
-    setSeekPreview(null);
-    setWaveformDuration(null);
-  }, [installation.id, waveformOrdinal]);
+  useEffect(() => setSeekPreview(null), [installation.id, resumeOrdinal]);
 
+  // A seek on the card starts the player at that point and opens it.
   const commitSeek = (positionSeconds: number) => {
     setSeekPreview(null);
     if (currentHere) playback.seek(positionSeconds);
-    else if (waveformOrdinal !== undefined) {
-      void playbackFor(installation.id, waveformOrdinal, positionSeconds);
-    }
-  };
-
-  const chooseVisualizer = (mode: AudioVisualizerMode) => {
-    setVisualizerMode(mode);
-    try {
-      window.localStorage.setItem(AUDIO_VISUALIZER_STORAGE_KEY, mode);
-    } catch {
-      // The selected mode still applies for this session when storage is unavailable.
+    else if (resumeOrdinal !== undefined) {
+      void playbackFor(installation.id, resumeOrdinal, positionSeconds).then(onActivate);
     }
   };
 
@@ -863,68 +878,16 @@ function LibraryFeature({
       <div className="library-feature-art cover-hover-frame">
         <LibraryArtwork kind={kind} title={title} work={work} cover={own.coverUrl(installation.id)} />
         <span className="library-feature-art-shade" aria-hidden="true" />
-        {kind === "audio" ? (
-          <div className="library-feature-visualizer-toggle">
-            <button
-              className={visualizerMode === "waveform" ? "is-active" : undefined}
-              type="button"
-              aria-pressed={visualizerMode === "waveform"}
-              onClick={() => chooseVisualizer("waveform")}
-            >
-              <AudioWaveform aria-hidden="true" />
-              {t("media.visualizer.waveform")}
-            </button>
-            <button
-              className={visualizerMode === "analyser" ? "is-active" : undefined}
-              type="button"
-              aria-pressed={visualizerMode === "analyser"}
-              onClick={() => chooseVisualizer("analyser")}
-            >
-              <AudioLines aria-hidden="true" />
-              {t("media.visualizer.analyser")}
-            </button>
-          </div>
-        ) : null}
-        {kind === "audio" ? (
-          <div className="library-feature-visualizer-stage">
-            {waveformOrdinal !== undefined ? (
-              <div
-                className={`library-feature-visualizer-layer${visualizerMode === "waveform" ? " is-active" : ""}`}
-                aria-hidden={visualizerMode !== "waveform"}
-                inert={visualizerMode !== "waveform"}
-              >
-                <TrackWaveform
-                  gateway={gateway}
-                  installationId={installation.id}
-                  ordinal={waveformOrdinal}
-                  resume={waveformResume}
-                  onStart={(ordinal, positionSeconds) => playbackFor(
-                    installation.id,
-                    ordinal,
-                    positionSeconds,
-                  )}
-                  onSeekPreview={setSeekPreview}
-                  onDuration={setWaveformDuration}
-                />
-              </div>
-            ) : null}
-            <div
-              className={`library-feature-visualizer-layer is-analyser${visualizerMode === "analyser" ? " is-active" : ""}`}
-              aria-hidden={visualizerMode !== "analyser"}
-            >
-              <NowPlayingBars
-                installationId={installation.id}
-                alwaysVisible
-                liveSpectrum={visualizerMode === "analyser"}
-              />
-            </div>
-          </div>
-        ) : null}
+        <LibraryCoverFlags kind={kind} code={effectiveIdentity(installation)} />
       </div>
       <div className="library-feature-copy">
         <span className="library-feature-kicker">
-          {resume ? <Play fill="currentColor" aria-hidden="true" /> : <Sparkles aria-hidden="true" />}
-          {t(resume ? "library.home.continue" : "library.home.featured")}
+          {running
+            ? <Gamepad2 aria-hidden="true" />
+            : resume ? <Play fill="currentColor" aria-hidden="true" /> : <Sparkles aria-hidden="true" />}
+          {running
+            ? <>{t("library.launchStatus.running")}<AnimatedDots /></>
+            : t(resume ? "library.home.continue" : "library.home.featured")}
         </span>
         <h2>{title}</h2>
         {creator ? <p>{creator}</p> : null}
@@ -932,9 +895,7 @@ function LibraryFeature({
           {code ? <span className="library-feature-code"><code>{code}</code></span> : null}
           <span>{libraryContentKindLabel(kind, t)}</span>
           <span>
-            {entry.fileCount === 1
-              ? t("library.home.filesOne")
-              : t("library.home.files", { count: entry.fileCount.toLocaleString(locale) })}
+            {pluralText(t, locale, entry.fileCount, "library.home.filesOne", "library.home.files")}
           </span>
           {releaseDate ? <span>{releaseDate.slice(0, 4)}</span> : null}
           {showPlayTime && entry.launchTotals ? (
@@ -944,7 +905,7 @@ function LibraryFeature({
         <LibraryFeatureUpNext
           items={featureItems.data ?? []}
           enabled={action === "play_audio"}
-          onPlay={(ordinal) => void playbackFor(installation.id, ordinal)}
+          onPlay={(ordinal) => void playbackFor(installation.id, ordinal).then(onActivate)}
         />
         {resume || currentHere || (kind === "audio" && timelineDuration) ? (
           <div className="library-feature-resume">
@@ -952,7 +913,7 @@ function LibraryFeature({
               ? resumePlaceLabel(action, playback.item.relativePath, 0, null, t)
               : resume
                 ? resumePlaceLabel(resume.action, resume.relativePath, resume.positionMs, resume.durationMs, t)
-                : waveformItem ? resumePlaceLabel(action, waveformItem.relativePath, 0, null, t) : null}</span>
+                : null}</span>
             {progress !== null && timelineDuration ? (
               <input
                 className="library-feature-progress"
@@ -981,21 +942,19 @@ function LibraryFeature({
         ) : null}
         <div className="library-feature-actions">
           <button
-            className="library-feature-primary"
+            className={`library-feature-primary${running ? " is-running" : ""}`}
             type="button"
-            disabled={busy || running}
-            onClick={currentHere ? playback.toggle : onActivate}
+            disabled={busy || stopping}
+            onClick={running ? onStop : onActivate}
           >
-            {playingHere
-              ? <Pause fill="currentColor" aria-hidden="true" />
+            {running
+              ? <Square fill="currentColor" aria-hidden="true" />
               : action ? <Play fill="currentColor" aria-hidden="true" /> : <ListChecks aria-hidden="true" />}
             {busy
               ? t("detail.launching")
               : running
-                ? t("library.launchStatus.running")
-                : playingHere
-                  ? t("media.pause")
-                  : actionLabel}
+                ? t("library.stopLaunch")
+                : actionLabel}
           </button>
           <LibraryWorkMenu
             className="library-feature-menu"
@@ -1014,7 +973,7 @@ function LibraryFeature({
 function LibraryErrors({ errors }: { errors: Array<unknown> }) {
   const { t } = usePresentation();
   return errors.flatMap((error, index) => error ? [(
-    <div className="library-callout library-callout-error" role="alert" key={`${String(error)}:${index}`}>
+    <div className="app-callout" role="alert" key={`${String(error)}:${index}`}>
       <AlertTriangle aria-hidden="true" />
       {t("common.requestFailed", { error: String(error) })}
     </div>
@@ -1023,7 +982,7 @@ function LibraryErrors({ errors }: { errors: Array<unknown> }) {
 
 function LibraryLoading() {
   const { t } = usePresentation();
-  return <div className="library-loading"><LoaderCircle className="library-spin" aria-hidden="true" />{t("library.loading")}</div>;
+  return <div className="library-loading"><LoaderCircle className="app-spin" aria-hidden="true" />{t("library.loading")}</div>;
 }
 
 
@@ -1054,4 +1013,18 @@ function LibraryFeatureUpNext({
       </ol>
     </div>
   );
+}
+
+/** Plays the work's videos or tracks in the player chosen for them, if one is; false otherwise. */
+async function playInChosenPlayer(
+  gateway: LibraryGateway,
+  installationId: string,
+  kind: MediaPlayerKind,
+  ordinal: number | null,
+): Promise<boolean> {
+  if (!gateway.readLaunchOptions || !gateway.playInPlayer) return false;
+  const options = await gateway.readLaunchOptions(installationId);
+  if (!(kind === "audio" ? options.audioPlayer : options.videoPlayer)) return false;
+  await gateway.playInPlayer(installationId, kind, ordinal);
+  return true;
 }

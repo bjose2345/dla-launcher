@@ -143,7 +143,7 @@ export function CatalogMonthRail({
         disabled={!navigation.previous}
         onClick={() => navigation.previous && onStep(navigation.previous)}
       />
-      <div className="catalog-month-rail-scroll" ref={scroller}>
+      <div className="catalog-month-rail-scroll scrollbar-hidden" ref={scroller}>
         <div className="catalog-month-rail-months" role="group" aria-label={t("catalog.pickMonth")}>
           {rail.map((cell, index) => {
             const label = catalogMonthLabel(cell.month, locale);

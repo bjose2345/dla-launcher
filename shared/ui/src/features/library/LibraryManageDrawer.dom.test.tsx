@@ -5,13 +5,15 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PresentationProvider } from "../../preferences/PresentationProvider";
-import type { CatalogWork } from "../catalog/types";
+import type { CatalogDetailGateway, CatalogWork } from "../catalog/types";
 import type { ScanInstallGateway } from "../scanner/types";
+import type { TranslationGateway } from "../translation/types";
 import { LibraryManageDrawer, recommendedKey, type ManageTab } from "./LibraryManageDrawer";
 import type {
   Installation,
   InstallationHealthReport,
   InstallationReviewRequest,
+  LaunchOptions,
   LibraryGateway,
   OwnWorkDetails,
 } from "./types";
@@ -36,6 +38,62 @@ describe("LibraryManageDrawer", () => {
     await waitFor(() => expect(gateway.saveReview).toHaveBeenCalledOnce());
     expect(savedRequest(gateway).customTitle).toBe("My ninja game");
     expect(await screen.findByText("Saved")).toBeTruthy();
+  });
+
+  it("adds a Translation tab for games where the launcher can translate", async () => {
+    const translation = {
+      readSettings: vi.fn().mockResolvedValue({ translator: null, deeplKeySaved: false, prepareOnlyWhenIdle: false }),
+      readGame: vi.fn().mockResolvedValue({
+        installationId: "installation-1",
+        engine: "rpg_maker_mz",
+        engineLabel: "RPG Maker MZ",
+        supported: true,
+        on: false,
+        shown: false,
+        translatorReady: true,
+        preparation: null,
+      }),
+      subscribe: vi.fn(() => () => undefined),
+    } as unknown as TranslationGateway;
+    renderDrawer(libraryGateway(), { translationGateway: translation, tab: "translation" });
+
+    expect(await screen.findByText("Play this game in English")).toBeTruthy();
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "General",
+      "Installed files",
+      "Translation",
+    ]);
+  });
+
+  it("says in Translation that a work already including English needs no translating", async () => {
+    const translation = {
+      readSettings: vi.fn().mockResolvedValue({ translator: null, deeplKeySaved: false, prepareOnlyWhenIdle: false }),
+      readGame: vi.fn().mockResolvedValue({
+        installationId: "installation-1",
+        engine: "rpg_maker_mz",
+        engineLabel: "RPG Maker MZ",
+        supported: true,
+        on: false,
+        shown: false,
+        translatorReady: true,
+        preparation: null,
+        pack: null,
+      }),
+      subscribe: vi.fn(() => () => undefined),
+    } as unknown as TranslationGateway;
+    const languages = [
+      { code: "japanese", name: "日本語", nameEnglish: "Japanese" },
+      { code: "english", name: "英語", nameEnglish: "English" },
+    ];
+    renderDrawer(libraryGateway(), {
+      translationGateway: translation,
+      tab: "translation",
+      readWork: async () => ({ supportedLanguages: languages }),
+    });
+
+    expect(await screen.findByText("This work already includes English, so it doesn't need translating.")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Translation" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.queryByRole("button", { name: "Turn on translation" })).toBeNull();
   });
 
   it("fixes the match by picking a catalog work", async () => {
@@ -112,7 +170,7 @@ describe("LibraryManageDrawer", () => {
     renderDrawer(gateway, { tab: "files" });
 
     expect(await screen.findByText("D:\\Games\\KUNOICHI RED")).toBeTruthy();
-    expect(screen.getByText("2 files · 200 B")).toBeTruthy();
+    expect(screen.getByText("2 files · 200 B · Executable 2")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Browse…" }));
     await waitFor(() => expect(gateway.openInstallationFolder).toHaveBeenCalledWith("installation-1"));
   });
@@ -125,7 +183,7 @@ describe("LibraryManageDrawer", () => {
       health: healthReport({ expectedFiles: 1, presentFiles: 1 }),
     }), { tab: "files" });
 
-    expect(await screen.findByText("1 file · 100 B")).toBeTruthy();
+    expect(await screen.findByText("1 file · 100 B · Executable 1")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Verify integrity of files" }));
     expect(await screen.findByText("The file is present.")).toBeTruthy();
   });
@@ -141,6 +199,160 @@ describe("LibraryManageDrawer", () => {
     expect(await screen.findByText("All 14 files are present.")).toBeTruthy();
   });
 
+  it("finds a file by name, changes its type and puts it back", async () => {
+    const installation = gameInstallation();
+    installation.detection.contentItems.push({ ...contentItem("KUNOICHI RED/img/title.png"), mediaType: "image" });
+    const gateway = libraryGateway({ installation });
+    renderDrawer(gateway, { tab: "files" });
+
+    expect(await screen.findByText("No file has been changed by hand.")).toBeTruthy();
+    // Folders start closed; a search opens the ones with a match.
+    expect(screen.queryByText("Config.exe")).toBeNull();
+    fireEvent.change(screen.getByRole("searchbox", { name: "Find a file by name" }), { target: { value: "config" } });
+    fireEvent.click(await screen.findByText("Config.exe"));
+    expect(screen.queryByText("title.png")).toBeNull();
+
+    const editor = await screen.findByRole("group", { name: "KUNOICHI RED/Config.exe" });
+    fireEvent.change(within(editor).getByRole("combobox", { name: "Type" }), { target: { value: "unknown" } });
+    await waitFor(() => expect(savedRequest(gateway).contentItems).toEqual([
+      { relativePath: "KUNOICHI RED/Config.exe", mediaType: "unknown", ignored: false, order: null },
+    ]));
+    expect(await screen.findByText("Unknown content", { selector: ".library-changed-what" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(vi.mocked(gateway.saveReview).mock.calls[1]![0].contentItems).toEqual([]));
+    expect(await screen.findByText("No file has been changed by hand.")).toBeTruthy();
+  });
+
+  it("hides a file from the Library and says so in the list of changes", async () => {
+    const gateway = libraryGateway();
+    renderDrawer(gateway, { tab: "files" });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open all folders" }));
+    fireEvent.click(await screen.findByText("Game.exe"));
+    fireEvent.click(within(await screen.findByRole("group", { name: "KUNOICHI RED/Game.exe" }))
+      .getByRole("checkbox", { name: "Hide in the Library" }));
+
+    await waitFor(() => expect(savedRequest(gateway).contentItems).toEqual([
+      { relativePath: "KUNOICHI RED/Game.exe", mediaType: null, ignored: true, order: null },
+    ]));
+    expect(await screen.findByText("Hidden in the Library", { selector: ".library-changed-what" })).toBeTruthy();
+  });
+
+  it("runs a game in a Japanese locale on Windows, fetching the tool when turned on", async () => {
+    const gateway = libraryGateway();
+    const options = (japaneseLocale: boolean): LaunchOptions => (
+      { japaneseLocale, japaneseLocaleAvailable: true, missingRuntimes: [], videoPlayer: null, audioPlayer: null, windowScale: null, windowScaleAvailable: false, refreshRate: null }
+    );
+    gateway.readLaunchOptions = vi.fn().mockResolvedValue(options(false));
+    let finish: (value: LaunchOptions) => void = () => undefined;
+    gateway.saveLaunchOptions = vi.fn(() => new Promise<LaunchOptions>((resolve) => { finish = resolve; }));
+    renderDrawer(gateway);
+
+    const toggle = await screen.findByRole("switch", { name: /Run in Japanese locale/ });
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(toggle);
+    expect(await screen.findByText("Downloading Locale Remulator…")).toBeTruthy();
+    expect(gateway.saveLaunchOptions).toHaveBeenCalledWith("installation-1", { japaneseLocale: true, videoPlayer: null, audioPlayer: null, windowScale: null, refreshRate: null });
+    finish(options(true));
+    await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("true"));
+    expect(screen.queryByText(/Visual C\+\+ Redistributable/)).toBeNull();
+  });
+
+  it("lets a video work choose a player of its own and clear it again", async () => {
+    const installation = gameInstallation();
+    installation.detection.contentItems = [contentItem("Movie/opening.mp4", "video")];
+    installation.detection.launchCandidates = [];
+    installation.overrides.preferredAction = null;
+    const gateway = libraryGateway({ installation });
+    const options = (videoPlayer: string | null): LaunchOptions => (
+      { japaneseLocale: false, japaneseLocaleAvailable: false, missingRuntimes: [], videoPlayer, audioPlayer: null, windowScale: null, windowScaleAvailable: false, refreshRate: null }
+    );
+    gateway.readLaunchOptions = vi.fn().mockResolvedValue(options(null));
+    gateway.saveLaunchOptions = vi.fn(async (_id: string, request: { videoPlayer: string | null }) => options(request.videoPlayer));
+    gateway.selectMediaPlayer = vi.fn().mockResolvedValue("/usr/bin/vlc");
+    renderDrawer(gateway);
+
+    expect(await screen.findByText("Built-in player")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Choose…" }));
+    await waitFor(() => expect(gateway.saveLaunchOptions).toHaveBeenCalledWith("installation-1", { japaneseLocale: false, videoPlayer: "/usr/bin/vlc", audioPlayer: null, windowScale: null, refreshRate: null }));
+    expect(await screen.findByText(/vlc/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    await waitFor(() => expect(gateway.saveLaunchOptions).toHaveBeenCalledWith("installation-1", { japaneseLocale: false, videoPlayer: null, audioPlayer: null, windowScale: null, refreshRate: null }));
+    expect(await screen.findByText("Built-in player")).toBeTruthy();
+  });
+
+  it("says when Windows lacks the Visual C++ runtime and links Microsoft's download", async () => {
+    const gateway = libraryGateway();
+    gateway.readLaunchOptions = vi.fn().mockResolvedValue({
+      japaneseLocale: true,
+      japaneseLocaleAvailable: true,
+      missingRuntimes: ["x86"],
+      videoPlayer: null,
+      audioPlayer: null,
+      windowScale: null,
+      windowScaleAvailable: false,
+      refreshRate: null,
+    } satisfies LaunchOptions);
+    gateway.openWebsite = vi.fn().mockResolvedValue(undefined);
+    renderDrawer(gateway);
+
+    expect(await screen.findByText(/doesn't have yet\. Install it, then start the game\./)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Download (64-bit)" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Download (32-bit)" }));
+    expect(gateway.openWebsite).toHaveBeenCalledWith("https://aka.ms/vs/17/release/vc_redist.x86.exe");
+  });
+
+  it("leaves the Japanese locale out where Wine runs every game in Japanese", async () => {
+    const gateway = libraryGateway();
+    gateway.readLaunchOptions = vi.fn().mockResolvedValue(
+      { japaneseLocale: false, japaneseLocaleAvailable: false, missingRuntimes: [], videoPlayer: null, audioPlayer: null, windowScale: null, windowScaleAvailable: false, refreshRate: null } satisfies LaunchOptions,
+    );
+    renderDrawer(gateway);
+
+    await waitFor(() => expect(gateway.readLaunchOptions).toHaveBeenCalled());
+    expect(screen.queryByRole("switch", { name: /Run in Japanese locale/ })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Resolution" })).toBeNull();
+  });
+
+  it("offers a resolution and refresh rate for an app in the Display tab where Linux has gamescope", async () => {
+    const gateway = libraryGateway();
+    const options = (windowScale: LaunchOptions["windowScale"], refreshRate: number | null): LaunchOptions => (
+      { japaneseLocale: false, japaneseLocaleAvailable: false, missingRuntimes: [], videoPlayer: null, audioPlayer: null, windowScale, windowScaleAvailable: true, refreshRate }
+    );
+    gateway.readLaunchOptions = vi.fn().mockResolvedValue(options(null, null));
+    gateway.saveLaunchOptions = vi.fn(async (_id: string, request: { windowScale: LaunchOptions["windowScale"]; refreshRate: number | null }) => options(request.windowScale, request.refreshRate));
+    renderDrawer(gateway, { tab: "display" });
+
+    expect(await screen.findByText(/Experimental/)).toBeTruthy();
+    const choice = screen.getByRole("combobox", { name: "Resolution" }) as HTMLSelectElement;
+    const rate = screen.getByRole("combobox", { name: "Refresh rate" }) as HTMLSelectElement;
+    expect(choice.value).toBe("");
+    expect(rate.disabled).toBe(true);
+    expect(screen.getByRole("option", { name: "Original" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "1920 × 1440" })).toBeTruthy();
+    fireEvent.change(choice, { target: { value: "1920x1440" } });
+    await waitFor(() => expect(gateway.saveLaunchOptions).toHaveBeenCalledWith("installation-1", { japaneseLocale: false, videoPlayer: null, audioPlayer: null, windowScale: "1920x1440", refreshRate: null }));
+    await waitFor(() => expect(choice.value).toBe("1920x1440"));
+    await waitFor(() => expect(rate.disabled).toBe(false));
+    expect(rate.value).toBe("120");
+    fireEvent.change(rate, { target: { value: "60" } });
+    await waitFor(() => expect(gateway.saveLaunchOptions).toHaveBeenCalledWith("installation-1", { japaneseLocale: false, videoPlayer: null, audioPlayer: null, windowScale: "1920x1440", refreshRate: 60 }));
+    await waitFor(() => expect(rate.value).toBe("60"));
+  });
+
+  it("keeps the Display tab away from works that are not apps", async () => {
+    const installation = gameInstallation();
+    installation.detection.contentItems = [contentItem("Movie/opening.mp4", "video")];
+    installation.detection.launchCandidates = [];
+    installation.overrides.preferredAction = null;
+    renderDrawer(libraryGateway({ installation }));
+
+    expect(await screen.findByRole("tab", { name: "General" })).toBeTruthy();
+    expect(screen.queryByRole("tab", { name: "Display" })).toBeNull();
+  });
+
   it("offers Repair only when files are missing and can be repaired", async () => {
     renderDrawer(libraryGateway({
       health: healthReport({ state: "repairable", repairable: true, missingFiles: 3 }),
@@ -148,6 +360,22 @@ describe("LibraryManageDrawer", () => {
 
     expect(await screen.findByText("3 files are missing or changed.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Repair" })).toBeTruthy();
+  });
+
+  it("gives Japanese file names back when an older install read them wrongly", async () => {
+    const gateway = {
+      ...libraryGateway(),
+      checkFileNames: vi.fn().mockResolvedValue({ installationId: "installation-1", wrong: 1216, fixed: 0 }),
+      fixFileNames: vi.fn().mockResolvedValue({ installationId: "installation-1", wrong: 0, fixed: 1216 }),
+    } as unknown as LibraryGateway;
+    renderDrawer(gateway, { tab: "files" });
+
+    expect(await screen.findByText("1,216 file names were unpacked wrong")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Fix file names" }));
+
+    await waitFor(() => expect(gateway.fixFileNames).toHaveBeenCalledWith("installation-1"));
+    expect(await screen.findByText("Fixed 1,216 file names.")).toBeTruthy();
+    expect(screen.queryByText("1,216 file names were unpacked wrong")).toBeNull();
   });
 
   it("installs an archive that was added but never unpacked", async () => {
@@ -199,7 +427,13 @@ const works: Record<string, CatalogWork> = {
 
 function renderDrawer(
   gateway: LibraryGateway,
-  options: { tab?: ManageTab; onClose?: () => void; installs?: ScanInstallGateway } = {},
+  options: {
+    tab?: ManageTab;
+    onClose?: () => void;
+    installs?: ScanInstallGateway;
+    translationGateway?: TranslationGateway;
+    readWork?: (code: string) => Promise<unknown>;
+  } = {},
 ) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return render(
@@ -211,8 +445,10 @@ function renderDrawer(
           gateway={gateway}
           catalogGateway={{
             readWorks: vi.fn(async (codes: string[]) => codes.flatMap((code) => works[code] ? [works[code]] : [])),
+            ...(options.readWork ? { read: options.readWork as CatalogDetailGateway["read"] } : {}),
           }}
           installs={options.installs}
+          translationGateway={options.translationGateway}
           onClose={options.onClose ?? (() => undefined)}
         />
       </PresentationProvider>
@@ -315,11 +551,14 @@ function gameInstallation(): Installation {
   };
 }
 
-function contentItem(relativePath: string): Installation["detection"]["contentItems"][number] {
+function contentItem(
+  relativePath: string,
+  mediaType: Installation["detection"]["contentItems"][number]["mediaType"] = "executable",
+): Installation["detection"]["contentItems"][number] {
   return {
     relativePath,
     pathKey: relativePath,
-    mediaType: "executable",
+    mediaType,
     sizeBytes: 100,
     modifiedAt: null,
     confidence: "high",

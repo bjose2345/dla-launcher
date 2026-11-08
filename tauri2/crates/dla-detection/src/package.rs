@@ -15,7 +15,10 @@ use dla_domain::{
     },
 };
 
-use crate::media::{classify_media_type, images_outweigh_pdfs};
+use crate::{
+    detect_game_engine,
+    media::{classify_media_type, images_outweigh_pdfs},
+};
 
 const PORTABLE_PLATFORMS: [InstallationPlatform; 5] = [
     InstallationPlatform::Windows,
@@ -155,12 +158,8 @@ fn classify_safe_manifest(
         .first()
         .and_then(|candidate| parent_path(candidate.relative_path.as_str()))
         .and_then(|path| RelativePath::parse(path).ok());
-    let engine = content_root
-        .as_ref()
-        .map(|path| child_key(Some(path.as_str()), "data/system.json"))
-        .or_else(|| Some("data/system.json".to_owned()))
-        .filter(|path| paths.contains_key(path))
-        .map(|_| "RPG Maker / NW.js".to_owned());
+    let engine = detect_game_engine(paths.values().map(|path| path.as_str()))
+        .map(|detection| detection.engine.label().to_owned());
     let catalog_application = catalog.is_some_and(|context| {
         context
             .file_format_names
@@ -188,7 +187,7 @@ fn classify_safe_manifest(
             reasons.push("catalog_game_category".to_owned());
         }
         if engine.is_some() {
-            reasons.push("rpg_maker_layout".to_owned());
+            reasons.push("game_engine_layout".to_owned());
         }
         return PackageClassification {
             content_kind,
@@ -543,11 +542,12 @@ mod tests {
                 entry(2, "Work/data/System.json", 5),
                 entry(3, "Work/package.json", 5),
                 entry(4, "Work/audio/bgm.ogg_", 100),
+                entry(5, "Work/js/rmmz_core.js", 10),
             ],
-            file_count: 5,
+            file_count: 6,
             directory_count: 0,
-            total_compressed_bytes: 140,
-            total_uncompressed_bytes: 140,
+            total_compressed_bytes: 150,
+            total_uncompressed_bytes: 150,
             common_root: Some(RelativePath::parse("Work").expect("root")),
             safety: PackageSafety::Safe,
             issues: Vec::new(),
@@ -569,7 +569,7 @@ mod tests {
         );
         assert_eq!(
             inspection.classification.engine.as_deref(),
-            Some("RPG Maker / NW.js")
+            Some("RPG Maker MZ")
         );
         assert_eq!(
             inspection
