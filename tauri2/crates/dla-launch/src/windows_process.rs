@@ -13,8 +13,9 @@ use windows_sys::Win32::{
             TH32CS_SNAPPROCESS,
         },
         Threading::{
-            GetExitCodeProcess, INFINITE, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-            PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
+            GetExitCodeProcess, INFINITE, OpenProcess, PROCESS_NAME_WIN32,
+            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+            QueryFullProcessImageNameW, TerminateProcess, WaitForSingleObject,
         },
     },
 };
@@ -119,32 +120,71 @@ impl Drop for GameProcess {
 /// A process whose parent is `parent`: the one named `file_name` if there is
 /// one, else any.
 fn child_of(parent: u32, file_name: &str) -> Option<u32> {
+    let mut found = None;
+    for process in running_processes() {
+        if process.parent == parent && (found.is_none() || process.runs(file_name)) {
+            found = Some(process.id);
+        }
+    }
+    found
+}
+
+pub(crate) struct RunningProcess {
+    pub id: u32,
+    pub parent: u32,
+    file_name: String,
+}
+
+impl RunningProcess {
+    pub fn runs(&self, file_name: &str) -> bool {
+        self.file_name.eq_ignore_ascii_case(file_name)
+    }
+}
+
+pub(crate) fn running_processes() -> Vec<RunningProcess> {
+    let mut processes = Vec::new();
     // SAFETY: the snapshot handle is checked and closed here; PROCESSENTRY32W
     // is plain data initialised with its size as required.
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if snapshot == INVALID_HANDLE_VALUE {
-            return None;
+            return processes;
         }
         let mut entry: PROCESSENTRY32W = mem::zeroed();
         entry.dwSize = mem::size_of::<PROCESSENTRY32W>() as u32;
-        let mut found = None;
         let mut more = Process32FirstW(snapshot, &mut entry) != 0;
         while more {
-            if entry.th32ParentProcessID == parent {
-                let length = entry
-                    .szExeFile
-                    .iter()
-                    .position(|&unit| unit == 0)
-                    .unwrap_or(entry.szExeFile.len());
-                let name = String::from_utf16_lossy(&entry.szExeFile[..length]);
-                if found.is_none() || name.eq_ignore_ascii_case(file_name) {
-                    found = Some(entry.th32ProcessID);
-                }
-            }
+            let length = entry
+                .szExeFile
+                .iter()
+                .position(|&unit| unit == 0)
+                .unwrap_or(entry.szExeFile.len());
+            processes.push(RunningProcess {
+                id: entry.th32ProcessID,
+                parent: entry.th32ParentProcessID,
+                file_name: String::from_utf16_lossy(&entry.szExeFile[..length]),
+            });
             more = Process32NextW(snapshot, &mut entry) != 0;
         }
         CloseHandle(snapshot);
-        found
+    }
+    processes
+}
+
+/// The program's path as Windows gives it to anyone who asks, Magpie included.
+pub(crate) fn program_of(process: u32) -> Option<String> {
+    // SAFETY: the handle is checked and closed here; the buffer is as long
+    // as the length passed with it.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process);
+        if handle.is_null() {
+            return None;
+        }
+        let mut path = vec![0u16; 32_768];
+        let mut length = path.len() as u32;
+        let read =
+            QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, path.as_mut_ptr(), &mut length);
+        CloseHandle(handle);
+        (read != 0).then(|| String::from_utf16_lossy(&path[..length as usize]))
     }
 }

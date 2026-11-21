@@ -55,6 +55,14 @@ export function launchTotalsByInstallation(
   return new Map(totals.map((entry) => [entry.installationId, entry]));
 }
 
+/** Whether a work was last started today or yesterday by the calendar here; null for an earlier day. */
+export function lastPlayedDay(lastStartedAt: string, now: Date): "today" | "yesterday" | null {
+  const day = (date: Date) => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+  const days = Math.round((day(now) - day(new Date(lastStartedAt))) / 86_400_000);
+  if (days <= 0) return "today";
+  return days === 1 ? "yesterday" : null;
+}
+
 export function playTimeParts(totalDurationMs: number): { hours: number; minutes: number } {
   const totalMinutes = Math.max(0, Math.floor(totalDurationMs / 60_000));
   return { hours: Math.floor(totalMinutes / 60), minutes: totalMinutes % 60 };

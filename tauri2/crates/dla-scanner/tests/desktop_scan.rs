@@ -1,21 +1,30 @@
 use std::{
     fs,
-    sync::{Arc, Mutex},
+    path::Path,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::{Duration, SystemTime},
 };
 
 use dla_application::{
+    identity::ArchiveHash,
     identity::CatalogIdentityReader,
     scan_execution::ScanExecutionService,
     scanner::{
-        ArchiveHasher, FilesystemScanner, PrepareScanRequest, ScanCancellation, ScanProgressSink,
-        ScanRepository, ScanResultRequest, ScannerError,
+        ArchiveHashError, ArchiveHashRequest, ArchiveHasher, FilesystemScanner, PrepareScanRequest,
+        ScanCancellation, ScanProgressSink, ScanRepository, ScanResultRequest, ScanSessionView,
+        ScannerError,
     },
 };
 use dla_domain::{
     CatalogRom,
     scanner::{ScanMatchConfidence, ScanMatchOutcome, ScanOptions, ScanProgress, ScanStatus},
 };
-use dla_scanner::{DesktopFilesystem, ScanAccessRegistry, SystemScanClock, SystemScanIdentifiers};
+use dla_scanner::{
+    ApprovedScanRoot, DesktopFilesystem, ScanAccessRegistry, SystemScanClock, SystemScanIdentifiers,
+};
 use dla_sqlite::{SqliteCatalogStore, SqliteLibraryStore};
 use rusqlite::Connection;
 use tempfile::tempdir;
@@ -41,6 +50,189 @@ impl ScanProgressSink for RecordingProgress {
             .push(progress.clone());
         Ok(())
     }
+}
+
+/// Reads files as the desktop does and counts how many it was asked for.
+struct CountingHasher {
+    inner: Arc<DesktopFilesystem>,
+    read: AtomicUsize,
+}
+
+impl ArchiveHasher for CountingHasher {
+    fn hash(
+        &self,
+        request: &ArchiveHashRequest,
+        cancellation: &dyn ScanCancellation,
+        read: &(dyn Fn(u64) + Sync),
+    ) -> Result<ArchiveHash, ArchiveHashError> {
+        self.read.fetch_add(1, Ordering::Relaxed);
+        self.inner.hash(request, cancellation, read)
+    }
+}
+
+/// A scanner over `scan_root` whose catalog knows `RJ00000001` by an
+/// archive of 12 bytes with the digest of `dla-launcher`.
+struct Scanner {
+    service: ScanExecutionService,
+    hasher: Arc<CountingHasher>,
+    progress: Arc<RecordingProgress>,
+    approved: ApprovedScanRoot,
+}
+
+impl Scanner {
+    fn new(directory: &Path, scan_root: &Path) -> Self {
+        let mut fixture = dla_catalog::load_test_fixture().expect("catalog fixture");
+        let archive = fixture
+            .works
+            .iter_mut()
+            .find(|detail| detail.work.code == "DLA-SYNTH-0001")
+            .expect("catalog fixture");
+        archive.work.code = "RJ00000001".to_owned();
+        archive.roms.push(CatalogRom {
+            name: "synthetic-payload.zip".to_owned(),
+            size: "12".to_owned(),
+            crc: String::new(),
+            md5: String::new(),
+            sha1: String::new(),
+            sha256: "af752b95d170411f60fd279016c06877879c6dd5d7f9f9152fe584ee8ea5f557".to_owned(),
+            file_count: None,
+            update_date: String::new(),
+            version: String::new(),
+        });
+        let catalog = Arc::new(
+            SqliteCatalogStore::open(&directory.join("catalog.sqlite"), &fixture)
+                .expect("catalog store"),
+        );
+        let library = Arc::new(
+            SqliteLibraryStore::open(&directory.join("library.sqlite")).expect("library store"),
+        );
+        let access = Arc::new(ScanAccessRegistry::new());
+        let approved = access.approve(scan_root).expect("approved scan root");
+        let desktop = Arc::new(DesktopFilesystem::new(access));
+        let hasher = Arc::new(CountingHasher {
+            inner: desktop.clone(),
+            read: AtomicUsize::new(0),
+        });
+        let progress = Arc::new(RecordingProgress::default());
+        let service = ScanExecutionService::new(
+            desktop,
+            hasher.clone(),
+            catalog,
+            library,
+            progress.clone(),
+            Arc::new(SystemScanClock),
+            Arc::new(SystemScanIdentifiers),
+        );
+        Self {
+            service,
+            hasher,
+            progress,
+            approved,
+        }
+    }
+
+    fn scan(&self) -> ScanSessionView {
+        let prepared = self
+            .service
+            .prepare(PrepareScanRequest {
+                platform: self.approved.platform.clone(),
+                path_key: self.approved.path_key.clone(),
+                display_path: self.approved.display_path.clone(),
+                access_handle: self.approved.access_handle.clone(),
+                options: ScanOptions::default(),
+            })
+            .expect("prepared scan");
+        self.service
+            .execute(prepared, &NeverCancelled)
+            .expect("completed scan")
+    }
+
+    /// Whether the scan matched the archive by its digest.
+    fn matched_by_digest(&self, scan: &ScanSessionView) -> bool {
+        let results = self
+            .service
+            .browse_results(ScanResultRequest {
+                session_id: scan.session.id.0.clone(),
+                limit: 10,
+                ..ScanResultRequest::default()
+            })
+            .expect("persisted results");
+        results.items.iter().any(|item| {
+            item.relative_path.as_deref() == Some("payload.zip")
+                && item.result.confidence == Some(ScanMatchConfidence::Exact)
+                && item
+                    .result
+                    .evidence
+                    .iter()
+                    .any(|evidence| evidence.reason_code == "archive_sha256_match")
+        })
+    }
+}
+
+#[test]
+fn reads_a_file_again_only_when_it_has_changed_and_says_how_far_it_is() {
+    let directory = tempdir().expect("temporary directory");
+    let scan_root = directory.path().join("library");
+    fs::create_dir_all(&scan_root).expect("scan root");
+    let archive = scan_root.join("payload.zip");
+    fs::write(&archive, b"dla-launcher").expect("archive file");
+    fs::write(scan_root.join("note.txt"), b"a note").expect("loose file");
+    let scanner = Scanner::new(directory.path(), &scan_root);
+
+    let first = scanner.scan();
+    assert!(scanner.matched_by_digest(&first));
+    assert_eq!(scanner.hasher.read.load(Ordering::Relaxed), 1);
+    // Counted before the first file: two files of 12 and 6 bytes, and all
+    // of them checked at the end.
+    let extents = scanner
+        .progress
+        .events
+        .lock()
+        .expect("progress lock")
+        .iter()
+        .filter(|event| event.session_id == first.session.id)
+        .map(|event| event.extent)
+        .collect::<Vec<_>>();
+    assert_eq!(extents.first(), Some(&None));
+    let counted = extents.iter().flatten().collect::<Vec<_>>();
+    assert!(
+        counted
+            .iter()
+            .all(|extent| extent.total_files == 2 && extent.total_bytes == 18)
+    );
+    assert_eq!(counted.first().map(|extent| extent.checked_bytes), Some(0));
+    assert_eq!(counted.last().map(|extent| extent.checked_bytes), Some(18));
+    assert!(
+        counted
+            .windows(2)
+            .all(|pair| pair[0].checked_bytes <= pair[1].checked_bytes)
+    );
+
+    // Unchanged: matched by the same digest without the file being read.
+    let second = scanner.scan();
+    assert!(scanner.matched_by_digest(&second));
+    assert_eq!(scanner.hasher.read.load(Ordering::Relaxed), 1);
+    let third = scanner.scan();
+    assert!(scanner.matched_by_digest(&third));
+    assert_eq!(scanner.hasher.read.load(Ordering::Relaxed), 1);
+
+    // Written again, at another time: read again.
+    let file = fs::File::options()
+        .write(true)
+        .open(&archive)
+        .expect("archive file");
+    file.set_modified(SystemTime::now() + Duration::from_secs(90))
+        .expect("another time of change");
+    drop(file);
+    let fourth = scanner.scan();
+    assert!(scanner.matched_by_digest(&fourth));
+    assert_eq!(scanner.hasher.read.load(Ordering::Relaxed), 2);
+
+    // Another file of another size in its place is not known at all.
+    fs::write(&archive, b"another one").expect("another archive");
+    let fifth = scanner.scan();
+    assert!(!scanner.matched_by_digest(&fifth));
+    assert_eq!(scanner.hasher.read.load(Ordering::Relaxed), 2);
 }
 
 #[test]

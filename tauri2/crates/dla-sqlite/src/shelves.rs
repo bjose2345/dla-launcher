@@ -80,7 +80,8 @@ impl LibraryActivityReader for SqliteLibraryStore {
                 .collect::<rusqlite::Result<Vec<_>>>()?;
 
             let mut totals_statement = connection.prepare_cached(
-                "SELECT installation_id, COUNT(*), COALESCE(SUM(COALESCE(duration_ms, 0)), 0)
+                "SELECT installation_id, COUNT(*), COALESCE(SUM(COALESCE(duration_ms, 0)), 0),
+                        MAX(started_at)
                  FROM library_launch_activity
                  WHERE started_at IS NOT NULL
                  GROUP BY installation_id",
@@ -91,6 +92,7 @@ impl LibraryActivityReader for SqliteLibraryStore {
                         installation_id: InstallationId(row.get(0)?),
                         launch_count: row.get(1)?,
                         total_duration_ms: row.get::<_, i64>(2)?.max(0) as u64,
+                        last_started_at: row.get(3)?,
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -196,6 +198,7 @@ mod tests {
                 installation_id: InstallationId("game".to_owned()),
                 launch_count: 2,
                 total_duration_ms: 1_200_000,
+                last_started_at: "2026-08-08T12:00:00Z".to_owned(),
             }]
         );
     }

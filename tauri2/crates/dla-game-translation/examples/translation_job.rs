@@ -7,6 +7,8 @@
 //! translation_job glossary <launcher-data> <work> <glossary.tsv>
 //! translation_job edit <launcher-data> <work> <installation-folder> <text> <english>
 //! translation_job edits <launcher-data> <work> <installation-folder> <edits.jsonl>
+//! translation_job speakers <launcher-data> <work> <installation-folder> <speakers.jsonl>
+//! translation_job pictures <launcher-data> <work> <installation-folder> <folder>
 //! translation_job export [--redo-model <model>] [--redo-terms] <launcher-data> <work> <installation-folder> <job.zip>
 //! translation_job import [--keep-imperfect] <launcher-data> <work> <installation-folder> <job.zip> <results.zip>
 //! translation_job pack --version <YYYY-MM-DD> <launcher-data> <work> <installation-folder> <overlays-dlsite-copy>
@@ -66,8 +68,9 @@ use std::{
 use dla_application::{
     game_translation::{GameFolder, GameTexts},
     translation::{
-        BatchStyle, Glossary, NewTranslation, PlannedBatch, PreparedText, SourceText,
-        TranslationService, TranslationStore, text_key, uses_term,
+        BatchStyle, Glossary, MessageSpeakerOverride, NewTranslation, PlannedBatch, PreparedText,
+        SourceText, TranslatedPicture, TranslationService, TranslationStore, text_key, uses_term,
+        validate_pictures, validate_speakers,
     },
 };
 use dla_domain::{
@@ -79,7 +82,7 @@ use dla_sqlite::SqliteTranslationStore;
 use dla_translator::{NameList, TEMPERATURE, TOP_P, batch_request, read_batch_reply};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
+use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 const FORMAT: u64 = 1;
 
@@ -139,6 +142,18 @@ fn main() {
             &arguments[5],
         ),
         Some("edits") if arguments.len() == 5 => edits(
+            Path::new(&arguments[1]),
+            &arguments[2],
+            &arguments[3],
+            Path::new(&arguments[4]),
+        ),
+        Some("speakers") if arguments.len() == 5 => speakers(
+            Path::new(&arguments[1]),
+            &arguments[2],
+            &arguments[3],
+            Path::new(&arguments[4]),
+        ),
+        Some("pictures") if arguments.len() == 5 => pictures(
             Path::new(&arguments[1]),
             &arguments[2],
             &arguments[3],
@@ -212,9 +227,16 @@ fn pack(data: &Path, work: &str, folder: &str, copy: &Path, version: &str) -> Re
         .map(|(source, _)| text_key(source))
         .collect::<Vec<_>>();
     let best = store.best(work, &keys).map_err(text)?;
+    let listed = game
+        .texts
+        .iter()
+        .map(|source| text_key(&source.text))
+        .chain(game.names.iter().map(|name| text_key(name)))
+        .collect::<HashSet<_>>();
     let mut texts = String::new();
     let mut lines = 0_u64;
     let mut reviewed = 0_u64;
+    let mut own_lines = 0_u64;
     for ((source, english), key) in all.iter().zip(&keys) {
         let checked = best.get(key).is_some_and(|line| {
             matches!(
@@ -227,10 +249,18 @@ fn pack(data: &Path, work: &str, folder: &str, copy: &Path, version: &str) -> Re
             line["reviewed"] = json!(true);
             reviewed += 1;
         }
-        // The game's own text the reader would not list (no Japanese) goes
-        // with its line; Japanese never does.
-        if !dla_application::translation::has_japanese(source) {
+        // A text the reader would not list goes with its line: the game's
+        // own without Japanese, and the text of the maker's own wording
+        // (a label a script joins), which no launcher could place without
+        // it. The Japanese the reader lists never does.
+        let japanese = dla_application::translation::has_japanese(source);
+        let own = best
+            .get(key)
+            .is_some_and(|line| line.origin == TranslationOrigin::Edit)
+            && !listed.contains(key);
+        if !japanese || own {
             line["source"] = json!(source);
+            own_lines += u64::from(japanese);
         }
         texts.push_str(&json_line(&line)?);
         lines += 1;
@@ -243,6 +273,16 @@ fn pack(data: &Path, work: &str, folder: &str, copy: &Path, version: &str) -> Re
     }
     let glossary = store.glossary(work).map_err(text)?;
     let mut files = vec![("texts.jsonl", texts), ("names.jsonl", names)];
+    let speakers = store.speakers(work).map_err(text)?;
+    validate_speakers(&speakers).map_err(text)?;
+    if !speakers.is_empty() {
+        let mut content = String::new();
+        for speaker in &speakers {
+            content.push_str(&serde_json::to_string(speaker).map_err(text)?);
+            content.push('\n');
+        }
+        files.push(("speakers.jsonl", content));
+    }
     if glossary.note.is_some() || !glossary.terms.is_empty() {
         files.push((
             "glossary.json",
@@ -254,11 +294,21 @@ fn pack(data: &Path, work: &str, folder: &str, copy: &Path, version: &str) -> Re
         ));
     }
 
+    let pictures = store.pictures(work).map_err(text)?;
+    validate_pictures(&pictures).map_err(text)?;
+
     let mut zip = ZipWriter::new(std::io::Cursor::new(Vec::new()));
     for (name, content) in &files {
         zip.start_file(*name, SimpleFileOptions::default())
             .map_err(text)?;
         zip.write_all(content.as_bytes()).map_err(text)?;
+    }
+    for picture in &pictures {
+        // A PNG is compressed already.
+        let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        zip.start_file(format!("img/{}.png", picture.path), stored)
+            .map_err(text)?;
+        zip.write_all(&picture.png).map_err(text)?;
     }
     let zip = zip.finish().map_err(text)?.into_inner();
     let mut crc = flate2::Crc::new();
@@ -279,8 +329,13 @@ fn pack(data: &Path, work: &str, folder: &str, copy: &Path, version: &str) -> Re
         .filter(|source| best.contains_key(&text_key(&source.text)))
         .count();
     // Written last: a pack without it is not one yet.
-    let manifest = json!({
-        "format": 2,
+    let mut manifest = json!({
+        // Format 4 is the first to take images or a line with its Japanese.
+        "format": match (pictures.is_empty() && own_lines == 0, speakers.is_empty()) {
+            (false, _) => 4,
+            (true, false) => 3,
+            (true, true) => 2,
+        },
         "work": work,
         "version": version,
         "language": "en",
@@ -290,6 +345,12 @@ fn pack(data: &Path, work: &str, folder: &str, copy: &Path, version: &str) -> Re
         "game": {"texts": game.texts.len(), "covered": covered},
         "file": {"name": zip_name, "bytes": zip.len(), "sha256": zip_sha256},
     });
+    if !speakers.is_empty() {
+        manifest["speakers"] = json!(speakers.len());
+    }
+    if !pictures.is_empty() {
+        manifest["pictures"] = json!(pictures.len());
+    }
     std::fs::write(
         out.join("manifest.json"),
         serde_json::to_string_pretty(&manifest).map_err(text)?,
@@ -395,7 +456,7 @@ fn export(
         let marked = store.mark_stale(work, &keys).map_err(text)?;
         println!("marked {marked} lines made with {model} to be translated again");
     }
-    let (_, texts) = game_texts(folder)?;
+    let (translation, texts) = game_texts(folder)?;
     if redo_terms {
         let terms = store.glossary(work).map_err(text)?.terms;
         let using = texts
@@ -428,7 +489,7 @@ fn export(
         );
     }
     let batches = service
-        .plan(work, &texts.texts, TextMarkup::RpgMaker)
+        .plan(work, &texts.texts, TextMarkup::of(translation.engine))
         .map_err(text)?;
     if batches.is_empty() {
         return Err(format!("{work} has nothing left to translate"));
@@ -581,7 +642,9 @@ fn import(
         let Some(prepared) = sources
             .iter()
             .zip(&lines)
-            .map(|(source, line)| PreparedText::as_sent(&source.text, TextMarkup::RpgMaker, line))
+            .map(|(source, line)| {
+                PreparedText::as_sent(&source.text, TextMarkup::of(translation.engine), line)
+            })
             .collect::<Option<Vec<_>>>()
             .filter(|prepared| prepared.len() == sources.len())
         else {
@@ -657,6 +720,12 @@ fn edit(data: &Path, work: &str, folder: &str, source: &str, english: &str) -> R
 
 fn edits(data: &Path, work: &str, folder: &str, file: &Path) -> Result<(), String> {
     let (store, service) = open(data)?;
+    let (translation, game) = game_texts(folder)?;
+    let kinds = game
+        .texts
+        .iter()
+        .map(|source| (source.text.as_str(), source.kind))
+        .collect::<HashMap<_, _>>();
     let content = std::fs::read_to_string(file).map_err(text)?;
     let mut lines = Vec::new();
     for (at, line) in content.split('\n').enumerate() {
@@ -682,7 +751,10 @@ fn edits(data: &Path, work: &str, folder: &str, file: &Path) -> Result<(), Strin
         .map(|(key, source, english)| NewTranslation {
             key,
             source,
-            kind: TextKind::Menu,
+            kind: kinds
+                .get(source.as_str())
+                .copied()
+                .unwrap_or(TextKind::Menu),
             text: english,
             origin: TranslationOrigin::Edit,
             model: None,
@@ -693,7 +765,94 @@ fn edits(data: &Path, work: &str, folder: &str, file: &Path) -> Result<(), Strin
         "{work}: stored {} of the player's own wordings",
         lines.len()
     );
+    write_copy(&service, work, folder, &translation)
+}
+
+/// Stores a folder's PNG files as the work's images in English, each named
+/// as the image of the game it stands in for (`pictures/Namecut02.png` for
+/// the game's `img/pictures/Namecut02`, `Pictures/menuback.png` for a VX Ace
+/// game's `Graphics/Pictures/menuback`), and updates the game's copy. The
+/// folder is the whole set: an image no longer in it goes back to the game's.
+fn pictures(data: &Path, work: &str, folder: &str, source: &Path) -> Result<(), String> {
+    let (store, service) = open(data)?;
     let (translation, _) = game_texts(folder)?;
+    let games = DesktopGameFolder::new();
+    let mut pictures = Vec::new();
+    for entry in walkdir::WalkDir::new(source).sort_by_file_name() {
+        let entry = entry.map_err(text)?;
+        let relative = entry.path().strip_prefix(source).map_err(text)?;
+        let Some(path) = relative.to_str().and_then(|path| path.strip_suffix(".png")) else {
+            continue;
+        };
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = path.replace(std::path::MAIN_SEPARATOR, "/");
+        if !games.has_image(folder, &translation, &path).map_err(text)? {
+            return Err(format!("the game has no image {path}"));
+        }
+        pictures.push(TranslatedPicture {
+            png: std::fs::read(entry.path()).map_err(text)?,
+            path,
+        });
+    }
+    validate_pictures(&pictures).map_err(text)?;
+    store.save_pictures(work, &pictures).map_err(text)?;
+    println!("{work}: stored {} images in English", pictures.len());
+    write_copy(&service, work, folder, &translation)
+}
+
+fn speakers(data: &Path, work: &str, folder: &str, file: &Path) -> Result<(), String> {
+    let content = std::fs::read_to_string(file).map_err(text)?;
+    let speakers = content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(serde_json::from_str::<MessageSpeakerOverride>)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(text)?;
+    validate_speakers(&speakers).map_err(text)?;
+    let (store, service) = open(data)?;
+    let (translation, _) = game_texts(folder)?;
+    if translation.engine != dla_domain::game_engine::GameEngine::RpgMakerMz {
+        return Err("message speaker overrides require RPG Maker MZ".into());
+    }
+    let game = game_folder(folder, &translation);
+    let names = service.names(work).map_err(text)?;
+    for speaker in &speakers {
+        let path = game.join(format!("data/Map{:03}.json", speaker.map));
+        let map: Value =
+            serde_json::from_slice(&std::fs::read(&path).map_err(text)?).map_err(text)?;
+        let list = map["events"][speaker.event as usize]["pages"][speaker.page as usize]["list"]
+            .as_array()
+            .ok_or("speaker override has no matching event page")?;
+        let command = list
+            .get(speaker.command as usize)
+            .ok_or("speaker override has no matching command")?;
+        let current = command["parameters"][4].as_str().unwrap_or_default();
+        let body = list
+            .iter()
+            .skip(speaker.command as usize + 1)
+            .take_while(|line| line["code"].as_u64() == Some(401))
+            .map(|line| line["parameters"][0].as_str().unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let already_fixed = names
+            .iter()
+            .any(|(japanese, english)| japanese == current && english == &speaker.text);
+        if command["code"].as_u64() != Some(101)
+            || text_key(&body) != speaker.key
+            || (text_key(current) != speaker.expected_speaker && !already_fixed)
+        {
+            return Err(
+                "speaker override does not match the game's message and original speaker".into(),
+            );
+        }
+    }
+    store.save_speakers(work, &speakers).map_err(text)?;
+    println!(
+        "{work}: stored {} message speaker overrides",
+        speakers.len()
+    );
     write_copy(&service, work, folder, &translation)
 }
 

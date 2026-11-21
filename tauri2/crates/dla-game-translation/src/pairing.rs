@@ -15,7 +15,11 @@ use dla_application::{game_translation::GameFolder, translation::has_japanese};
 use dla_domain::{game_engine::GameEngine, translation::TextKind};
 use serde_json::Value as Json;
 
-use crate::{DesktopGameFolder, ruby_marshal::Value as Ruby, vx_ace_data::GameData};
+use crate::{
+    DesktopGameFolder,
+    rgss::{GameData, Generation},
+    ruby_marshal::Value as Ruby,
+};
 
 const SHOW_TEXT: i64 = 101;
 const TEXT_LINE: i64 = 401;
@@ -56,7 +60,7 @@ pub fn pair_games(japanese: &Path, english: &Path) -> io::Result<Pairing> {
 /// A copy of the game, where its data is.
 enum Side {
     MvMz(PathBuf),
-    VxAce(GameData),
+    Rgss(GameData, Generation),
 }
 
 impl Side {
@@ -72,17 +76,19 @@ impl Side {
             .map_or_else(|| game.to_owned(), |root| game.join(root.as_str()));
         match detection.engine {
             GameEngine::RpgMakerMv | GameEngine::RpgMakerMz => Ok(Self::MvMz(root.join("data"))),
-            GameEngine::RpgMakerVxAce => Ok(Self::VxAce(GameData::find(&root)?)),
-            other => Err(io::Error::other(format!(
-                "{other:?} games are not paired yet"
-            ))),
+            engine => match Generation::of(engine) {
+                Some(generation) => Ok(Self::Rgss(GameData::find(&root, generation)?, generation)),
+                None => Err(io::Error::other(format!(
+                    "{engine:?} games are not paired yet"
+                ))),
+            },
         }
     }
 
     fn texts(&self) -> io::Result<Texts> {
         match self {
             Self::MvMz(data) => mv_mz_texts(data),
-            Self::VxAce(data) => vx_ace_texts(data),
+            Self::Rgss(data, generation) => rgss_texts(data, *generation),
         }
     }
 }
@@ -151,7 +157,9 @@ impl Unit {
     }
 }
 
-fn units(commands: &[Command]) -> Vec<Unit> {
+/// `text_in_show_text`: RPG Maker XP keeps a message's first line in the
+/// Show Text command itself, where the others keep the face.
+fn units(commands: &[Command], text_in_show_text: bool) -> Vec<Unit> {
     let lines = |from: usize, code: i64| {
         commands[from..]
             .iter()
@@ -166,10 +174,17 @@ fn units(commands: &[Command]) -> Vec<Unit> {
         at += 1;
         match command.code {
             SHOW_TEXT => {
-                let text = lines(at, TEXT_LINE);
+                let mut text = lines(at, TEXT_LINE);
                 at += text.len();
+                let first = command.text(0).unwrap_or_default().to_owned();
+                let face = if text_in_show_text {
+                    text.insert(0, first);
+                    String::new()
+                } else {
+                    first
+                };
                 units.push(Unit::Message {
-                    face: command.text(0).unwrap_or_default().to_owned(),
+                    face,
                     // MZ names the speaker in the message itself.
                     speaker: command.text(4).map(str::to_owned),
                     text: text.join("\n"),
@@ -468,7 +483,7 @@ fn mv_mz_texts(data: &Path) -> io::Result<Texts> {
         if let Some(id) = event["id"].as_i64() {
             texts.lists.insert(
                 format!("common:{id}"),
-                units(&json_commands(&event["list"])),
+                units(&json_commands(&event["list"]), false),
             );
         }
     }
@@ -479,7 +494,7 @@ fn mv_mz_texts(data: &Path) -> io::Result<Texts> {
         for (page, content) in json_items(&troop["pages"]).enumerate() {
             texts.lists.insert(
                 format!("troop:{id}/page:{page}"),
-                units(&json_commands(&content["list"])),
+                units(&json_commands(&content["list"]), false),
             );
         }
     }
@@ -501,7 +516,7 @@ fn mv_mz_texts(data: &Path) -> io::Result<Texts> {
             for (page, content) in json_items(&event["pages"]).enumerate() {
                 texts.lists.insert(
                     format!("map:{id}/event:{event_id}/page:{page}"),
-                    units(&json_commands(&content["list"])),
+                    units(&json_commands(&content["list"]), false),
                 );
             }
         }
@@ -539,9 +554,12 @@ fn json_commands(list: &Json) -> Vec<Command> {
         .collect()
 }
 
-// ── RPG Maker VX Ace: Ruby data in `Data`, often inside the archive ───
+// ── RPG Maker XP, VX and VX Ace: Ruby data in `Data`, often inside the
+// archive ───
 
-const VX_ACE_TABLES: [(&str, &[&str]); 8] = [
+// A field a generation does not have (XP's descriptions of actors) reads
+// as nil and is skipped.
+const RGSS_TABLES: [(&str, &[&str]); 8] = [
     ("Actors", &["@name", "@nickname", "@description"]),
     ("Classes", &["@name"]),
     (
@@ -558,22 +576,31 @@ const VX_ACE_TABLES: [(&str, &[&str]); 8] = [
     ),
 ];
 
-fn vx_ace_texts(data: &GameData) -> io::Result<Texts> {
+fn rgss_texts(data: &GameData, generation: Generation) -> io::Result<Texts> {
     let mut texts = Texts::default();
-    let system = data.load("Data/System.rvdata2")?;
-    for group in ["@basic", "@params", "@etypes", "@commands"] {
-        for (at, text) in system
-            .field("@terms")
-            .field(group)
-            .items()
-            .iter()
-            .enumerate()
-        {
-            texts.place(
-                format!("system:{group}:{at}"),
-                TextKind::Menu,
-                text.as_str(),
-            );
+    let system = data.load(&generation.file("System"))?;
+    // VX Ace's terms are lists; XP's words and VX's terms are one text a
+    // field.
+    for words in ["@terms", "@words"] {
+        if let Ruby::Object { fields, .. } = system.field(words) {
+            for (name, value) in fields {
+                match value {
+                    Ruby::Array(items) => {
+                        for (at, text) in items.iter().enumerate() {
+                            texts.place(
+                                format!("system:{name}:{at}"),
+                                TextKind::Menu,
+                                text.as_str(),
+                            );
+                        }
+                    }
+                    text => texts.place(
+                        format!("system:{words}:{name}"),
+                        TextKind::Menu,
+                        text.as_str(),
+                    ),
+                }
+            }
         }
     }
     for list in ["@elements", "@skill_types", "@weapon_types", "@armor_types"] {
@@ -588,8 +615,9 @@ fn vx_ace_texts(data: &GameData) -> io::Result<Texts> {
             system.field(field).as_str(),
         );
     }
-    for (table, fields) in VX_ACE_TABLES {
-        for row in data.load(&format!("Data/{table}.rvdata2"))?.items() {
+    let first_line_in_show_text = generation == Generation::Xp;
+    for (table, fields) in RGSS_TABLES {
+        for row in data.load(&generation.file(table))?.items() {
             let Some(id) = row.field("@id").as_integer() else {
                 continue;
             };
@@ -602,22 +630,28 @@ fn vx_ace_texts(data: &GameData) -> io::Result<Texts> {
             }
         }
     }
-    for event in data.load("Data/CommonEvents.rvdata2")?.items() {
+    for event in data.load(&generation.file("CommonEvents"))?.items() {
         if let Some(id) = event.field("@id").as_integer() {
             texts.lists.insert(
                 format!("common:{id}"),
-                units(&ruby_commands(event.field("@list"))),
+                units(
+                    &ruby_commands(event.field("@list")),
+                    first_line_in_show_text,
+                ),
             );
         }
     }
-    for troop in data.load("Data/Troops.rvdata2")?.items() {
+    for troop in data.load(&generation.file("Troops"))?.items() {
         let Some(id) = troop.field("@id").as_integer() else {
             continue;
         };
         for (page, content) in troop.field("@pages").items().iter().enumerate() {
             texts.lists.insert(
                 format!("troop:{id}/page:{page}"),
-                units(&ruby_commands(content.field("@list"))),
+                units(
+                    &ruby_commands(content.field("@list")),
+                    first_line_in_show_text,
+                ),
             );
         }
     }
@@ -630,7 +664,10 @@ fn vx_ace_texts(data: &GameData) -> io::Result<Texts> {
             for (page, content) in event.field("@pages").items().iter().enumerate() {
                 texts.lists.insert(
                     format!("map:{id}/event:{event_id}/page:{page}"),
-                    units(&ruby_commands(content.field("@list"))),
+                    units(
+                        &ruby_commands(content.field("@list")),
+                        first_line_in_show_text,
+                    ),
                 );
             }
         }
@@ -671,6 +708,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::{rgss_texts::command as ruby_command, ruby_marshal::Writer};
 
     fn command(code: i64, parameters: Json) -> Json {
         json!({"code": code, "indent": 0, "parameters": parameters})
@@ -798,6 +836,117 @@ mod tests {
                 ("names or numbers differ", 1),
             ])
         );
+    }
+
+    /// A tiny XP or VX game's data in a folder: a menu word, an item, and
+    /// a common event with a two-line message and a choice.
+    fn write_rgss(
+        game: &Path,
+        generation: Generation,
+        word: &str,
+        item: &str,
+        lines: [&str; 2],
+        choices: [&str; 2],
+    ) {
+        fs::create_dir_all(game.join("Data")).unwrap();
+        let file = |build: &dyn Fn(&mut Writer)| {
+            let mut writer = Writer::new();
+            build(&mut writer);
+            writer.finish()
+        };
+        let xp = generation == Generation::Xp;
+        let system = file(&|writer| {
+            writer.object("RPG::System", 1);
+            writer.symbol(if xp { "@words" } else { "@terms" });
+            writer.object("RPG::System::Words", 1);
+            writer.symbol("@attack");
+            writer.binary(word.as_bytes());
+        });
+        let items = file(&|writer| {
+            writer.array(2);
+            writer.binary(b"");
+            writer.object("RPG::Item", 2);
+            writer.symbol("@id");
+            writer.integer(1);
+            writer.symbol("@name");
+            writer.binary(item.as_bytes());
+        });
+        let events = file(&|writer| {
+            writer.array(2);
+            writer.binary(b"");
+            writer.object("RPG::CommonEvent", 2);
+            writer.symbol("@id");
+            writer.integer(1);
+            writer.symbol("@list");
+            writer.array(if xp { 5 } else { 6 });
+            ruby_command(writer, 230, &["30"]);
+            if xp {
+                ruby_command(writer, 101, &[lines[0]]);
+            } else {
+                ruby_command(writer, 101, &["", "0", "0", "2"]);
+                ruby_command(writer, 401, &[lines[0]]);
+            }
+            ruby_command(writer, 401, &[lines[1]]);
+            writer.object("RPG::EventCommand", 2);
+            writer.symbol("@code");
+            writer.integer(102);
+            writer.symbol("@parameters");
+            writer.array(2);
+            writer.array(2);
+            writer.binary(choices[0].as_bytes());
+            writer.binary(choices[1].as_bytes());
+            writer.integer(2);
+            ruby_command(writer, 0, &[]);
+        });
+        fs::write(game.join(generation.file("System")), system).unwrap();
+        fs::write(game.join(generation.file("Items")), items).unwrap();
+        fs::write(game.join(generation.file("CommonEvents")), events).unwrap();
+    }
+
+    #[test]
+    fn pairs_xp_and_vx_games_through_their_own_data_layout() {
+        for generation in [Generation::Xp, Generation::Vx] {
+            let root = tempfile::tempdir().unwrap();
+            let (japanese, english) = (root.path().join("ja"), root.path().join("en"));
+            write_rgss(
+                &japanese,
+                generation,
+                "攻撃",
+                "薬草",
+                ["宿屋へようこそ。", "\\N[1]さん、一泊どう？"],
+                ["はい", "いいえ"],
+            );
+            write_rgss(
+                &english,
+                generation,
+                "Attack",
+                "Herb",
+                ["Welcome to the inn.", "Staying the night, \\N[1]?"],
+                ["Yes", "No"],
+            );
+            let pairing = pair_games(&japanese, &english).unwrap();
+            let found = pairing
+                .pairs
+                .iter()
+                .map(|pair| (pair.kind, pair.japanese.as_str(), pair.english.as_str()))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                found,
+                [
+                    (TextKind::Database, "薬草", "Herb"),
+                    (TextKind::Menu, "攻撃", "Attack"),
+                    (
+                        TextKind::Dialogue,
+                        "宿屋へようこそ。\n\\N[1]さん、一泊どう？",
+                        "Welcome to the inn.\nStaying the night, \\N[1]?"
+                    ),
+                    (TextKind::Choice, "はい", "Yes"),
+                    (TextKind::Choice, "いいえ", "No"),
+                ],
+                "{generation:?}"
+            );
+            assert_eq!(pairing.unpaired, 0, "{generation:?}");
+        }
     }
 
     #[test]

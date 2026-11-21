@@ -80,7 +80,7 @@ use dla_catalog_import::{
 };
 use dla_cover_cache::DesktopCatalogArtworkCache;
 use dla_game_translation::DesktopGameFolder;
-use dla_launch::{DesktopLaunchExecutor, LocaleRemulator, SystemLaunchClock};
+use dla_launch::{DesktopLaunchExecutor, LocaleRemulator, Magpie, SystemLaunchClock};
 use dla_media::{
     DesktopAudioWaveformReader, DesktopMediaInventory, OwnWorkArtworkFiles, THUMBNAIL_CACHE_LIMIT,
     ThumbnailCache,
@@ -429,8 +429,11 @@ pub fn run() {
             );
             let locale_remulator =
                 LocaleRemulator::new(data_directory.join("tools").join("locale-remulator"));
+            let magpie = Magpie::new(data_directory.join("tools").join("magpie"));
             let launch_executor: Arc<dyn LaunchExecutor> = Arc::new(
-                DesktopLaunchExecutor::new().with_locale_remulator(locale_remulator.clone()),
+                DesktopLaunchExecutor::new()
+                    .with_locale_remulator(locale_remulator.clone())
+                    .with_magpie(magpie.clone()),
             );
             let launch_activity_store: Arc<dyn LaunchActivityStore> =
                 Arc::new(ObservedLaunchActivityStore::new(
@@ -722,6 +725,7 @@ pub fn run() {
                 launch,
                 launch_options,
                 locale_remulator,
+                magpie,
                 translation,
                 media,
                 personalized_voice,
@@ -842,10 +846,12 @@ pub fn run() {
             commands::stop_library_launch,
             commands::list_recent_launches,
             commands::list_installation_launch_history,
+            commands::reset_library_play_time,
             translation::read_translation_settings,
             translation::save_translation_settings,
             translation::test_translator,
             translation::read_game_translation,
+            translation::list_shown_game_translations,
             translation::turn_on_game_translation,
             translation::show_game_translation,
             translation::remove_game_translation,

@@ -21,15 +21,21 @@ pub struct LocalModelTranslator {
     agent: Agent,
     endpoint: String,
     model: String,
+    authorization: Option<String>,
 }
 
 impl LocalModelTranslator {
     /// `address` is the API's base, for example `http://127.0.0.1:11434/v1`.
-    pub fn new(address: &str, model: &str) -> Self {
+    /// `key` is for a server that asks for one, as hosted services do.
+    pub fn new(address: &str, model: &str, key: Option<&str>) -> Self {
         Self {
             agent: crate::agent(),
             endpoint: format!("{}/chat/completions", address.trim().trim_end_matches('/')),
             model: model.trim().to_owned(),
+            authorization: key
+                .map(str::trim)
+                .filter(|key| !key.is_empty())
+                .map(|key| format!("Bearer {key}")),
         }
     }
 
@@ -42,7 +48,12 @@ impl LocalModelTranslator {
             "top_p": TOP_P,
             "stream": false,
         });
-        let reply = crate::post_json(&self.agent, &self.endpoint, None, &body)?;
+        let reply = crate::post_json(
+            &self.agent,
+            &self.endpoint,
+            self.authorization.as_deref(),
+            &body,
+        )?;
         reply["choices"][0]["message"]["content"]
             .as_str()
             .map(|content| without_thinking(content).to_owned())
@@ -241,12 +252,21 @@ mod tests {
     #[test]
     fn builds_the_chat_endpoint_from_the_address_the_player_typed() {
         let translator =
-            LocalModelTranslator::new(" http://127.0.0.1:11434/v1/ ", " qwen3:4b-instruct ");
+            LocalModelTranslator::new(" http://127.0.0.1:11434/v1/ ", " qwen3:4b-instruct ", None);
         assert_eq!(
             translator.endpoint,
             "http://127.0.0.1:11434/v1/chat/completions"
         );
         assert_eq!(translator.name(), "qwen3:4b-instruct");
+        assert_eq!(translator.authorization, None);
+    }
+
+    #[test]
+    fn sends_a_key_only_when_the_player_gave_one() {
+        let hosted = LocalModelTranslator::new("https://api.example/v1", "model", Some(" key "));
+        assert_eq!(hosted.authorization.as_deref(), Some("Bearer key"));
+        let blank = LocalModelTranslator::new("https://api.example/v1", "model", Some("  "));
+        assert_eq!(blank.authorization, None);
     }
 
     #[test]
@@ -330,7 +350,7 @@ mod tests {
         let address = std::env::var("DLA_TRANSLATOR_URL").expect("DLA_TRANSLATOR_URL");
         let model = std::env::var("DLA_TRANSLATOR_MODEL")
             .unwrap_or_else(|_| "qwen3-4b-instruct".to_owned());
-        let translator = LocalModelTranslator::new(&address, &model);
+        let translator = LocalModelTranslator::new(&address, &model, None);
         let names = translator
             .spell_names(&[NameToSpell {
                 japanese: "ユキナ".to_owned(),

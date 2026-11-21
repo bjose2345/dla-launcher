@@ -7,7 +7,7 @@ import type { MessageKey } from "../../i18n/catalogs";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import { ImageGalleryModal } from "../catalog/ImageGalleryModal";
 import { GalleryLayoutToggle, useGalleryLayout, WorkGallery } from "../catalog/WorkGallery";
-import { DataRow, MetadataRow, WorkCodeCopy, WorkLocalActionButton } from "../catalog/WorkDetailPage";
+import { DataRow, MetadataRow, WorkCodeCopy, WorkLocalActionButton, WorkPlayedRows } from "../catalog/WorkDetailPage";
 import { WorkDetailSection } from "../catalog/WorkDetailSection";
 import { useHeroBackdropParallax, WorkHeroAmbient } from "../catalog/WorkHeroAmbient";
 import { WorkHeroImage } from "../catalog/WorkHeroImage";
@@ -154,6 +154,7 @@ export function OwnWorkPage({
               <DataRow label={t("detail.released")} value={details?.releaseDate || t("ownWork.notSet")} />
               <DataRow label={t("ownWork.files")} value={totals.files.toLocaleString(locale)} />
               {totals.bytes > 0 ? <DataRow label={t("ownWork.size")} value={formatByteSize(totals.bytes, locale)} /> : null}
+              <WorkPlayedRows installationId={installationId} gateway={gateway} />
             </dl>
 
             <div className="work-source-actions work-hero-enter work-hero-enter-5">

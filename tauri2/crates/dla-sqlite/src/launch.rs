@@ -3,7 +3,10 @@ use std::io;
 use dla_application::launch::{LaunchActivityStore, LaunchError, LaunchOptionStore, LaunchOptions};
 use dla_domain::{
     installation::{InstallationId, LaunchActionKind},
-    launch::{LaunchActivity, LaunchActivityId, LaunchActivityStatus, LaunchAdapter, WindowScale},
+    launch::{
+        LaunchActivity, LaunchActivityId, LaunchActivityStatus, LaunchAdapter, PictureFilter,
+        WindowScale,
+    },
 };
 use rusqlite::{Connection, OptionalExtension, Row, params, types::Type};
 
@@ -19,22 +22,32 @@ impl LaunchOptionStore for SqliteLibraryStore {
     ) -> Result<LaunchOptions, LaunchError> {
         self.with_connection(|connection| {
             connection
-                .prepare_cached("SELECT japanese_locale, video_player, audio_player, window_scale, refresh_rate FROM library_launch_option WHERE installation_id = ?1")?.query_row(
-                    [installation_id.0.as_str()],
-                    |row| Ok((row.get::<_, bool>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<String>>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<u32>>(4)?)),
-                )
+                .prepare_cached(
+                    "SELECT japanese_locale, video_player, audio_player, window_scale, refresh_rate,
+                            picture_filter, performance_overlay, cursor_hide_delay
+                     FROM library_launch_option WHERE installation_id = ?1",
+                )?
+                .query_row([installation_id.0.as_str()], |row| {
+                    Ok(LaunchOptions {
+                        japanese_locale: row.get(0)?,
+                        video_player: row.get(1)?,
+                        audio_player: row.get(2)?,
+                        window_scale: row
+                            .get::<_, Option<String>>(3)?
+                            .as_deref()
+                            .and_then(WindowScale::parse),
+                        refresh_rate: row.get(4)?,
+                        picture_filter: row
+                            .get::<_, Option<String>>(5)?
+                            .as_deref()
+                            .and_then(PictureFilter::parse),
+                        performance_overlay: row.get(6)?,
+                        cursor_hide_delay: row.get(7)?,
+                    })
+                })
                 .optional()
         })
-        .map(|stored| {
-            let (japanese_locale, video_player, audio_player, window_scale, refresh_rate) = stored.unwrap_or((false, None, None, None, None));
-            LaunchOptions {
-                japanese_locale,
-                video_player,
-                audio_player,
-                window_scale: window_scale.as_deref().and_then(WindowScale::parse),
-                refresh_rate,
-            }
-        })
+        .map(Option::unwrap_or_default)
         .map_err(LaunchError::persistence)
     }
 
@@ -44,19 +57,24 @@ impl LaunchOptionStore for SqliteLibraryStore {
         options: LaunchOptions,
     ) -> Result<(), LaunchError> {
         self.with_connection(|connection| {
-            connection.prepare_cached("INSERT INTO library_launch_option (installation_id, japanese_locale, video_player, audio_player, window_scale, refresh_rate)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            connection.prepare_cached("INSERT INTO library_launch_option (installation_id, japanese_locale, video_player, audio_player, window_scale, refresh_rate, picture_filter, performance_overlay, cursor_hide_delay)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                  ON CONFLICT (installation_id) DO UPDATE
                  SET japanese_locale = excluded.japanese_locale, video_player = excluded.video_player,
                      audio_player = excluded.audio_player, window_scale = excluded.window_scale,
-                     refresh_rate = excluded.refresh_rate")?.execute(
+                     refresh_rate = excluded.refresh_rate, picture_filter = excluded.picture_filter,
+                     performance_overlay = excluded.performance_overlay,
+                     cursor_hide_delay = excluded.cursor_hide_delay")?.execute(
                 params![
                     installation_id.0,
                     options.japanese_locale,
                     options.video_player,
                     options.audio_player,
                     options.window_scale.map(|scale| scale.to_string()),
-                    options.refresh_rate
+                    options.refresh_rate,
+                    options.picture_filter.map(|filter| filter.to_string()),
+                    options.performance_overlay,
+                    options.cursor_hide_delay
                 ],
             )
         })
@@ -164,6 +182,20 @@ impl LaunchActivityStore for SqliteLibraryStore {
                      WHERE status IN ('starting', 'running', 'stopping')",
                 )?
                 .execute(params![reason, interrupted_at])
+                .map(|count| count as u64)
+        })
+        .map_err(LaunchError::persistence)
+    }
+
+    fn forget_ended_launches(&self, installation_id: &InstallationId) -> Result<u64, LaunchError> {
+        self.with_connection(|connection| {
+            connection
+                .prepare_cached(
+                    "DELETE FROM library_launch_activity
+                     WHERE installation_id = ?1
+                       AND status NOT IN ('starting', 'running', 'stopping')",
+                )?
+                .execute([installation_id.0.as_str()])
                 .map(|count| count as u64)
         })
         .map_err(LaunchError::persistence)
@@ -348,7 +380,7 @@ mod tests {
             Installation, InstallationDetection, InstallationId, InstallationOverrides,
             InstallationPlatform, InstallationStatus, LaunchActionKind,
         },
-        launch::{LaunchActivityId, LaunchActivityStatus, LaunchAdapter},
+        launch::{LaunchActivityId, LaunchActivityStatus, LaunchAdapter, Sharpness},
     };
     use tempfile::tempdir;
 
@@ -389,8 +421,8 @@ mod tests {
             store.read_launch_options(&installation_id).expect("read"),
             LaunchOptions::default()
         );
-        for (japanese_locale, window_scale, refresh_rate) in [
-            (true, Some(WindowScale::Integer), Some(60)),
+        for (japanese_locale, window_scale, refresh_rate, picture_filter, cursor_hide_delay) in [
+            (true, Some(WindowScale::Integer), Some(60), None, None),
             (
                 true,
                 Some(WindowScale::Window {
@@ -398,30 +430,34 @@ mod tests {
                     height: 960,
                 }),
                 Some(120),
+                Some(PictureFilter::Fsr(Sharpness::Strong)),
+                Some(3000),
             ),
-            (false, None, None),
+            (
+                true,
+                Some(WindowScale::Fill),
+                None,
+                Some(PictureFilter::Smooth),
+                None,
+            ),
+            (false, None, None, None, None),
         ] {
+            let options = LaunchOptions {
+                japanese_locale,
+                video_player: Some(String::from("/usr/bin/vlc")),
+                audio_player: Some(String::from("/usr/bin/foobar2000")),
+                window_scale,
+                refresh_rate,
+                picture_filter,
+                performance_overlay: cursor_hide_delay.is_some(),
+                cursor_hide_delay,
+            };
             store
-                .save_launch_options(
-                    &installation_id,
-                    LaunchOptions {
-                        japanese_locale,
-                        video_player: Some(String::from("/usr/bin/vlc")),
-                        audio_player: Some(String::from("/usr/bin/foobar2000")),
-                        window_scale,
-                        refresh_rate,
-                    },
-                )
+                .save_launch_options(&installation_id, options.clone())
                 .expect("save");
             assert_eq!(
                 store.read_launch_options(&installation_id).expect("read"),
-                LaunchOptions {
-                    japanese_locale,
-                    video_player: Some(String::from("/usr/bin/vlc")),
-                    audio_player: Some(String::from("/usr/bin/foobar2000")),
-                    window_scale,
-                    refresh_rate,
-                }
+                options
             );
         }
     }
@@ -481,6 +517,36 @@ mod tests {
                 .list_launch_activities(Some(&installation_id), 10)
                 .expect("history"),
             vec![persisted]
+        );
+    }
+
+    #[test]
+    fn forgets_the_ended_launches_of_an_installation_and_keeps_the_one_going_on() {
+        let (_directory, store, installation_id) = store_with_installation();
+        let mut ended = starting_activity("launch-1", installation_id.clone());
+        ended.status = LaunchActivityStatus::Exited;
+        ended.adapter = Some(LaunchAdapter::LinuxWine);
+        ended.process_id = Some(42);
+        ended.started_at = Some("2026-08-09T01:00:01Z".to_owned());
+        ended.ended_at = Some("2026-08-09T01:01:01Z".to_owned());
+        ended.duration_ms = Some(60_000);
+        store.save_launch_activity(&ended).expect("ended launch");
+        let running = starting_activity("launch-2", installation_id.clone());
+        store
+            .begin_launch_activity(&running)
+            .expect("running launch");
+
+        assert_eq!(
+            store
+                .forget_ended_launches(&installation_id)
+                .expect("forget"),
+            1
+        );
+        assert_eq!(
+            store
+                .list_launch_activities(Some(&installation_id), 10)
+                .expect("history"),
+            vec![running]
         );
     }
 

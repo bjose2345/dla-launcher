@@ -9,6 +9,11 @@
   background: #08080c;
 }
 
+.app-frame:has(.audio-player) > .app-topbar,
+.app-frame:has(.audio-player) .app-sidebar {
+  display: none;
+}
+
 .audio-player-topbar {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -135,64 +140,25 @@
   filter: blur(0);
 }
 
-.audio-player-stage .now-playing-eq {
-  inset: 0;
-  z-index: 1;
-  height: auto;
-  padding: 0 0 var(--library-visualizer-time-row);
-  gap: 3px;
-  background: transparent;
+.audio-player-visualizer-stage.is-tall {
+  height: clamp(200px, 52%, 340px);
 }
 
-.audio-player-visualizer-toggle {
+.audio-player-visual-menu {
   position: absolute;
   z-index: 7;
   top: 14px;
   right: 14px;
-  display: flex;
-  gap: 2px;
-  padding: 3px;
+}
+
+.audio-player-visual-menu .media-dock-menu > button {
+  width: 36px;
+  height: 36px;
+  color: var(--color-base-content);
   border: 1px solid color-mix(in oklch, var(--color-base-content) 18%, transparent);
   background: color-mix(in oklch, var(--color-base-200) 84%, transparent);
   box-shadow: 0 10px 28px -18px rgb(0 0 0 / 90%);
   backdrop-filter: blur(16px);
-  clip-path: var(--app-chip-sm);
-}
-
-.audio-player-visualizer-toggle button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 9px;
-  border: 0;
-  background: transparent;
-  color: color-mix(in oklch, var(--color-base-content) 68%, transparent);
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.58rem;
-  font-weight: 800;
-  letter-spacing: 0.03em;
-  transition: background 140ms ease, color 140ms ease;
-  clip-path: var(--app-chip-sm);
-}
-
-.audio-player-visualizer-toggle button:hover {
-  color: var(--color-base-content);
-}
-
-.audio-player-visualizer-toggle button:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 1px;
-}
-
-.audio-player-visualizer-toggle svg {
-  width: 14px;
-  height: 14px;
-}
-
-.audio-player-visualizer-toggle button.is-active {
-  background: color-mix(in oklch, var(--color-primary) 18%, var(--color-base-300));
-  color: color-mix(in oklch, var(--color-primary) 84%, var(--color-base-content));
 }
 
 .audio-player-queue {

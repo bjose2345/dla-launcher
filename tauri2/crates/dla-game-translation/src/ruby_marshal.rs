@@ -1,4 +1,4 @@
-//! Ruby's Marshal format (version 4.8) as far as RPG Maker VX Ace's data
+//! Ruby's Marshal format (version 4.8) as far as RPG Maker's RGSS data
 //! files use it. The reader keeps every value but follows links only to
 //! strings, which is all text extraction needs; the writer writes the plain
 //! shapes the launcher hands the game: arrays, hashes, integers and strings.
@@ -12,7 +12,7 @@ pub enum Value {
     Nil,
     Bool(bool),
     Integer(i64),
-    /// A string's bytes; RPG Maker VX Ace's text is UTF-8.
+    /// A string's bytes; RPG Maker's text is UTF-8 in every generation.
     String(Vec<u8>),
     Symbol(String),
     Array(Vec<Value>),
@@ -323,8 +323,17 @@ impl Reader<'_> {
     }
 }
 
-/// Writes Marshal data Ruby 1.9 reads back: UTF-8 strings carry their
-/// encoding, other strings are binary.
+/// How a Ruby reads the strings written for it: Ruby 1.9 (RPG Maker VX Ace)
+/// wants UTF-8 text tagged with its encoding, Ruby 1.8 (XP and VX) knows
+/// only byte strings and gets the UTF-8 bytes plain.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Strings {
+    Tagged,
+    Plain,
+}
+
+/// Writes Marshal data Ruby reads back: text as [`Strings`] says, other
+/// strings as binary.
 pub struct Writer {
     bytes: Vec<u8>,
     symbols: Vec<String>,
@@ -379,6 +388,13 @@ impl Writer {
         self.long(1);
         self.symbol("E");
         self.bytes.push(b'T');
+    }
+
+    pub fn string(&mut self, text: &str, strings: Strings) {
+        match strings {
+            Strings::Tagged => self.text(text),
+            Strings::Plain => self.binary(text.as_bytes()),
+        }
     }
 
     pub fn binary(&mut self, bytes: &[u8]) {
@@ -465,6 +481,23 @@ mod tests {
                 ]),
             ])
         );
+    }
+
+    #[test]
+    fn writes_plain_strings_for_ruby_1_8_and_tagged_ones_for_1_9() {
+        let written = |strings| {
+            let mut writer = Writer::new();
+            writer.string("剣", strings);
+            writer.finish()[2..].to_vec()
+        };
+        assert_eq!(written(Strings::Plain), b"\"\x08\xe5\x89\xa3");
+        assert_eq!(written(Strings::Tagged), b"I\"\x08\xe5\x89\xa3\x06:\x06ET");
+        for strings in [Strings::Plain, Strings::Tagged] {
+            assert_eq!(
+                read(&[&[4, 8][..], &written(strings)].concat()).unwrap(),
+                Value::String("剣".as_bytes().to_vec())
+            );
+        }
     }
 
     #[test]

@@ -1,4 +1,9 @@
-export { GameTranslationTab, gameTranslationKey, translationSettingsKey } from "./GameTranslationTab";
+export {
+  GameTranslationTab,
+  gameTranslationKey,
+  shownGamesKey,
+  translationSettingsKey,
+} from "./GameTranslationTab";
 export { TranslationSettingsSection } from "./TranslationSettingsSection";
 export { TranslatorHelpDialog } from "./TranslatorHelpDialog";
 export {

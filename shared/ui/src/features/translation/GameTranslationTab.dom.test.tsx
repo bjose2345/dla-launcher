@@ -32,7 +32,14 @@ describe("GameTranslationTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Turn on translation" }));
 
     await waitFor(() => expect(gateway.turnOn).toHaveBeenCalledWith("installation-1"));
-    expect(await screen.findByText("Preparing translation")).toBeTruthy();
+    expect(await screen.findByText("Translating")).toBeTruthy();
+  });
+
+  it("says how much a game packed into one file takes to unpack", async () => {
+    renderTab(translationGateway({ game: { ...off(), unpackBytes: 491_483_223 } }));
+
+    expect(await screen.findByText(/packed into a single file.*\(468\.7 MB\)/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Turn on translation" })).toBeTruthy();
   });
 
   it("asks for a translator first and explains how to set one up", async () => {
@@ -81,8 +88,16 @@ describe("GameTranslationTab", () => {
   it("keeps the controls of a work already translated, whatever the catalog says", async () => {
     renderTab(translationGateway({ game: on(preparing()) }), { untranslatable: "includes_english" });
 
-    expect(await screen.findByText("Preparing translation")).toBeTruthy();
+    expect(await screen.findByText("Translating")).toBeTruthy();
     expect(screen.queryByText("This work already includes English, so it doesn't need translating.")).toBeNull();
+  });
+
+  it("says it is preparing until the first text is translated", async () => {
+    const nothingYet = { ...preparing(), done: 0, groups: preparing().groups.map((group) => ({ ...group, done: 0 })) };
+    renderTab(translationGateway({ game: on(nothingYet) }));
+
+    expect(await screen.findByText("Preparing translation")).toBeTruthy();
+    expect(screen.queryByText("Translating")).toBeNull();
   });
 
   it("shows the progress of each group and pauses", async () => {
@@ -90,7 +105,7 @@ describe("GameTranslationTab", () => {
     vi.mocked(gateway.pause).mockResolvedValue(on({ ...preparing(), state: "paused", secondsLeft: null }));
     renderTab(gateway);
 
-    expect(await screen.findByText("Preparing translation")).toBeTruthy();
+    expect(await screen.findByText("Translating")).toBeTruthy();
     expect(screen.getByText("64%")).toBeTruthy();
     expect(screen.getByText("564 of 875 texts")).toBeTruthy();
     expect(screen.getByText("about 6 min left")).toBeTruthy();
@@ -101,6 +116,28 @@ describe("GameTranslationTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Pause" }));
     expect(await screen.findByText("Preparation paused")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Resume" })).toBeTruthy();
+  });
+
+  it("shows Pause as busy until the lines being translated have finished", async () => {
+    let report: (view: GameTranslationView) => void = () => undefined;
+    const gateway = translationGateway({ game: on(preparing()) });
+    vi.mocked(gateway.subscribe).mockImplementation((listener) => {
+      report = listener;
+      return () => undefined;
+    });
+    vi.mocked(gateway.pause).mockResolvedValue(on({ ...preparing(), pausing: true }));
+    renderTab(gateway);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Pause" }));
+    const pausing = await screen.findByRole("button", { name: "Pausing…" });
+    expect((pausing as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(pausing);
+    expect(gateway.pause).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Pause" })).toBeNull();
+
+    act(() => report(on({ ...preparing(), state: "paused", secondsLeft: null })));
+    expect(await screen.findByRole("button", { name: "Resume" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Pausing…" })).toBeNull();
   });
 
   it("follows the progress the launcher reports", async () => {
@@ -119,6 +156,43 @@ describe("GameTranslationTab", () => {
     await act(async () => report({ ...on({ ...preparing(), done: 700 }), installationId: "other" }));
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(screen.getByText("600 of 875 texts")).toBeTruthy();
+  });
+
+  it("holds Play back with a spinner while the game starts, and offers Stop while it runs", async () => {
+    const onPlay = vi.fn();
+    const onStop = vi.fn();
+    const gateway = translationGateway({ game: on(ready()) });
+    const { rerender } = renderTab(gateway, { onPlay, onStop, playing: "starting" });
+
+    const starting = await screen.findByRole("button", { name: "Play" }) as HTMLButtonElement;
+    expect(starting.disabled).toBe(true);
+    expect(starting.querySelector(".app-spin")).toBeTruthy();
+    fireEvent.click(starting);
+    expect(onPlay).not.toHaveBeenCalled();
+    expect(screen.queryByText("Running")).toBeNull();
+
+    rerender(
+      <Providers>
+        <GameTranslationTab
+          installationId="installation-1"
+          gateway={gateway}
+          onPlay={onPlay}
+          onStop={onStop}
+          playing="running"
+        />
+      </Providers>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Stop" }));
+    expect(onStop).toHaveBeenCalledOnce();
+    expect(screen.getByText("Running")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Play" })).toBeNull();
+    // The two beside it are there in every state, before it in the row.
+    const row = screen.getByRole("button", { name: "Stop" }).parentElement!;
+    expect([...row.querySelectorAll("button")].map((button) => button.textContent)).toEqual([
+      "Check for new lines",
+      "Translate again…",
+      "Stop",
+    ]);
   });
 
   it("shows a ready game with play and the date it was prepared", async () => {
@@ -285,7 +359,7 @@ describe("GameTranslationTab", () => {
 
 describe("TranslationSettingsSection", () => {
   it("tests the local model in the fields and keeps it when it works", async () => {
-    const gateway = translationGateway({ settings: { translator: null, deeplKeySaved: false, prepareOnlyWhenIdle: false } });
+    const gateway = translationGateway({ settings: { translator: null, keySaved: false, prepareOnlyWhenIdle: false } });
     vi.mocked(gateway.testTranslator).mockResolvedValue({
       source: "オープニングを飛ばしますか？",
       english: "Skip the opening?",
@@ -301,12 +375,29 @@ describe("TranslationSettingsSection", () => {
     expect(await screen.findByText("Works: オープニングを飛ばしますか？ → “Skip the opening?” · 2.9 s")).toBeTruthy();
     const local = { kind: "localModel", address: "http://127.0.0.1:11434/v1", model: "qwen3:4b" };
     expect(gateway.testTranslator).toHaveBeenCalledWith(local, undefined);
-    await waitFor(() => expect(gateway.saveSettings).toHaveBeenCalledWith({ translator: local, deeplKey: undefined }));
+    await waitFor(() => expect(gateway.saveSettings).toHaveBeenCalledWith({ translator: local, key: undefined }));
+  });
+
+  it("sends a key with the model only when the player gave one, and forgets it on request", async () => {
+    const hosted = { kind: "localModel" as const, address: "https://api.example/v1", model: "big-model" };
+    const gateway = translationGateway({ settings: { translator: hosted, keySaved: false, prepareOnlyWhenIdle: false } });
+    vi.mocked(gateway.saveSettings).mockResolvedValue({ translator: hosted, keySaved: true, prepareOnlyWhenIdle: false });
+    renderSettings(gateway);
+
+    const key = await screen.findByLabelText("API key (optional)");
+    expect(screen.queryByRole("button", { name: "Remove key" })).toBeNull();
+    fireEvent.change(key, { target: { value: " sk-model " } });
+    fireEvent.blur(key);
+    await waitFor(() => expect(gateway.saveSettings).toHaveBeenCalledWith({ translator: hosted, key: "sk-model" }));
+
+    expect(await screen.findByText("A key is saved. Enter a new one to replace it.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Remove key" }));
+    await waitFor(() => expect(gateway.saveSettings).toHaveBeenLastCalledWith({ translator: hosted, key: "" }));
   });
 
   it("keeps a DeepL key only in the launcher and says when one is saved", async () => {
     const gateway = translationGateway({
-      settings: { translator: { kind: "deepl", freePlan: true }, deeplKeySaved: true, prepareOnlyWhenIdle: false },
+      settings: { translator: { kind: "deepl", freePlan: true }, keySaved: true, prepareOnlyWhenIdle: false },
     });
     vi.mocked(gateway.testTranslator).mockRejectedValue("the translator refused the request: HTTP 403");
     renderSettings(gateway);
@@ -317,7 +408,7 @@ describe("TranslationSettingsSection", () => {
     fireEvent.blur(key);
     await waitFor(() => expect(gateway.saveSettings).toHaveBeenCalledWith({
       translator: { kind: "deepl", freePlan: true },
-      deeplKey: "new-key:fx",
+      key: "new-key:fx",
     }));
 
     fireEvent.click(screen.getByRole("button", { name: "Test translator" }));
@@ -333,6 +424,8 @@ function renderTab(
     onOpenSettings?: () => void;
     onOpenExternal?: (url: string) => Promise<void>;
     onPlay?: () => void;
+    onStop?: () => void;
+    playing?: "starting" | "running" | null;
   } = {},
 ) {
   return render(
@@ -362,7 +455,7 @@ function Providers({ children }: { children: ReactNode }) {
 function settings(): TranslationSettings {
   return {
     translator: { kind: "localModel", address: "http://127.0.0.1:11434/v1", model: "qwen3:4b-instruct" },
-    deeplKeySaved: false,
+    keySaved: false,
     prepareOnlyWhenIdle: false,
   };
 }
@@ -416,6 +509,7 @@ function on(preparation: PreparationView): GameTranslationView {
 function preparing(): PreparationView {
   return {
     state: "preparing",
+    pausing: false,
     groups: [
       { group: "menus", done: 119, total: 119 },
       { group: "names_and_descriptions", done: 375, total: 635 },

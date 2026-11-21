@@ -330,6 +330,7 @@ mod tests {
             installation_id: InstallationId(installation_id.to_owned()),
             launch_count,
             total_duration_ms,
+            last_started_at: "2026-08-05T10:00:00Z".to_owned(),
         }
     }
 

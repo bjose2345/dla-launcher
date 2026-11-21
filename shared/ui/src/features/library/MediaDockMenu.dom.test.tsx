@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 
@@ -29,14 +29,22 @@ describe("MediaDockMenu", () => {
   });
 
   it("closes when a click moves focus to the native video surface", () => {
-    render(<MenuHarness />);
+    vi.useFakeTimers();
+    try {
+      render(<MenuHarness />);
 
-    fireEvent.click(screen.getByRole("button", { name: "More options" }));
-    expect(screen.getByRole("menu", { name: "More options" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "More options" }));
+      expect(screen.getByRole("menu", { name: "More options" })).toBeTruthy();
 
-    fireEvent.blur(window);
+      fireEvent.blur(window);
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
 
-    expect(screen.queryByRole("menu", { name: "More options" })).toBeNull();
+      expect(screen.queryByRole("menu", { name: "More options" })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("stays open through the blur that follows a press on one of its items", () => {

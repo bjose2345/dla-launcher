@@ -19,7 +19,7 @@ use std::{
 
 use sha2::{Digest, Sha256};
 
-const HEADER: &[u8; 8] = b"RGSSAD\0\x03";
+pub(crate) const HEADER: &[u8; 8] = b"RGSSAD\0\x03";
 const TRAILER_MAGIC: &[u8; 16] = b"DLA-RGSS3A-PATCH";
 const TRAILER_VERSION: u32 = 1;
 // Magic, version, entry position, original entry fields, original length,
@@ -119,7 +119,8 @@ impl Archive {
     }
 }
 
-/// A patch as the trailer records it.
+/// A patch as the trailer records it; the older archive (`rgssad`) records
+/// its patch the same way, with the renamed entry's name as the fields.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Patch {
     pub fields_at: u64,
@@ -154,7 +155,7 @@ pub fn find_patch(path: &Path) -> io::Result<Option<Patch>> {
     if original_bytes >= length || fields_at + FIELDS as u64 > original_bytes {
         return Ok(None);
     }
-    let written_sha256 = written_hash(&mut file, fields_at, original_bytes)?;
+    let written_sha256 = written_hash(&mut file, fields_at, FIELDS, original_bytes)?;
     Ok(Some(Patch {
         fields_at,
         original_fields,
@@ -244,12 +245,19 @@ pub fn crypt(bytes: &mut [u8], mut key: u32) {
     }
 }
 
-fn written_hash(file: &mut File, fields_at: u64, original_bytes: u64) -> io::Result<String> {
+/// The hash a patch records: the bytes the patch wrote in place, then
+/// everything it appended.
+pub(crate) fn written_hash(
+    file: &mut File,
+    fields_at: u64,
+    fields: usize,
+    original_bytes: u64,
+) -> io::Result<String> {
     let mut digest = Sha256::new();
-    let mut fields = [0; FIELDS];
+    let mut fields = vec![0; fields];
     file.seek(SeekFrom::Start(fields_at))?;
     file.read_exact(&mut fields)?;
-    digest.update(fields);
+    digest.update(&fields);
     file.seek(SeekFrom::Start(original_bytes))?;
     io::copy(file, &mut DigestWriter(&mut digest))?;
     Ok(hex::encode(digest.finalize()))
@@ -268,17 +276,17 @@ impl Write for DigestWriter<'_> {
     }
 }
 
-fn read_u32(reader: &mut impl Read) -> io::Result<u32> {
+pub(crate) fn read_u32(reader: &mut impl Read) -> io::Result<u32> {
     let mut bytes = [0; 4];
     reader.read_exact(&mut bytes)?;
     Ok(u32::from_le_bytes(bytes))
 }
 
-fn normal(name: &str) -> String {
+pub(crate) fn normal(name: &str) -> String {
     name.replace('\\', "/").to_lowercase()
 }
 
-fn invalid(message: &str) -> io::Error {
+pub(crate) fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
 

@@ -91,7 +91,8 @@
         ],
         "recommends": [
           "gamescope",
-          "libdecor-0-plugin-1-cairo"
+          "libdecor-0-plugin-1-cairo",
+          "mangoapp"
         ]
       }
     }

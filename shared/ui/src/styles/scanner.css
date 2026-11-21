@@ -1,40 +1,53 @@
 /* ── scan in progress ─────────────────────────────────────── */
 
 .scan-progress {
-  position: relative;
   display: grid;
-  align-items: start;
-  gap: 14px;
-  grid-template-columns: 22px minmax(0, 1fr);
-  overflow: hidden;
-  padding: 18px 20px 20px;
-  border: 1px solid var(--app-border);
-  border-left: 3px solid var(--color-primary);
-  clip-path: var(--app-notch-sm);
-  background: var(--app-panel);
+  gap: 12px;
+  padding: 18px 20px;
+  box-shadow: inset 0 0 0 1px var(--app-border), inset 3px 0 0 var(--color-primary);
+  clip-path: var(--app-notch);
+  background: color-mix(in oklch, var(--app-panel-raised) 92%, var(--app-backdrop));
 }
 
-.scan-progress > svg {
-  width: 20px;
-  height: 20px;
-  margin-top: 2px;
-  color: var(--color-primary);
+.scan-progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
 }
 
-.scan-progress div {
-  display: grid;
+.scan-progress-head h2 {
+  display: flex;
   min-width: 0;
-  gap: 4px;
-}
-
-.scan-progress strong {
-  font-size: 0.95rem;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
   overflow-wrap: anywhere;
 }
 
-.scan-progress span {
+.scan-progress-head h2 svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: var(--color-primary);
+}
+
+.scan-progress-head strong {
+  color: var(--color-primary);
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+.scan-progress-counts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
   color: var(--app-muted);
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -44,13 +57,6 @@
   font-size: 0.74rem;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.scan-progress-bar {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
 }
 
 /* ── summary ──────────────────────────────────────────────── */

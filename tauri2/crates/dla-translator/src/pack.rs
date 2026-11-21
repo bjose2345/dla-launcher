@@ -11,8 +11,9 @@ use std::{
 };
 
 use dla_application::translation::{
-    Glossary, PackLine, PackLookup, PackOffer, TranslationError, TranslationPack, TranslationPacks,
-    has_japanese,
+    Glossary, MessageSpeakerOverride, PackLine, PackLookup, PackOffer, TranslatedPicture,
+    TranslationError, TranslationPack, TranslationPacks, has_japanese, text_key, validate_pictures,
+    validate_speakers,
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -23,7 +24,12 @@ pub const OVERLAYS: &str = "/overlays/dlsite";
 /// The list of works with a pack.
 pub const INDEX: &str = "/overlays/dlsite/index.json";
 const LANGUAGE: &str = "en";
-const FORMAT: u32 = 2;
+/// 2 holds texts and names, 3 adds speaker corrections, 4 adds images and
+/// the maker's own lines for texts the launcher does not read from the game.
+const FORMAT: u32 = 4;
+const SPEAKERS_FORMAT: u32 = 3;
+/// The longest Japanese a line may bring: a label, not a passage.
+const MAX_OWN_SOURCE_CHARS: usize = 60;
 const MAX_SMALL_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_ZIP_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_PACK_FILE_BYTES: u64 = 64 * 1024 * 1024;
@@ -34,6 +40,10 @@ const MANIFEST_FILE: &str = "manifest.json";
 const TEXTS_FILE: &str = "texts.jsonl";
 const NAMES_FILE: &str = "names.jsonl";
 const GLOSSARY_FILE: &str = "glossary.json";
+const SPEAKERS_FILE: &str = "speakers.jsonl";
+/// The folder of a pack's images, laid out as a game's own `img` folder.
+const PICTURES_FOLDER: &str = "img/";
+const PICTURE_EXTENSION: &str = ".png";
 
 /// Why a file in the archive could not be read.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -117,7 +127,7 @@ impl ArchivePacks {
             .read(&format!("{folder}/{MANIFEST_FILE}"), MAX_SMALL_BYTES)?;
         let manifest: Manifest = serde_json::from_slice(&bytes)
             .map_err(|error| FileError::Other(format!("{MANIFEST_FILE}: {error}")))?;
-        if manifest.format != FORMAT || manifest.language != LANGUAGE {
+        if !(2..=FORMAT).contains(&manifest.format) || manifest.language != LANGUAGE {
             return Err(FileError::Other(
                 "the pack is for another version of the launcher".to_owned(),
             ));
@@ -222,14 +232,70 @@ impl TranslationPacks for ArchivePacks {
             entry(&mut zip, name)
                 .map_err(|error| error.unwrap_or_else(|| pack_error(format!("no {name} in it"))))
         };
-        let texts = lines(&required(TEXTS_FILE)?, TEXTS_FILE)?;
-        let names = lines(&required(NAMES_FILE)?, NAMES_FILE)?;
+        let texts = lines(
+            &required(TEXTS_FILE)?,
+            TEXTS_FILE,
+            manifest.format == FORMAT,
+        )?;
+        let names = lines(&required(NAMES_FILE)?, NAMES_FILE, false)?;
+        let with_speakers = manifest.format == SPEAKERS_FORMAT
+            || (manifest.format == FORMAT && manifest.speakers > 0);
+        let speakers = if with_speakers {
+            let bytes = required(SPEAKERS_FILE)?;
+            let text =
+                std::str::from_utf8(&bytes).map_err(|error| pack_error(error.to_string()))?;
+            let speakers = text
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(serde_json::from_str::<MessageSpeakerOverride>)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| pack_error(format!("{SPEAKERS_FILE}: {error}")))?;
+            validate_speakers(&speakers)?;
+            if speakers.is_empty() || speakers.len() as u64 != manifest.speakers {
+                return Err(pack_error(
+                    "message speaker count does not match the manifest",
+                ));
+            }
+            speakers
+        } else {
+            Vec::new()
+        };
+        let pictures = if manifest.format == FORMAT {
+            let mut names = zip
+                .file_names()
+                .filter(|name| {
+                    name.starts_with(PICTURES_FOLDER) && name.ends_with(PICTURE_EXTENSION)
+                })
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            names.sort();
+            let mut pictures = Vec::new();
+            for name in names {
+                let png = entry(&mut zip, &name).map_err(|error| {
+                    error.unwrap_or_else(|| pack_error(format!("no {name} in it")))
+                })?;
+                let path = &name[PICTURES_FOLDER.len()..name.len() - PICTURE_EXTENSION.len()];
+                pictures.push(TranslatedPicture {
+                    path: path.to_owned(),
+                    png,
+                });
+            }
+            validate_pictures(&pictures)?;
+            if pictures.len() as u64 != manifest.pictures {
+                return Err(pack_error("image count does not match the manifest"));
+            }
+            pictures
+        } else {
+            Vec::new()
+        };
         Ok(TranslationPack {
             work: manifest.work,
             // A better pack may have replaced the offered one since.
             made: manifest.made,
             texts,
             names,
+            speakers,
+            pictures,
             glossary,
         })
     }
@@ -335,6 +401,10 @@ struct Manifest {
     made: String,
     #[serde(default)]
     lines: u64,
+    #[serde(default)]
+    speakers: u64,
+    #[serde(default)]
+    pictures: u64,
     file: ListedFile,
 }
 
@@ -412,7 +482,8 @@ fn read_glossary(bytes: &[u8]) -> Result<Glossary, TranslationError> {
     })
 }
 
-fn lines(bytes: &[u8], name: &str) -> Result<Vec<PackLine>, TranslationError> {
+/// `own_lines`: whether a line may bring Japanese, the text it is for.
+fn lines(bytes: &[u8], name: &str, own_lines: bool) -> Result<Vec<PackLine>, TranslationError> {
     let text = std::str::from_utf8(bytes).map_err(|_| pack_error(format!("{name} is not text")))?;
     text.lines()
         .filter(|line| !line.trim().is_empty())
@@ -425,11 +496,16 @@ fn lines(bytes: &[u8], name: &str) -> Result<Vec<PackLine>, TranslationError> {
                     .key
                     .bytes()
                     .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
-            // A pack holds no Japanese: only a text without any comes with it.
-            let source_ok = line
-                .source
-                .as_deref()
-                .is_none_or(|source| !has_japanese(source));
+            // A pack holds none of the Japanese the launcher reads from the
+            // game: a text comes with its line when it has none, or, from
+            // format 4, when it is the text of the maker's own line, which no
+            // launcher could place without it (a label a script joins).
+            let source_ok = line.source.as_deref().is_none_or(|source| {
+                !has_japanese(source)
+                    || (own_lines
+                        && text_key(source) == line.key
+                        && source.chars().count() <= MAX_OWN_SOURCE_CHARS)
+            });
             if !key_ok
                 || !source_ok
                 || line.text.trim().is_empty()
@@ -485,6 +561,229 @@ mod tests {
             "file": {"name": name, "bytes": zip.len(), "sha256": hex::encode(Sha256::digest(&zip))}});
         fs::write(folder.join(MANIFEST_FILE), manifest.to_string()).unwrap();
         publish_version(root, work, version, made);
+    }
+
+    fn add_speakers(root: &std::path::Path, content: &str, count: u64) {
+        let folder = root.join("RJ1/translations/2020-01-02/en");
+        let manifest_path = folder.join(MANIFEST_FILE);
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        let file = folder.join(manifest["file"]["name"].as_str().unwrap());
+        let bytes = fs::read(&file).unwrap();
+        let mut old = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for name in [TEXTS_FILE, NAMES_FILE, GLOSSARY_FILE] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            std::io::copy(&mut old.by_name(name).unwrap(), &mut zip).unwrap();
+        }
+        zip.start_file(SPEAKERS_FILE, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        std::io::Write::write_all(&mut zip, content.as_bytes()).unwrap();
+        let bytes = zip.finish().unwrap().into_inner();
+        manifest["format"] = json!(3);
+        manifest["speakers"] = json!(count);
+        manifest["file"]["bytes"] = json!(bytes.len());
+        manifest["file"]["sha256"] = json!(hex::encode(Sha256::digest(&bytes)));
+        fs::write(file, bytes).unwrap();
+        fs::write(manifest_path, manifest.to_string()).unwrap();
+    }
+
+    #[test]
+    fn imports_guarded_speakers_and_refuses_invalid_metadata() {
+        let root = tempfile::tempdir().unwrap();
+        publish(
+            root.path(),
+            "RJ1",
+            "2020-01-02",
+            "2026-11-17",
+            &line("台詞", "A line"),
+        );
+        let speaker = json!({"map":1,"event":2,"page":0,"command":4,
+            "key":text_key("台詞"),"expected_speaker":text_key("名前"),"text":"Yuki"});
+        let packs = ArchivePacks::new(Arc::new(FolderFiles::new(root.path().to_path_buf())));
+        let valid = format!("{speaker}\n");
+        add_speakers(root.path(), &valid, 1);
+        let offered = offer(&packs, "RJ1", None);
+        let pack = packs.download(&offered).unwrap();
+        assert_eq!(pack.speakers[0].text, "Yuki");
+        assert_eq!(pack.speakers[0].expected_speaker, text_key("名前"));
+        for (content, count) in [
+            ("".to_owned(), 0),
+            (valid.clone(), 2),
+            (valid.repeat(2), 2),
+            (valid.replace(&text_key("名前"), "bad hash"), 1),
+            (valid.replace("Yuki", "日本語"), 1),
+            ("{bad json}".to_owned(), 1),
+        ] {
+            add_speakers(root.path(), &content, count);
+            assert!(packs.download(&offered).is_err());
+        }
+        publish(
+            root.path(),
+            "RJ1",
+            "2020-01-02",
+            "2026-11-17",
+            &line("台詞", "A line"),
+        );
+        let path = root
+            .path()
+            .join("RJ1/translations/2020-01-02/en/manifest.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        manifest["format"] = json!(3);
+        manifest["speakers"] = json!(1);
+        fs::write(path, manifest.to_string()).unwrap();
+        assert!(packs.download(&offered).is_err());
+    }
+
+    /// Files of a pack's zip: their names and what they hold.
+    type Files<'a> = &'a [(&'a str, &'a [u8])];
+
+    /// The published pack of RJ1 with files added and its manifest changed.
+    fn republish(root: &std::path::Path, files: Files, changes: serde_json::Value) {
+        let folder = root.join("RJ1/translations/2020-01-02/en");
+        let manifest_path = folder.join(MANIFEST_FILE);
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        let file = folder.join(manifest["file"]["name"].as_str().unwrap());
+        let mut old = ZipArchive::new(Cursor::new(fs::read(&file).unwrap())).unwrap();
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        for name in [TEXTS_FILE, NAMES_FILE, GLOSSARY_FILE] {
+            zip.start_file(name, options).unwrap();
+            std::io::copy(&mut old.by_name(name).unwrap(), &mut zip).unwrap();
+        }
+        for (name, content) in files {
+            zip.start_file(*name, options).unwrap();
+            std::io::Write::write_all(&mut zip, content).unwrap();
+        }
+        let bytes = zip.finish().unwrap().into_inner();
+        for (key, value) in changes.as_object().unwrap() {
+            manifest[key] = value.clone();
+        }
+        manifest["file"]["bytes"] = json!(bytes.len());
+        manifest["file"]["sha256"] = json!(hex::encode(Sha256::digest(&bytes)));
+        fs::write(file, bytes).unwrap();
+        fs::write(manifest_path, manifest.to_string()).unwrap();
+    }
+
+    #[test]
+    fn imports_a_packs_images_and_refuses_ones_it_cannot_trust() {
+        let root = tempfile::tempdir().unwrap();
+        publish(
+            root.path(),
+            "RJ1",
+            "2020-01-02",
+            "2026-11-19",
+            &line("台詞", "A line"),
+        );
+        let packs = ArchivePacks::new(Arc::new(FolderFiles::new(root.path().to_path_buf())));
+        let png: &[u8] = b"\x89PNG\r\n\x1a\nEnglish";
+        let speaker = json!({"map":1,"event":2,"page":0,"command":4,
+            "key":text_key("台詞"),"expected_speaker":text_key("名前"),"text":"Yuki"})
+        .to_string();
+        republish(
+            root.path(),
+            &[
+                ("img/pictures/Namecut02.png", png),
+                ("img/titles1/Title.png", png),
+                (SPEAKERS_FILE, speaker.as_bytes()),
+            ],
+            json!({"format": 4, "pictures": 2, "speakers": 1}),
+        );
+        let offered = offer(&packs, "RJ1", None);
+        let pack = packs.download(&offered).unwrap();
+        assert_eq!(
+            pack.pictures
+                .iter()
+                .map(|picture| picture.path.as_str())
+                .collect::<Vec<_>>(),
+            ["pictures/Namecut02", "titles1/Title"]
+        );
+        assert_eq!(pack.pictures[0].png, png);
+        assert_eq!(pack.speakers[0].text, "Yuki");
+
+        // Images alone are a pack of this format too.
+        republish(
+            root.path(),
+            &[("img/pictures/Namecut02.png", png)],
+            json!({"format": 4, "pictures": 1, "speakers": 0}),
+        );
+        let pack = packs.download(&offered).unwrap();
+        assert_eq!(pack.pictures.len(), 1);
+        assert!(pack.speakers.is_empty());
+
+        // A pack of this format may have no image: only the maker's own lines.
+        republish(root.path(), &[], json!({"pictures": 0}));
+        assert!(packs.download(&offered).unwrap().pictures.is_empty());
+
+        let refused: [(Files, serde_json::Value); 4] = [
+            (
+                &[("img/pictures/Namecut02.png", png)],
+                json!({"pictures": 2}),
+            ),
+            (
+                &[("img/pictures/Namecut02.png", b"words")],
+                json!({"pictures": 1}),
+            ),
+            (&[("img/../../Namecut02.png", png)], json!({"pictures": 1})),
+            (
+                &[("img/pictures/Namecut02.png", png)],
+                json!({"pictures": 1, "speakers": 1}),
+            ),
+        ];
+        for (files, changes) in refused {
+            republish(root.path(), files, changes);
+            assert!(packs.download(&offered).is_err());
+        }
+        // A launcher that knows no such format is not offered the pack.
+        republish(root.path(), &[], json!({"format": 5}));
+        assert!(packs.download(&offered).is_err());
+    }
+
+    #[test]
+    fn takes_the_makers_own_lines_with_their_japanese_from_format_4() {
+        let root = tempfile::tempdir().unwrap();
+        let packs = ArchivePacks::new(Arc::new(FolderFiles::new(root.path().to_path_buf())));
+        let own = |source: &str, key: String| {
+            format!(
+                "{}\n",
+                json!({"key": key, "text": "Job Cost:", "reviewed": true, "source": source})
+            )
+        };
+        let publish_as = |format: u32, own_line: String| {
+            publish(
+                root.path(),
+                "RJ1",
+                "2020-01-02",
+                "2026-11-20",
+                &(line("台詞", "A line") + &own_line),
+            );
+            let path = root
+                .path()
+                .join("RJ1/translations/2020-01-02/en/manifest.json");
+            let mut manifest: serde_json::Value =
+                serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            manifest["format"] = json!(format);
+            fs::write(path, manifest.to_string()).unwrap();
+        };
+        let label = "消費JOBEXP:";
+
+        publish_as(4, own(label, text_key(label)));
+        let offered = offer(&packs, "RJ1", None);
+        let pack = packs.download(&offered).unwrap();
+        assert_eq!(pack.texts[1].source.as_deref(), Some(label));
+
+        // Older formats hold no Japanese at all, and no format takes a text
+        // that is not its line's, or a passage.
+        publish_as(2, own(label, text_key(label)));
+        assert!(packs.download(&offered).is_err());
+        publish_as(4, own(label, text_key("前提：")));
+        assert!(packs.download(&offered).is_err());
+        let passage = "あ".repeat(MAX_OWN_SOURCE_CHARS + 1);
+        publish_as(4, own(&passage, text_key(&passage)));
+        assert!(packs.download(&offered).is_err());
     }
 
     fn publish_version(root: &std::path::Path, work: &str, version: &str, made: &str) {

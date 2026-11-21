@@ -32,6 +32,13 @@ added only when the user imports a `.dla` package, available from the
 - Scan user-selected folders and retain explainable matching evidence.
 - Review, prepare, verify, relocate, repair, launch, and remove installations.
 - Play supported local audio and video and read images and PDF documents.
+- Translate Japanese games into English with the player's own translator
+  (DeepL or a local model) or, for Elite subscribers, with translations from
+  the DLA archive: RPG Maker MV, MZ, VX Ace, VX and XP, and WOLF RPG Editor
+  2 and 3 (version 3 only when the game's data is not packed). Removing a
+  translation puts the game back as it was.
+- Enlarge older games that open in a small window: through gamescope on Linux
+  and Magpie on Windows, from the **Display** tab of a game's Edit details.
 - Download and install works from the DLA archive with an Elite subscription,
   signing in with the subscriber's own account inside the launcher; transfers
   are verified, resumable, and unpacked with the bundled 7-Zip.
@@ -52,7 +59,7 @@ Two Linux builds exist, from the same code:
   x86_64 (package `dla-launcher`, which replaces an installed WebKitGTK package
   in place). It needs GTK 4.14 or newer: Ubuntu 24.04, Debian 13, Fedora 40 or
   later. Chromium ships inside the package, so it is a few hundred MB, decodes
-  video itself (H.264, AAC, VP9, AV1; H.265 not yet) and plays it in the page.
+  video itself (H.264, H.265, AAC, VP9, AV1) and plays it in the page.
   It runs as an X11 client, under XWayland on a Wayland session. Other
   distributions build it from source; no RPM is published.
 - The WebKitGTK build (`tauri2/`, Tauri 2 on the system webview) is no longer

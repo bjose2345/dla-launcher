@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, Copy, Heart, LoaderCircle, Smartphone } from "lucide-react";
-import { useCallback, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import { errorMessage } from "../../app/errorMessage";
 import { useCopyFeedback } from "../../app/useCopyFeedback";
@@ -29,7 +29,8 @@ import { useCatalogFacetFilters } from "./CatalogFacetFiltersProvider";
 import { setCatalogFacetState } from "./catalogFilters";
 import { useHeroBackdropParallax, WorkHeroAmbient } from "./WorkHeroAmbient";
 import { readInstallationLibraryAction, readWorkLibraryAction, type WorkLibraryAction } from "./workLibraryAction";
-import { LaunchActivityList, formatDuration } from "../library/LaunchHistory";
+import { playTimeLabel } from "../library/LibraryPlayTime";
+import { lastPlayedDay } from "../library/libraryHome";
 import { isMediaLaunchAction, mediaActionMessageKey } from "../library/mediaSession";
 import { useMediaPlayback } from "../library/MediaPlaybackProvider";
 import type { LaunchActivity, LibraryGateway, WorkPreference } from "../library/types";
@@ -309,6 +310,12 @@ function WorkDetail({
               {archive.versions > 0 && (
                 <DataRow label={t("detail.versions")} value={archive.versions.toLocaleString(locale)} />
               )}
+              <WorkPlayedRows workCode={work.code} gateway={libraryGateway} />
+              <WorkLibraryRow
+                workCode={work.code}
+                gateway={libraryGateway}
+                onOpen={(installationId) => onOpenInstallation(installationId, "review")}
+              />
             </dl>
 
             <div className="work-source-actions work-hero-enter work-hero-enter-5">
@@ -389,6 +396,118 @@ function WorkDetail({
   );
 }
 
+function useWorkLibraryAction(gateway: LibraryGateway, workCode?: string, libraryEntry?: string) {
+  return useQuery({
+    queryKey: ["library", "work-action", workCode ?? `installation:${libraryEntry}`],
+    queryFn: () => (workCode
+      ? readWorkLibraryAction(gateway, workCode)
+      : readInstallationLibraryAction(gateway, libraryEntry!)),
+  });
+}
+
+/** The entry a work's Play starts as a program: only those have launches and play time. */
+function launchedInstallation(action: WorkLibraryAction | null): string | null {
+  return action?.kind === "play" && !isMediaLaunchAction(action.action) ? action.installationId : null;
+}
+
+function installationLaunchesKey(installationId: string | null) {
+  return ["library", "launches", "installation", installationId] as const;
+}
+
+function useInstallationLaunches(gateway: LibraryGateway, installationId: string | null) {
+  return useQuery({
+    queryKey: installationLaunchesKey(installationId),
+    queryFn: () => installationId
+      ? gateway.listInstallationLaunchHistory(installationId, 8)
+      : Promise.resolve([]),
+    enabled: installationId !== null,
+    refetchInterval: (launchQuery) => launchQuery.state.data?.some((activity) => (
+      launchActivityIsActive(activity.status)
+    )) ? launchPollInterval(launchQuery.state.data, Boolean(gateway.subscribeLaunchActivity)) : false,
+  });
+}
+
+/** How long a work was played and when last, as rows of its data table. */
+export function WorkPlayedRows({
+  workCode,
+  installationId: libraryEntry,
+  gateway,
+}: {
+  workCode?: string;
+  installationId?: string;
+  gateway: LibraryGateway;
+}) {
+  const { locale, showPlayTime, t } = usePresentation();
+  const queryClient = useQueryClient();
+  const action = useWorkLibraryAction(gateway, workCode, libraryEntry).data ?? null;
+  const installationId = showPlayTime ? launchedInstallation(action) : null;
+  const shelves = useQuery({
+    queryKey: ["library", "shelves"],
+    queryFn: () => gateway.readShelves(),
+    enabled: installationId !== null,
+  });
+  const launches = useInstallationLaunches(gateway, installationId);
+  const running = launches.data?.some((activity) => launchActivityIsActive(activity.status)) ?? false;
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    // Play time is a sum over ended launches: it changes when one ends.
+    if (wasRunning.current && !running) {
+      void queryClient.invalidateQueries({ queryKey: ["library", "shelves"] });
+    }
+    wasRunning.current = running;
+  }, [queryClient, running]);
+  const totals = shelves.data?.launchTotals.find((entry) => entry.installationId === installationId);
+  if (!installationId || (!totals && !running)) return null;
+  const day = totals ? lastPlayedDay(totals.lastStartedAt, new Date()) : null;
+  const last = running
+    ? t("detail.playedNow")
+    : day === "today"
+      ? t("detail.playedToday")
+      : day === "yesterday"
+        ? t("detail.playedYesterday")
+        : new Date(totals!.lastStartedAt).toLocaleDateString(locale, {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        });
+  return (
+    <>
+      {totals ? <DataRow label={t("detail.played")} value={playTimeLabel(totals.totalDurationMs, t)} /> : null}
+      <DataRow label={t("detail.lastPlayed")} value={last} running={running} />
+    </>
+  );
+}
+
+/** The way from a work's page outside the Library to where the work is managed: the last row of its data table. */
+export function WorkLibraryRow({
+  workCode,
+  gateway,
+  onOpen,
+}: {
+  workCode: string;
+  gateway: LibraryGateway;
+  onOpen: (installationId: string) => void;
+}) {
+  const { t } = usePresentation();
+  const action = useWorkLibraryAction(gateway, workCode).data ?? null;
+  if (action?.kind !== "play" && action?.kind !== "installed") return null;
+  return (
+    <div className="work-data-wide">
+      <dt>{t("nav.library")}</dt>
+      <dd>
+        <button
+          className="work-library-link"
+          type="button"
+          aria-label={t("detail.openInLibrary")}
+          onClick={() => onOpen(action.installationId)}
+        >
+          {t("detail.related.open")} <span aria-hidden="true">→</span>
+        </button>
+      </dd>
+    </div>
+  );
+}
+
 /** Play, read, install or review: what the Library can do for a work, found by its code or its Library entry. */
 export function WorkLocalActionButton({
   workCode,
@@ -412,30 +531,14 @@ export function WorkLocalActionButton({
   const { t } = usePresentation();
   const playback = useMediaPlayback();
   const queryClient = useQueryClient();
-  const query = useQuery({
-    queryKey: ["library", "work-action", workCode ?? `installation:${libraryEntry}`],
-    queryFn: () => (workCode
-      ? readWorkLibraryAction(gateway, workCode)
-      : readInstallationLibraryAction(gateway, libraryEntry!)),
-  });
+  const query = useWorkLibraryAction(gateway, workCode, libraryEntry);
   const action: WorkLibraryAction | null = query.data ?? null;
   const mediaAction = action?.kind === "play" && isMediaLaunchAction(action.action)
     ? action.action
     : null;
-  const installationId = action?.kind === "play" && mediaAction === null
-    ? action.installationId
-    : null;
-  const historyKey = ["library", "launches", "installation", installationId] as const;
-  const history = useQuery({
-    queryKey: historyKey,
-    queryFn: () => installationId
-      ? gateway.listInstallationLaunchHistory(installationId, 8)
-      : Promise.resolve([]),
-    enabled: installationId !== null,
-    refetchInterval: (launchQuery) => launchQuery.state.data?.some((activity) => (
-      launchActivityIsActive(activity.status)
-    )) ? launchPollInterval(launchQuery.state.data, Boolean(gateway.subscribeLaunchActivity)) : false,
-  });
+  const installationId = launchedInstallation(action);
+  const historyKey = installationLaunchesKey(installationId);
+  const history = useInstallationLaunches(gateway, installationId);
   const updateHistory = (updated: LaunchActivity) => {
     queryClient.setQueryData<LaunchActivity[]>(historyKey, (current) => [
       updated,
@@ -510,15 +613,11 @@ export function WorkLocalActionButton({
       : launch.isPending || activeActivity?.status === "starting"
         ? "detail.launching"
         : messageKey;
-  const launchFeedback = operationError
-      ? t("detail.launchFailed", {
-        error: errorMessage(operationError),
-      })
-      : latestActivity
-        ? launchActivityFeedback(latestActivity, t)
-        : launch.isPending
-          ? t("detail.launching")
-          : "";
+  const launchError = operationError
+    ? t("detail.launchFailed", { error: errorMessage(operationError) })
+    : latestActivity?.status === "failed"
+      ? t("detail.launchFailed", { error: latestActivity.error ?? t("detail.launchUnknownError") })
+      : "";
 
   return (
     <>
@@ -541,46 +640,11 @@ export function WorkLocalActionButton({
           onOpenExternal={onOpenExternal}
         />
       )}
-      {launchFeedback && (
-        <p
-          className={`work-launch-feedback${operationError || latestActivity?.status === "failed" ? " is-error" : ""}`}
-          role={operationError || latestActivity?.status === "failed" ? "alert" : "status"}
-        >
-          {launchFeedback}
-        </p>
+      {launchError && (
+        <p className="work-launch-feedback is-error" role="alert">{launchError}</p>
       )}
-      {activities.length ? (
-        <div className="work-launch-history">
-          <strong>{t("detail.recentLaunches")}</strong>
-          <LaunchActivityList
-            activities={activities.slice(0, 3)}
-            compact
-            stoppingActivityId={stopLaunch.variables ?? null}
-            onStop={(activityId) => stopLaunch.mutate(activityId)}
-          />
-        </div>
-      ) : null}
     </>
   );
-}
-
-function launchActivityFeedback(
-  activity: LaunchActivity,
-  t: ReturnType<typeof usePresentation>["t"],
-): string {
-  const processId = activity.processId ?? "—";
-  switch (activity.status) {
-    case "starting": return t("detail.launching");
-    case "running": return t("detail.launchRunning", { processId });
-    case "stopping": return t("detail.stopping");
-    case "exited": return t("detail.launchExited", {
-      duration: formatDuration(activity.durationMs ?? 0, t),
-      code: activity.exitCode ?? 0,
-    });
-    case "failed": return t("detail.launchFailed", { error: activity.error ?? t("detail.launchUnknownError") });
-    case "stopped": return t("detail.launchStopped", { duration: formatDuration(activity.durationMs ?? 0, t) });
-    case "interrupted": return t("detail.launchInterrupted");
-  }
 }
 
 const METADATA_VISIBLE = 6;
@@ -697,8 +761,8 @@ export function WorkCodeCopy({ code }: { code: string }) {
   );
 }
 
-export function DataRow({ label, value }: { label: string; value: string }) {
-  return <div><dt>{label}</dt><dd>{value}</dd></div>;
+export function DataRow({ label, value, running }: { label: string; value: string; running?: boolean }) {
+  return <div className={running ? "is-running" : undefined}><dt>{label}</dt><dd>{value}</dd></div>;
 }
 
 function WorkDetailLoading() {

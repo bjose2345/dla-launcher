@@ -11,7 +11,9 @@ use dla_application::{
     delivery::InstallFolderStore,
     installation_review::InstallationReviewService,
     maintenance::LibraryMaintenanceService,
-    package_preparation::{PackageDestinationConflictPolicy, PackagePreparationError},
+    package_preparation::{
+        PackageDestinationConflictPolicy, PackageDestinationState, PackagePreparationError,
+    },
     scan_findings::{
         AddScanFindingsRequest, AddedScanFinding, ScanFindingError, ScanFindingRefusal,
         ScanFindingService,
@@ -49,6 +51,18 @@ pub struct ScanInstall {
     pub work_code: Option<String>,
     pub status: ScanInstallStatus,
     pub detail: Option<String>,
+    pub conflict: Option<ScanInstallConflict>,
+}
+
+/// The folder an install would unpack into, already there in the install
+/// folder: the install failed, and the user chooses what happens to it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanInstallConflict {
+    pub folder_name: String,
+    pub keep_both_name: Option<String>,
+    /// False for the folder of another work in the Library.
+    pub replaceable: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -91,6 +105,7 @@ struct Queued {
     installation_id: InstallationId,
     identity: Option<ManualCatalogIdentity>,
     retention: ArchiveRetentionPolicy,
+    policy: PackageDestinationConflictPolicy,
 }
 
 #[derive(Default)]
@@ -226,9 +241,11 @@ impl ScanInstallController {
                             work_code,
                             status: ScanInstallStatus::Queued,
                             detail: None,
+                            conflict: None,
                         },
                         identity,
                         ArchiveRetentionPolicy::Keep,
+                        PackageDestinationConflictPolicy::Refuse,
                     );
                     ScanAddResult {
                         key,
@@ -258,7 +275,12 @@ impl ScanInstallController {
         identity: Option<ManualCatalogIdentity>,
         retention: ArchiveRetentionPolicy,
     ) -> bool {
-        let queued = self.enqueue(install, identity, retention);
+        let queued = self.enqueue(
+            install,
+            identity,
+            retention,
+            PackageDestinationConflictPolicy::Refuse,
+        );
         if queued {
             self.kick();
             self.changed();
@@ -284,6 +306,7 @@ impl ScanInstallController {
         install: ScanInstall,
         identity: Option<ManualCatalogIdentity>,
         retention: ArchiveRetentionPolicy,
+        policy: PackageDestinationConflictPolicy,
     ) -> bool {
         let Ok(mut state) = self.state.lock() else {
             return false;
@@ -305,16 +328,19 @@ impl ScanInstallController {
             installation_id: install.installation_id.clone(),
             identity,
             retention,
+            policy,
         });
         state.installs.push(install);
         true
     }
 
     /// Installs an archive the Library already records but has not unpacked,
-    /// such as one added before adding and installing were one step.
+    /// such as one added before adding and installing were one step. `policy`
+    /// is the user's answer when its folder is already in the install folder.
     pub fn install_existing(
         self: &Arc<Self>,
         installation_id: InstallationId,
+        policy: PackageDestinationConflictPolicy,
     ) -> Result<ScanInstallView, String> {
         let installation = self
             .review
@@ -332,8 +358,9 @@ impl ScanInstallController {
                 .map(str::to_owned),
             status: ScanInstallStatus::Queued,
             detail: None,
+            conflict: None,
         };
-        if self.enqueue(install, None, ArchiveRetentionPolicy::Keep) {
+        if self.enqueue(install, None, ArchiveRetentionPolicy::Keep, policy) {
             self.kick();
             self.changed();
         }
@@ -425,7 +452,19 @@ impl ScanInstallController {
 
     fn install(&self, (queued, cancel): (Queued, CancellationToken)) {
         let id = queued.installation_id.clone();
-        let (status, detail) = self.prepare_and_confirm(queued, &cancel);
+        let conflict = (queued.policy == PackageDestinationConflictPolicy::Refuse)
+            .then(|| self.conflict(&id))
+            .flatten();
+        let (status, detail) = match &conflict {
+            Some(conflict) => (
+                ScanInstallStatus::Failed,
+                Some(format!(
+                    "the install folder already has a folder named {}",
+                    conflict.folder_name
+                )),
+            ),
+            None => self.prepare_and_confirm(queued, &cancel),
+        };
         if status == ScanInstallStatus::Cancelled {
             self.forget(&id);
         }
@@ -437,8 +476,37 @@ impl ScanInstallController {
         if let Ok(mut state) = self.state.lock() {
             state.cancels.remove(&id);
             set_status(&mut state, &id, status, detail);
+            if let Some(install) = state
+                .installs
+                .iter_mut()
+                .find(|install| install.installation_id == id)
+            {
+                install.conflict = conflict;
+            }
         }
         self.changed();
+    }
+
+    /// The folder already standing where this archive would unpack, if any.
+    /// A failure to look is left to the install itself to report.
+    fn conflict(&self, installation_id: &InstallationId) -> Option<ScanInstallConflict> {
+        let folder = self.folders.read_install_folder(platform()).ok()??;
+        let preview = self
+            .preparation
+            .inspect_destination_in(installation_id, folder)
+            .ok()?;
+        let replaceable = match preview.state {
+            PackageDestinationState::Available
+            | PackageDestinationState::ManagedSameInstallation => return None,
+            PackageDestinationState::OccupiedUnknown
+            | PackageDestinationState::ManagedOrphanedInstallation => true,
+            PackageDestinationState::ManagedOtherInstallation => false,
+        };
+        Some(ScanInstallConflict {
+            folder_name: preview.destination_name,
+            keep_both_name: preview.keep_both_destination_name,
+            replaceable,
+        })
     }
 
     fn prepare_and_confirm(
@@ -460,7 +528,7 @@ impl ScanInstallController {
         match self.preparation.execute_now(
             queued.installation_id.clone(),
             folder,
-            PackageDestinationConflictPolicy::Refuse,
+            queued.policy,
             queued.retention,
             &cancelled,
             &|_| {},

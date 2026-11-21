@@ -10,6 +10,7 @@ export function LibraryWorkMenu({
   ownWork,
   onManage,
   onBrowse,
+  playTime,
 }: {
   title: string;
   className?: string;
@@ -18,12 +19,19 @@ export function LibraryWorkMenu({
   ownWork?: boolean;
   onManage: (tab: ManageTab) => void;
   onBrowse?: () => void;
+  /** Where the menu sits beside the work's play time: hides it everywhere, or starts it from nothing. */
+  playTime?: { shown: boolean; onShow: (shown: boolean) => void; onReset?: () => void };
 }) {
   const { t } = usePresentation();
   const items: ActionMenuItem[] = [
     ...(onOpenWork ? [{ label: t(ownWork ? "workMenu.workPage" : "workMenu.catalogPage"), onSelect: onOpenWork }] : []),
     { label: t("workMenu.edit"), onSelect: () => onManage("general") },
     ...(onBrowse ? [{ label: t("workMenu.browse"), onSelect: onBrowse }] : []),
+    ...(playTime ? [{
+      label: t(playTime.shown ? "workMenu.hidePlayTime" : "workMenu.showPlayTime"),
+      onSelect: () => playTime.onShow(!playTime.shown),
+    }] : []),
+    ...(playTime?.onReset ? [{ label: t("workMenu.resetPlayTime"), onSelect: playTime.onReset, danger: true }] : []),
     { label: t("workMenu.remove"), onSelect: () => onManage("files"), danger: true },
   ];
   return <ActionMenu label={t("library.moreFor", { title })} items={items} className={className} />;

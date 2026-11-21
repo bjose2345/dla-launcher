@@ -580,6 +580,7 @@ impl ArchiveHasher for KnownDigestHasher {
         &self,
         request: &ArchiveHashRequest,
         cancellation: &dyn ScanCancellation,
+        read: &(dyn Fn(u64) + Sync),
     ) -> Result<ArchiveHash, ArchiveHashError> {
         if request.algorithm == ArchiveHashAlgorithm::Sha256
             && let Ok(root) = self.access.resolve(&request.access_handle)
@@ -590,7 +591,7 @@ impl ArchiveHasher for KnownDigestHasher {
                 digest,
             });
         }
-        self.inner.hash(request, cancellation)
+        self.inner.hash(request, cancellation, read)
     }
 }
 

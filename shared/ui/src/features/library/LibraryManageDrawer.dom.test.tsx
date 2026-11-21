@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PresentationProvider } from "../../preferences/PresentationProvider";
 import type { CatalogDetailGateway, CatalogWork } from "../catalog/types";
-import type { ScanInstallGateway } from "../scanner/types";
+import type { ScanInstall, ScanInstallGateway } from "../scanner/types";
 import type { TranslationGateway } from "../translation/types";
 import { LibraryManageDrawer, recommendedKey, type ManageTab } from "./LibraryManageDrawer";
 import type {
@@ -14,6 +14,7 @@ import type {
   InstallationHealthReport,
   InstallationReviewRequest,
   LaunchOptions,
+  LaunchOptionsRequest,
   LibraryGateway,
   OwnWorkDetails,
 } from "./types";
@@ -42,7 +43,7 @@ describe("LibraryManageDrawer", () => {
 
   it("adds a Translation tab for games where the launcher can translate", async () => {
     const translation = {
-      readSettings: vi.fn().mockResolvedValue({ translator: null, deeplKeySaved: false, prepareOnlyWhenIdle: false }),
+      readSettings: vi.fn().mockResolvedValue({ translator: null, keySaved: false, prepareOnlyWhenIdle: false }),
       readGame: vi.fn().mockResolvedValue({
         installationId: "installation-1",
         engine: "rpg_maker_mz",
@@ -65,9 +66,68 @@ describe("LibraryManageDrawer", () => {
     ]);
   });
 
+  it("holds the Translation tab's Play back while the game starts and stops the game while it runs", async () => {
+    const translation = {
+      readSettings: vi.fn().mockResolvedValue({ translator: null, keySaved: false, prepareOnlyWhenIdle: false }),
+      readGame: vi.fn().mockResolvedValue({
+        installationId: "installation-1",
+        engine: "wolf_rpg",
+        engineLabel: "WOLF RPG Editor",
+        supported: true,
+        on: true,
+        shown: true,
+        translatorReady: true,
+        preparation: {
+          state: "ready",
+          pausing: false,
+          groups: [{ group: "dialogue", done: 875, total: 875 }],
+          done: 875,
+          total: 875,
+          secondsLeft: null,
+          preparedAt: "2026-10-29T12:00:00Z",
+          preparedWith: "qwen3:4b-instruct",
+          missing: 0,
+          problem: null,
+          error: null,
+        },
+        pack: null,
+      }),
+      subscribe: vi.fn(() => () => undefined),
+    } as unknown as TranslationGateway;
+    const gateway = libraryGateway();
+    type Launch = Awaited<ReturnType<LibraryGateway["launchInstallation"]>>;
+    const running = { id: "launch-1", installationId: "installation-1", status: "running" } as Launch;
+    let started: (launch: Launch) => void = () => undefined;
+    vi.mocked(gateway.launchInstallation).mockReturnValue(new Promise<Launch>((resolve) => {
+      started = resolve;
+    }));
+    renderDrawer(gateway, { translationGateway: translation, tab: "translation" });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Play" }));
+    await waitFor(() => expect(gateway.launchInstallation).toHaveBeenCalledWith("installation-1"));
+    const starting = screen.getByRole("button", { name: "Play" }) as HTMLButtonElement;
+    expect(starting.disabled).toBe(true);
+    expect(starting.getAttribute("aria-busy")).toBe("true");
+
+    vi.mocked(gateway.listRecentLaunches).mockResolvedValue([running]);
+    started(running);
+    fireEvent.click(await screen.findByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(gateway.stopLaunch).toHaveBeenCalledWith("launch-1"));
+    expect(screen.getByText("Running")).toBeTruthy();
+
+    vi.mocked(gateway.listRecentLaunches).mockResolvedValue([
+      { ...running, status: "exited" },
+      { ...running, id: "launch-2", installationId: "installation-2" },
+    ]);
+    fireEvent.click(screen.getByRole("tab", { name: "General" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Translation" }));
+    await waitFor(() => expect(gateway.listRecentLaunches).toHaveBeenCalledTimes(4));
+    expect((await screen.findByRole("button", { name: "Play" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("says in Translation that a work already including English needs no translating", async () => {
     const translation = {
-      readSettings: vi.fn().mockResolvedValue({ translator: null, deeplKeySaved: false, prepareOnlyWhenIdle: false }),
+      readSettings: vi.fn().mockResolvedValue({ translator: null, keySaved: false, prepareOnlyWhenIdle: false }),
       readGame: vi.fn().mockResolvedValue({
         installationId: "installation-1",
         engine: "rpg_maker_mz",
@@ -242,7 +302,7 @@ describe("LibraryManageDrawer", () => {
   it("runs a game in a Japanese locale on Windows, fetching the tool when turned on", async () => {
     const gateway = libraryGateway();
     const options = (japaneseLocale: boolean): LaunchOptions => (
-      { japaneseLocale, japaneseLocaleAvailable: true, missingRuntimes: [], videoPlayer: null, audioPlayer: null, windowScale: null, windowScaleAvailable: false, refreshRate: null }
+      { japaneseLocale, japaneseLocaleAvailable: true, missingRuntimes: [], videoPlayer: null, audioPlayer: null, windowScale: null, enlarger: null, refreshRate: null, pictureFilter: null, performanceOverlay: false, performanceOverlayAvailable: false, cursorHideDelay: null }
     );
     gateway.readLaunchOptions = vi.fn().mockResolvedValue(options(false));
     let finish: (value: LaunchOptions) => void = () => undefined;
@@ -253,7 +313,7 @@ describe("LibraryManageDrawer", () => {
     expect(toggle.getAttribute("aria-checked")).toBe("false");
     fireEvent.click(toggle);
     expect(await screen.findByText("Downloading Locale Remulator…")).toBeTruthy();
-    expect(gateway.saveLaunchOptions).toHaveBeenCalledWith("installation-1", { japaneseLocale: true, videoPlayer: null, audioPlayer: null, windowScale: null, refreshRate: null });
+    expect(gateway.saveLaunchOptions).toHaveBeenCalledWith("installation-1", { japaneseLocale: true, videoPlayer: null, audioPlayer: null, windowScale: null, refreshRate: null, pictureFilter: null, performanceOverlay: false, cursorHideDelay: null });
     finish(options(true));
     await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("true"));
     expect(screen.queryByText(/Visual C\+\+ Redistributable/)).toBeNull();
@@ -266,7 +326,7 @@ describe("LibraryManageDrawer", () => {
     installation.overrides.preferredAction = null;
     const gateway = libraryGateway({ installation });
     const options = (videoPlayer: string | null): LaunchOptions => (
-      { japaneseLocale: false, japaneseLocaleAvailable: false, missingRuntimes: [], videoPlayer, audioPlayer: null, windowScale: null, windowScaleAvailable: false, refreshRate: null }
+      { japaneseLocale: false, japaneseLocaleAvailable: false, missingRuntimes: [], videoPlayer, audioPlayer: null, windowScale: null, enlarger: null, refreshRate: null, pictureFilter: null, performanceOverlay: false, performanceOverlayAvailable: false, cursorHideDelay: null }
     );
     gateway.readLaunchOptions = vi.fn().mockResolvedValue(options(null));
     gateway.saveLaunchOptions = vi.fn(async (_id: string, request: { videoPlayer: string | null }) => options(request.videoPlayer));
@@ -275,11 +335,11 @@ describe("LibraryManageDrawer", () => {
 
     expect(await screen.findByText("Built-in player")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Choose…" }));
-    await waitFor(() => expect(gateway.saveLaunchOptions).toHaveBeenCalledWith("installation-1", { japaneseLocale: false, videoPlayer: "/usr/bin/vlc", audioPlayer: null, windowScale: null, refreshRate: null }));
+    await waitFor(() => expect(gateway.saveLaunchOptions).toHaveBeenCalledWith("installation-1", { japaneseLocale: false, videoPlayer: "/usr/bin/vlc", audioPlayer: null, windowScale: null, refreshRate: null, pictureFilter: null, performanceOverlay: false, cursorHideDelay: null }));
     expect(await screen.findByText(/vlc/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Clear" }));
-    await waitFor(() => expect(gateway.saveLaunchOptions).toHaveBeenCalledWith("installation-1", { japaneseLocale: false, videoPlayer: null, audioPlayer: null, windowScale: null, refreshRate: null }));
+    await waitFor(() => expect(gateway.saveLaunchOptions).toHaveBeenCalledWith("installation-1", { japaneseLocale: false, videoPlayer: null, audioPlayer: null, windowScale: null, refreshRate: null, pictureFilter: null, performanceOverlay: false, cursorHideDelay: null }));
     expect(await screen.findByText("Built-in player")).toBeTruthy();
   });
 
@@ -292,8 +352,12 @@ describe("LibraryManageDrawer", () => {
       videoPlayer: null,
       audioPlayer: null,
       windowScale: null,
-      windowScaleAvailable: false,
+      enlarger: null,
       refreshRate: null,
+      pictureFilter: null,
+      performanceOverlay: false,
+      performanceOverlayAvailable: false,
+      cursorHideDelay: null,
     } satisfies LaunchOptions);
     gateway.openWebsite = vi.fn().mockResolvedValue(undefined);
     renderDrawer(gateway);
@@ -307,7 +371,7 @@ describe("LibraryManageDrawer", () => {
   it("leaves the Japanese locale out where Wine runs every game in Japanese", async () => {
     const gateway = libraryGateway();
     gateway.readLaunchOptions = vi.fn().mockResolvedValue(
-      { japaneseLocale: false, japaneseLocaleAvailable: false, missingRuntimes: [], videoPlayer: null, audioPlayer: null, windowScale: null, windowScaleAvailable: false, refreshRate: null } satisfies LaunchOptions,
+      { japaneseLocale: false, japaneseLocaleAvailable: false, missingRuntimes: [], videoPlayer: null, audioPlayer: null, windowScale: null, enlarger: null, refreshRate: null, pictureFilter: null, performanceOverlay: false, performanceOverlayAvailable: false, cursorHideDelay: null } satisfies LaunchOptions,
     );
     renderDrawer(gateway);
 
@@ -316,30 +380,133 @@ describe("LibraryManageDrawer", () => {
     expect(screen.queryByRole("combobox", { name: "Resolution" })).toBeNull();
   });
 
-  it("offers a resolution and refresh rate for an app in the Display tab where Linux has gamescope", async () => {
+  it("offers a resolution, refresh rate and picture for an app in the Display tab where Linux has gamescope", async () => {
     const gateway = libraryGateway();
-    const options = (windowScale: LaunchOptions["windowScale"], refreshRate: number | null): LaunchOptions => (
-      { japaneseLocale: false, japaneseLocaleAvailable: false, missingRuntimes: [], videoPlayer: null, audioPlayer: null, windowScale, windowScaleAvailable: true, refreshRate }
-    );
-    gateway.readLaunchOptions = vi.fn().mockResolvedValue(options(null, null));
-    gateway.saveLaunchOptions = vi.fn(async (_id: string, request: { windowScale: LaunchOptions["windowScale"]; refreshRate: number | null }) => options(request.windowScale, request.refreshRate));
+    const options = (
+      windowScale: LaunchOptions["windowScale"],
+      refreshRate: number | null,
+      pictureFilter: LaunchOptions["pictureFilter"],
+      extras: Partial<LaunchOptions> = {},
+    ): LaunchOptions => ({
+      japaneseLocale: false, japaneseLocaleAvailable: false, missingRuntimes: [], videoPlayer: null, audioPlayer: null,
+      windowScale, enlarger: "gamescope", refreshRate, pictureFilter,
+      performanceOverlay: false, performanceOverlayAvailable: true, cursorHideDelay: null, ...extras,
+    });
+    const saved = (
+      windowScale: LaunchOptions["windowScale"],
+      refreshRate: number | null,
+      pictureFilter: LaunchOptions["pictureFilter"],
+      extras: Partial<LaunchOptionsRequest> = {},
+    ) => ({
+      japaneseLocale: false, videoPlayer: null, audioPlayer: null, windowScale, refreshRate, pictureFilter,
+      performanceOverlay: false, cursorHideDelay: null, ...extras,
+    });
+    gateway.readLaunchOptions = vi.fn().mockResolvedValue(options(null, null, null));
+    gateway.saveLaunchOptions = vi.fn(async (_id: string, request: LaunchOptionsRequest) => (
+      options(request.windowScale, request.refreshRate, request.pictureFilter, {
+        performanceOverlay: request.performanceOverlay,
+        cursorHideDelay: request.cursorHideDelay,
+      })
+    ));
     renderDrawer(gateway, { tab: "display" });
 
     expect(await screen.findByText(/Experimental/)).toBeTruthy();
     const choice = screen.getByRole("combobox", { name: "Resolution" }) as HTMLSelectElement;
     const rate = screen.getByRole("combobox", { name: "Refresh rate" }) as HTMLSelectElement;
+    const picture = screen.getByRole("combobox", { name: "Picture" }) as HTMLSelectElement;
     expect(choice.value).toBe("");
     expect(rate.disabled).toBe(true);
+    expect(picture.disabled).toBe(true);
     expect(screen.getByRole("option", { name: "Original" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "1920 × 1440" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Full screen (stretched)" })).toBeTruthy();
     fireEvent.change(choice, { target: { value: "1920x1440" } });
-    await waitFor(() => expect(gateway.saveLaunchOptions).toHaveBeenCalledWith("installation-1", { japaneseLocale: false, videoPlayer: null, audioPlayer: null, windowScale: "1920x1440", refreshRate: null }));
+    await waitFor(() => expect(gateway.saveLaunchOptions).toHaveBeenCalledWith("installation-1", saved("1920x1440", null, null)));
     await waitFor(() => expect(choice.value).toBe("1920x1440"));
     await waitFor(() => expect(rate.disabled).toBe(false));
     expect(rate.value).toBe("120");
     fireEvent.change(rate, { target: { value: "60" } });
-    await waitFor(() => expect(gateway.saveLaunchOptions).toHaveBeenCalledWith("installation-1", { japaneseLocale: false, videoPlayer: null, audioPlayer: null, windowScale: "1920x1440", refreshRate: 60 }));
+    await waitFor(() => expect(gateway.saveLaunchOptions).toHaveBeenCalledWith("installation-1", saved("1920x1440", 60, null)));
     await waitFor(() => expect(rate.value).toBe("60"));
+
+    expect(picture.value).toBe("");
+    expect(screen.queryByRole("combobox", { name: "Sharpness" })).toBeNull();
+    fireEvent.change(picture, { target: { value: "even" } });
+    await waitFor(() => expect(gateway.saveLaunchOptions).toHaveBeenCalledWith("installation-1", saved("1920x1440", 60, "even")));
+    await waitFor(() => expect(picture.value).toBe("even"));
+    expect(screen.queryByRole("combobox", { name: "Sharpness" })).toBeNull();
+    fireEvent.change(picture, { target: { value: "smooth" } });
+    await waitFor(() => expect(gateway.saveLaunchOptions).toHaveBeenCalledWith("installation-1", saved("1920x1440", 60, "smooth")));
+    await waitFor(() => expect(picture.value).toBe("smooth"));
+    fireEvent.change(picture, { target: { value: "fsr" } });
+    await waitFor(() => expect(gateway.saveLaunchOptions).toHaveBeenCalledWith("installation-1", saved("1920x1440", 60, "fsr-medium")));
+    const sharpness = await screen.findByRole("combobox", { name: "Sharpness" }) as HTMLSelectElement;
+    await waitFor(() => expect(sharpness.disabled).toBe(false));
+    expect(sharpness.value).toBe("medium");
+    fireEvent.change(sharpness, { target: { value: "strong" } });
+    await waitFor(() => expect(gateway.saveLaunchOptions).toHaveBeenCalledWith("installation-1", saved("1920x1440", 60, "fsr-strong")));
+
+    const cursor = screen.getByRole("combobox", { name: "Hide the cursor" }) as HTMLSelectElement;
+    expect(cursor.value).toBe("");
+    fireEvent.change(cursor, { target: { value: "3000" } });
+    await waitFor(() => expect(gateway.saveLaunchOptions).toHaveBeenCalledWith("installation-1", saved("1920x1440", 60, "fsr-strong", { cursorHideDelay: 3000 })));
+    await waitFor(() => expect(cursor.value).toBe("3000"));
+    const overlay = screen.getByRole("switch", { name: /Show frame rate and load over the game/ });
+    fireEvent.click(overlay);
+    await waitFor(() => expect(gateway.saveLaunchOptions).toHaveBeenCalledWith("installation-1", saved("1920x1440", 60, "fsr-strong", { cursorHideDelay: 3000, performanceOverlay: true })));
+
+    // Whole steps always keep hard pixels; the saved choice waits for another resolution.
+    await waitFor(() => expect(choice.disabled).toBe(false));
+    fireEvent.change(choice, { target: { value: "integer" } });
+    await waitFor(() => expect(picture.disabled).toBe(true));
+    expect(picture.value).toBe("");
+    expect(screen.queryByRole("combobox", { name: "Sharpness" })).toBeNull();
+  });
+
+  it("offers Magpie's choices in the Display tab on Windows", async () => {
+    const gateway = libraryGateway();
+    const options = (extras: Partial<LaunchOptions> = {}): LaunchOptions => ({
+      japaneseLocale: false, japaneseLocaleAvailable: true, missingRuntimes: [], videoPlayer: null, audioPlayer: null,
+      windowScale: null, enlarger: "magpie", refreshRate: null, pictureFilter: null,
+      performanceOverlay: false, performanceOverlayAvailable: false, cursorHideDelay: null, ...extras,
+    });
+    gateway.readLaunchOptions = vi.fn().mockResolvedValue(options());
+    gateway.saveLaunchOptions = vi.fn(async (_id: string, request: LaunchOptionsRequest) => options({
+      windowScale: request.windowScale,
+      pictureFilter: request.pictureFilter,
+      cursorHideDelay: request.cursorHideDelay,
+    }));
+    renderDrawer(gateway, { tab: "display" });
+
+    const choice = await screen.findByRole("combobox", { name: "Resolution" }) as HTMLSelectElement;
+    expect(screen.getByText(/Uses Magpie \(GPL-3\.0\)/)).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Full screen" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Full screen (stretched)" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Full screen (sharp pixels)" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "1920 × 1440" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: /edges cut off/ })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Refresh rate" })).toBeNull();
+    expect(screen.queryByRole("switch", { name: /Show frame rate and load over the game/ })).toBeNull();
+    expect(screen.getByRole("option", { name: "Never" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "After 10 seconds without moving" })).toBeNull();
+
+    fireEvent.change(choice, { target: { value: "fit" } });
+    await waitFor(() => expect(gateway.saveLaunchOptions).toHaveBeenCalledWith("installation-1", {
+      japaneseLocale: false, videoPlayer: null, audioPlayer: null, windowScale: "fit", refreshRate: null,
+      pictureFilter: null, performanceOverlay: false, cursorHideDelay: null,
+    }));
+    await waitFor(() => expect(choice.value).toBe("fit"));
+    const picture = screen.getByRole("combobox", { name: "Picture" }) as HTMLSelectElement;
+    await waitFor(() => expect(picture.disabled).toBe(false));
+    fireEvent.change(picture, { target: { value: "smooth" } });
+    await waitFor(() => expect(picture.value).toBe("smooth"));
+    const cursor = screen.getByRole("combobox", { name: "Hide the cursor" }) as HTMLSelectElement;
+    await waitFor(() => expect(cursor.disabled).toBe(false));
+    fireEvent.change(cursor, { target: { value: "1000" } });
+    await waitFor(() => expect(gateway.saveLaunchOptions).toHaveBeenLastCalledWith("installation-1", {
+      japaneseLocale: false, videoPlayer: null, audioPlayer: null, windowScale: "fit", refreshRate: null,
+      pictureFilter: "smooth", performanceOverlay: false, cursorHideDelay: 1000,
+    }));
   });
 
   it("keeps the Display tab away from works that are not apps", async () => {
@@ -388,6 +555,65 @@ describe("LibraryManageDrawer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Install" }));
 
     await waitFor(() => expect(installs.installArchive).toHaveBeenCalledWith("installation-1"));
+  });
+
+  it("asks what to do when the install folder already has the work's folder", async () => {
+    const installation = gameInstallation();
+    installation.detection.packageInspection = packageInspection();
+    const installs = scanInstalls([{
+      installationId: "installation-1",
+      key: "",
+      name: "RJ137267.zip",
+      workCode: "RJ137267",
+      status: "failed",
+      detail: "the install folder already has a folder named RJ137267",
+      conflict: { folderName: "RJ137267", keepBothName: "RJ137267 (2)", replaceable: true },
+    }]);
+    renderDrawer(libraryGateway({ installation }), { tab: "files", installs });
+
+    expect(await screen.findByText("Your install folder already has a folder named RJ137267.")).toBeTruthy();
+    expect(screen.getByText("Keep both installs this work as RJ137267 (2) and leaves the other folder as it is.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Replace" }));
+    expect(installs.installArchive).not.toHaveBeenCalled();
+    const confirm = screen.getByRole("alertdialog", {
+      name: "Delete the folder RJ137267 and everything in it, saves included, and install this work in its place?",
+    });
+    fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Keep both" }));
+    await waitFor(() => expect(installs.installArchive).toHaveBeenCalledWith("installation-1", "keep_both"));
+  });
+
+  it("replaces a taken folder only after the warning, and never another work's", async () => {
+    const installation = gameInstallation();
+    installation.detection.packageInspection = packageInspection();
+    const conflict = { folderName: "RJ137267", keepBothName: "RJ137267 (2)", replaceable: true };
+    const failed: ScanInstall = {
+      installationId: "installation-1",
+      key: "",
+      name: "RJ137267.zip",
+      workCode: "RJ137267",
+      status: "failed",
+      detail: null,
+      conflict,
+    };
+    const installs = scanInstalls([failed]);
+    const first = renderDrawer(libraryGateway({ installation }), { tab: "files", installs });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Replace" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Replace" }));
+    await waitFor(() => expect(installs.installArchive).toHaveBeenCalledWith("installation-1", "replace_existing"));
+    first.unmount();
+
+    renderDrawer(libraryGateway({ installation }), {
+      tab: "files",
+      installs: scanInstalls([{ ...failed, conflict: { ...conflict, replaceable: false } }]),
+    });
+    expect(await screen.findByText(/belongs to another work in your Library/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Keep both" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Replace" })).toBeNull();
   });
 
   it("confirms before uninstalling and closes once the work is gone", async () => {
@@ -460,8 +686,8 @@ function savedRequest(gateway: LibraryGateway): InstallationReviewRequest {
   return vi.mocked(gateway.saveReview).mock.calls[0]![0];
 }
 
-function scanInstalls(): ScanInstallGateway {
-  const view = { revision: 1, installFolder: "/home/developer/DLA Library", installs: [] };
+function scanInstalls(installs: ScanInstall[] = []): ScanInstallGateway {
+  const view = { revision: 1, installFolder: "/home/developer/DLA Library", installs };
   return {
     readInstalls: vi.fn().mockResolvedValue(view),
     subscribeInstalls: vi.fn().mockResolvedValue(() => undefined),
@@ -498,6 +724,9 @@ function libraryGateway(overrides: {
     removeInstallation: vi.fn().mockResolvedValue(undefined),
     uninstallInstallation: vi.fn().mockResolvedValue(undefined),
     openInstallationFolder: vi.fn().mockResolvedValue(undefined),
+    launchInstallation: vi.fn().mockResolvedValue(undefined),
+    stopLaunch: vi.fn().mockResolvedValue(undefined),
+    listRecentLaunches: vi.fn().mockResolvedValue([]),
   } as unknown as LibraryGateway;
 }
 

@@ -495,8 +495,55 @@
 .library-feature-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 10px;
   margin-top: 28px;
+}
+
+.library-feature-played {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.library-feature-played strong {
+  color: var(--color-base-content);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.library-feature-played span {
+  color: var(--app-muted);
+  font-size: 0.6rem;
+}
+
+.library-feature-meta .library-feature-english {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-color: color-mix(in oklch, var(--color-primary) 45%, transparent);
+  color: var(--color-base-content);
+}
+
+.library-feature-english svg {
+  width: 11px;
+  height: 11px;
+}
+
+.library-feature-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  background: var(--app-backdrop);
+  font-size: 0.82rem;
+}
+
+.library-feature-confirm > span {
+  flex: 1 1 220px;
 }
 
 .library-feature-primary {
@@ -702,28 +749,15 @@
   outline-offset: 4px;
 }
 
-.track-waveform-bars {
+.track-waveform-picture {
   position: relative;
-  display: flex;
   min-height: 0;
-  align-items: flex-end;
-  gap: 3px;
 }
 
-.track-waveform-bars i {
-  min-width: 0;
-  flex: 1 1 0;
-  border-radius: 2px 2px 0 0;
-  background: color-mix(in oklch, var(--color-base-content) 42%, transparent);
-  transition: background-color 100ms linear;
-}
-
-.track-waveform-bars i.is-played {
-  background: color-mix(in oklch, var(--color-primary) 82%, var(--color-base-content));
-}
-
-.track-waveform.is-loading .track-waveform-bars i {
-  opacity: 0.7;
+.audio-visual-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .track-waveform-times {

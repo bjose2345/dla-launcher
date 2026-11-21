@@ -13,6 +13,8 @@ module DLA_Translate
   LAUNCHER = FOLDER + "/launcher.json"
   PLACE = FOLDER + "/place.txt"
   LOG = FOLDER + "/log.txt"
+  SCRIPTS = FOLDER + "/scripts/"
+  IMAGES = FOLDER + "/img/"
   # Hiragana, katakana, CJK ideographs and half-width katakana.
   JAPANESE = Regexp.new("[" +
     [0x3040].pack("U") + "-" + [0x30ff].pack("U") +
@@ -39,6 +41,7 @@ module DLA_Translate
   @texts = {}
   @names = {}
   @kept = {}
+  @images = {}
   @ours = {}
   @pieces = {}
   @swapped = {}
@@ -47,6 +50,9 @@ module DLA_Translate
   @spots = []
   @vocab = []
   @hooked = false
+  @shown_read = false
+  @scripts = 0
+  @scripts_reported = 0
 
   class << self
     def log(text)
@@ -56,10 +62,46 @@ module DLA_Translate
       nil
     end
 
-    # Reads the translations again when the launcher wrote new ones.
-    def refresh
+    def read_shown
       launcher = File.exist?(LAUNCHER) ? File.read(LAUNCHER) : ""
       @shown = launcher !~ /"shown"\s*:\s*false/
+    end
+
+    # The launcher's copy of a Ruby file the game loads from its own folder,
+    # with the English in it, when there is one and translation is shown.
+    # Games load such files while their scripts still run, before anything
+    # here has read the launcher's settings.
+    def script_for(name)
+      unless @shown_read
+        read_shown
+        @shown_read = true
+      end
+      return nil unless @shown
+      path = name.to_s.gsub("\\", "/").sub(/\A(?:\.\/)+/, "")
+      return nil if path =~ /\A\// || path =~ /\A[A-Za-z]:/ || path =~ /(?:\A|\/)\.\.(?:\/|\z)/
+      ours = SCRIPTS + path
+      File.file?(ours) ? ours : nil
+    rescue StandardError
+      nil
+    end
+
+    def script_loaded
+      @scripts += 1
+    end
+
+    def script_failed(name, error)
+      log("#{name}: the copy with the English could not be loaded, the game's own was (#{error.class}: #{error.message.to_s[0, 200]})")
+    end
+
+    def report_scripts
+      return if @scripts == @scripts_reported
+      @scripts_reported = @scripts
+      log("#{@scripts} of the game's script files loaded with the English")
+    end
+
+    # Reads the translations again when the launcher wrote new ones.
+    def refresh
+      read_shown
       return false unless File.exist?(TRANSLATIONS)
       stamp = File.mtime(TRANSLATIONS)
       return false if stamp == @stamp
@@ -68,12 +110,15 @@ module DLA_Translate
       @names = data["names"] || {}
       @kept = {}
       (data["kept"] || []).each { |text| @kept[text] = true }
+      @images = {}
+      (data["pictures"] || []).each { |path| @images[path.downcase] = IMAGES + path + ".png" }
       @ours = {}
       @texts.each_value { |english| @ours[english] = true }
       @names.each_value { |english| @ours[english] = true }
       index_pieces
       @stamp = stamp
-      log("#{@texts.size} translations and #{@names.size} names" + (@shown ? "" : ", turned off"))
+      log("#{@texts.size} translations and #{@names.size} names" +
+          (@images.empty? ? "" : ", images in English: #{@images.size}") + (@shown ? "" : ", turned off"))
       true
     rescue StandardError => error
       log("could not read the translations: #{error.message}")
@@ -83,6 +128,30 @@ module DLA_Translate
     def english(text)
       return nil unless @shown && text.is_a?(String) && text =~ JAPANESE
       @texts[text] || @names[text]
+    rescue StandardError
+      nil
+    end
+
+    # An image as the launcher lists it: its path under Graphics, without
+    # the extension, in small letters.
+    def image_key(name)
+      path = name.gsub("\\", "/").sub(/\A(?:\.\/)+/, "").downcase
+      path.start_with?("graphics/") ? path[9..-1].sub(/\.(?:png|jpe?g|bmp)\z/, "") : nil
+    end
+
+    # The launcher's English version of an image the game asks for: one
+    # with words drawn in, which has no text to replace.
+    def image_for(name)
+      return nil unless @shown && !@images.empty? && name.is_a?(String)
+      key = image_key(name)
+      key && @images[key]
+    rescue StandardError
+      nil
+    end
+
+    def image_failed(name, error)
+      @images.delete(image_key(name))
+      log("#{name}: the English image could not be loaded, the game's own was (#{error.class})")
     rescue StandardError
       nil
     end
@@ -324,6 +393,7 @@ module DLA_Translate
 
     def arrive(map_id)
       File.open(PLACE, "w") { |file| file.write("map:#{map_id}") }
+      report_scripts
       apply if refresh
     rescue StandardError => error
       log("map #{map_id}: #{error.message}")
@@ -378,6 +448,38 @@ module DLA_Translate
         return [wrapped, size, line_height] if line_height >= size || size <= 12
         size -= 2
       end
+    end
+
+    def fit_quest_notice(source, english, width, height, row_height, size)
+      original = source.split("\n", -1)
+      return unless original.size >= 6 && original[3].empty? && original.size * row_height <= height
+      footer_indent = INDENT.match(original.last)[2]
+      level = original.last[footer_indent.length..-1]
+      return unless level =~ /\A\\C\[1\][^\\]+\\C\[0\]\z/
+
+      rows = english.split("\n", -1)
+      # Older packs combine the fields and body. The level still belongs
+      # beside the printed caption, and the prose fits below the rule.
+      if rows.size == 1 && english.end_with?(level)
+        body = wrap(english[0...-level.length].rstrip, 371, size).split("\n")
+        return if body.size > original.size - 5
+        rows = Array.new(original.size, "")
+        rows[4, body.size] = body
+        rows[-1] = footer_indent + level
+      else
+        return unless rows.size == original.size
+        return unless rows.each_with_index.all? { |row, index|
+          row.empty? == original[index].empty? && INDENT.match(row)[2] == INDENT.match(original[index])[2]
+        }
+      end
+
+      # kueback prints its labels in the artwork, just left of these fields.
+      3.times { |index| rows[index] = "   " + rows[index] unless rows[index].empty? }
+      rows[-1] = "     " + rows[-1]
+      text = rows.join("\n")
+      body = rows[4...-1].join("\n")
+      size -= 2 while size > 12 && (widest(text, size) > width || widest(body, size) > 371)
+      [text, size, row_height]
     end
 
     # A message wrapped as evenly as its lines allow: the narrowest width
@@ -478,6 +580,7 @@ module DLA_Translate
         end
       end
       log("started")
+      report_scripts
     end
   end
 
@@ -548,6 +651,23 @@ module DLA_Translate
         def setup_choices(params)
           choices = params[0].map { |choice| DLA_Translate.english(choice) || choice }
           dla_translate_setup_choices([choices] + params[1..-1])
+        end
+      end
+    RUBY
+    # The game loads an image by its path; the launcher's English version is
+    # read in its place, and the game's own when that one cannot be read.
+    ["images", <<-'RUBY'],
+      class Bitmap
+        alias_method :dla_translate_initialize, :initialize
+        def initialize(*args)
+          english = args.size == 1 ? DLA_Translate.image_for(args[0]) : nil
+          return dla_translate_initialize(*args) unless english
+          begin
+            dla_translate_initialize(english)
+          rescue StandardError => error
+            DLA_Translate.image_failed(args[0], error)
+            dla_translate_initialize(*args)
+          end
         end
       end
     RUBY
@@ -631,8 +751,12 @@ module DLA_Translate
           english = DLA_Translate.drawn(text)
           return dla_translate_draw_text_ex(x, y, text) unless english
           lines = text.to_s.count("\n") + 1
-          room = [lines * line_height, contents.height - y].min
-          @dla_fit_ex = DLA_Translate.fit(english, contents_width - x - 4, room)
+          width = contents_width - x - 4
+          height = contents.height - y
+          if defined?(WindoOutlineText) && is_a?(WindoOutlineText)
+            @dla_fit_ex = DLA_Translate.fit_quest_notice(text, english, width, height, line_height, contents.font.size)
+          end
+          @dla_fit_ex ||= DLA_Translate.fit(english, width, [lines * line_height, height].min)
           dla_translate_draw_text_ex(x, y, @dla_fit_ex[0])
         ensure
           @dla_fit_ex = nil
@@ -645,6 +769,63 @@ module DLA_Translate
         alias_method :dla_translate_ex_calc_line_height, :calc_line_height
         def calc_line_height(text, restore_font_size = true)
           @dla_fit_ex ? @dla_fit_ex[2] : dla_translate_ex_calc_line_height(text, restore_font_size)
+        end
+      end
+    RUBY
+    ["monster dictionary", <<-'RUBY'],
+      if defined?(MDic_Text::H) && defined?(Window_MonsterDictionaryStatus) &&
+          Window_MonsterDictionaryStatus.method_defined?(:setting_text)
+        class Window_MonsterDictionaryStatus
+          alias_method :dla_translate_dictionary_setting_text, :setting_text
+          def setting_text(setting)
+            unless @enemy && setting && setting.equal?(MDic_Text::H[@enemy.id])
+              return dla_translate_dictionary_setting_text(setting)
+            end
+
+            entries = Array(setting)
+            english = entries.map { |entry| DLA_Translate.shown(entry) }
+            return dla_translate_dictionary_setting_text(setting) unless english.any?
+
+            x, _, width = ly_xyw(7)
+            width = [width, contents.width - x].min - fsize
+            entries.zip(english).flat_map do |entry, translation|
+              if translation
+                translation.strip.split(/\n{2,}/).map do |paragraph|
+                  DLA_Translate.wrap(paragraph, width, fsize)
+                end.join("\n\n").split("\n")
+              else
+                dla_translate_dictionary_setting_text(entry)
+              end
+            end
+          end
+
+          alias_method :dla_translate_dictionary_draw_element, :draw_element
+          def draw_element
+            ids = ly_e(3, -1)
+            names = ids.drop(1).map { |id| $data_system.elements[id] }
+            unless names.any? { |name| DLA_Translate.ours?(name) || DLA_Translate.shown(name) }
+              return dla_translate_dictionary_draw_element
+            end
+
+            enemy = Game_Enemy.new(0, @enemy.id)
+            columns = names.each_index.map { |index| ly_e(0, index + 1) }.uniq.sort
+            column_width = (contents.width - columns.first) / columns.length
+            csc
+            draw_text(*ly_xyw_e(0), fsize, ly_e(5, -1), 0)
+            names.each_with_index do |name, index|
+              row = index + 1
+              x = columns.first + columns.index(ly_e(0, row)) * column_width
+              y = ly_e(1, row)
+              width = column_width - 6
+              value = tv(sprintf(ly_e(6, -1), (100 * enemy.element_rate(ids[row])).to_i))
+              name_width = width - 24 - text_size(value).width - 4
+              draw_icon(ly_e(4, row), x, y)
+              change_color(text_color(ly_e(7, -1)))
+              draw_text(x + 24, y, name_width, fsize, name, 0)
+              cnc
+              draw_text(x, y, width, fsize, value, 2)
+            end
+          end
         end
       end
     RUBY
@@ -765,4 +946,27 @@ class Object
     dla_translate_rgss_main(*args, &block)
   end
   private :rgss_main, :dla_translate_rgss_main
+end
+
+# Ruby files the game loads from its own folder: the launcher's copy with the
+# English is loaded in place of each, and the file itself when the copy
+# fails. Kernel is the engine's own.
+module Kernel
+  unless private_instance_methods.any? { |name| name.to_s == "dla_translate_load" }
+    alias_method :dla_translate_load, :load
+    def load(name, *rest)
+      ours = DLA_Translate.script_for(name)
+      if ours
+        begin
+          result = dla_translate_load(ours, *rest)
+          DLA_Translate.script_loaded
+          return result
+        rescue ScriptError, StandardError => error
+          DLA_Translate.script_failed(name, error)
+        end
+      end
+      dla_translate_load(name, *rest)
+    end
+    private :load, :dla_translate_load
+  end
 end

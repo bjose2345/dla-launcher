@@ -1,25 +1,30 @@
 use std::{
+    collections::HashMap,
     path::Path,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{
+        Arc, Mutex, MutexGuard,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
 use dla_detection::{ProductCodeSource, detect_product_codes, resolve_scan_identities};
 use dla_domain::scanner::{
     DiscoveredEntry, ResolvedScanIdentity, ScanCounters, ScanEntry, ScanEntryId, ScanEntryKind,
-    ScanEntryPresence, ScanEvidence, ScanEvidenceKind, ScanEvidenceObservation, ScanIssue,
-    ScanIssueCode, ScanMatchConfidence, ScanMatchOutcome, ScanProgress, ScanResult, ScanResultId,
-    ScanRoot, ScanRootId, ScanSession, ScanStatus,
+    ScanEntryPresence, ScanEvidence, ScanEvidenceKind, ScanEvidenceObservation, ScanExtent,
+    ScanIssue, ScanIssueCode, ScanMatchConfidence, ScanMatchOutcome, ScanProgress, ScanResult,
+    ScanResultId, ScanRoot, ScanRootId, ScanSession, ScanStatus,
 };
 
 use crate::{
     identity::{ArchiveHash, ArchiveHashAlgorithm, CatalogArchiveIdentity, CatalogIdentityReader},
     scanner::{
         ArchiveHashError, ArchiveHashRequest, ArchiveHasher, FilesystemScanObserver,
-        FilesystemScanRequest, FilesystemScanner, PrepareScanRequest, ScanCancellation, ScanClock,
-        ScanIdentifiers, ScanIssuePage, ScanIssueRequest, ScanProgressSink, ScanRepository,
-        ScanResultPage, ScanResultRequest, ScanSessionView, ScanSourceIssue, ScanWriteBatch,
-        ScannerError, normalize_issue_request, normalize_result_request,
+        FilesystemScanRequest, FilesystemScanner, KnownFileDigest, PrepareScanRequest,
+        ScanCancellation, ScanClock, ScanIdentifiers, ScanIssuePage, ScanIssueRequest,
+        ScanProgressSink, ScanRepository, ScanResultPage, ScanResultRequest, ScanSessionView,
+        ScanSourceIssue, ScanWriteBatch, ScannerError, normalize_issue_request,
+        normalize_result_request,
     },
 };
 
@@ -111,6 +116,7 @@ impl ScanExecutionService {
             status: session.status,
             counters: session.counters.clone(),
             current_relative_path: None,
+            extent: None,
         })?;
 
         Ok(PreparedScan {
@@ -137,7 +143,18 @@ impl ScanExecutionService {
             status: prepared.session.status,
             counters: prepared.session.counters.clone(),
             current_relative_path: None,
+            extent: None,
         })?;
+
+        // Read before the first batch: a batch writes the files' new sizes
+        // and times over the ones these digests go with.
+        let mut known_digests = HashMap::<String, Vec<KnownFileDigest>>::new();
+        for known in self.repository.read_known_digests(&prepared.root.id)? {
+            known_digests
+                .entry(known.path_key.clone())
+                .or_default()
+                .push(known);
+        }
 
         let observer = ExecutionObserver {
             request: &prepared.filesystem_request,
@@ -149,13 +166,17 @@ impl ScanExecutionService {
             identifiers: self.identifiers.as_ref(),
             cancellation,
             batch_size: self.batch_size,
+            known_digests,
+            reading: AtomicU64::new(0),
             state: Mutex::new(ExecutionState {
                 session: prepared.session,
                 pending_entries: Vec::new(),
                 pending_results: Vec::new(),
                 pending_issues: Vec::new(),
                 current_relative_path: None,
+                extent: None,
                 last_flush_at: Instant::now(),
+                last_published_at: Instant::now(),
             }),
         };
 
@@ -216,7 +237,10 @@ struct ExecutionState {
     pending_results: Vec<ScanResult>,
     pending_issues: Vec<ScanIssue>,
     current_relative_path: Option<String>,
+    /// The bytes checked here are those of the files that are done.
+    extent: Option<ScanExtent>,
     last_flush_at: Instant,
+    last_published_at: Instant,
 }
 
 struct ExecutionObserver<'a> {
@@ -229,23 +253,47 @@ struct ExecutionObserver<'a> {
     identifiers: &'a dyn ScanIdentifiers,
     cancellation: &'a dyn ScanCancellation,
     batch_size: usize,
+    known_digests: HashMap<String, Vec<KnownFileDigest>>,
+    /// The bytes read so far of the files being read now.
+    reading: AtomicU64,
     state: Mutex<ExecutionState>,
 }
 
 impl FilesystemScanObserver for ExecutionObserver<'_> {
+    fn counted(&self, files: u64, bytes: u64) -> Result<(), ScannerError> {
+        let mut state = self.lock_state()?;
+        state.extent = Some(ScanExtent {
+            total_files: files,
+            total_bytes: bytes,
+            checked_bytes: 0,
+        });
+        self.publish_locked(&mut state)
+    }
+
     fn discovered(&self, discovered: DiscoveredEntry) -> Result<(), ScannerError> {
         if self.cancellation.is_cancelled() {
             return Err(ScannerError::Cancelled);
         }
         let now = self.clock.now();
         let entry = self.scan_entry(discovered, &now);
-        let (result, issues) = if entry.kind == ScanEntryKind::File {
+        let (result, issues, read) = if entry.kind == ScanEntryKind::File {
             let inspection = self.inspect_file(&entry, &now)?;
-            (Some(inspection.result), inspection.issues)
+            (Some(inspection.result), inspection.issues, inspection.read)
         } else {
-            (None, Vec::new())
+            (None, Vec::new(), 0)
         };
+        let size = entry
+            .size
+            .as_deref()
+            .and_then(|size| size.parse::<u64>().ok())
+            .unwrap_or(0);
         let mut state = self.lock_state()?;
+        // What was counted of the file while it was read gives way to its
+        // whole size, under the lock a publisher holds too.
+        self.reading.fetch_sub(read, Ordering::Relaxed);
+        if let Some(extent) = state.extent.as_mut() {
+            extent.checked_bytes += size;
+        }
         state.current_relative_path = Some(entry.relative_path.clone());
         match entry.kind {
             ScanEntryKind::File => state.session.counters.discovered_files += 1,
@@ -329,6 +377,7 @@ impl ExecutionObserver<'_> {
             })
             .collect::<Vec<_>>();
         let mut issues = Vec::new();
+        let mut read = 0;
 
         if let Some(size) = entry.size.as_deref() {
             let candidates = self
@@ -336,12 +385,23 @@ impl ExecutionObserver<'_> {
                 .find_archive_candidates_by_size(size, ARCHIVE_CANDIDATE_LIMIT)
                 .map_err(|error| ScannerError::Catalog(error.to_string()))?;
             if let Some(algorithm) = strongest_candidate_algorithm(&candidates) {
-                let hash_request = ArchiveHashRequest {
-                    access_handle: self.request.access_handle.clone(),
-                    relative_path: entry.relative_path.clone(),
-                    algorithm,
+                // A file with the size and the time of change it had when
+                // the root's last scan read it is not read again.
+                let known = entry.modified_at.as_deref().and_then(|modified_at| {
+                    self.known_digests
+                        .get(&entry.path_key)?
+                        .iter()
+                        .find(|known| {
+                            known.hash.algorithm == algorithm
+                                && known.size == size
+                                && known.modified_at == modified_at
+                        })
+                });
+                let hashed = match known {
+                    Some(known) => Ok(known.hash.clone()),
+                    None => self.read_digest(entry, algorithm, &mut read),
                 };
-                match self.archive_hasher.hash(&hash_request, self.cancellation) {
+                match hashed {
                     Ok(hash) => {
                         let exact = self
                             .catalog
@@ -411,7 +471,37 @@ impl ExecutionObserver<'_> {
                 updated_at: now.to_owned(),
             },
             issues,
+            read,
         })
+    }
+
+    /// Reads the file for its digest, counting its bytes as they are read
+    /// and naming it as the file the scan is at.
+    fn read_digest(
+        &self,
+        entry: &ScanEntry,
+        algorithm: ArchiveHashAlgorithm,
+        read: &mut u64,
+    ) -> Result<ArchiveHash, ArchiveHashError> {
+        if let Ok(mut state) = self.state.lock() {
+            state.current_relative_path = Some(entry.relative_path.clone());
+        }
+        let read_here = AtomicU64::new(0);
+        let hashed = self.archive_hasher.hash(
+            &ArchiveHashRequest {
+                access_handle: self.request.access_handle.clone(),
+                relative_path: entry.relative_path.clone(),
+                algorithm,
+            },
+            self.cancellation,
+            &|bytes| {
+                read_here.fetch_add(bytes, Ordering::Relaxed);
+                self.reading.fetch_add(bytes, Ordering::Relaxed);
+                self.publish_if_due();
+            },
+        );
+        *read = read_here.into_inner();
+        hashed
     }
 
     fn scan_issue(
@@ -456,8 +546,19 @@ impl ExecutionObserver<'_> {
             }
         }
         self.repository.update_session(&state.session)?;
-        self.publish_locked(&state)?;
+        self.publish_locked(&mut state)?;
         Ok(state.session.clone())
+    }
+
+    /// Says how far the scan is while a large file is read, when nothing
+    /// has been said for a while.
+    fn publish_if_due(&self) {
+        if let Ok(mut state) = self.state.try_lock()
+            && state.last_published_at.elapsed() >= FLUSH_INTERVAL
+        {
+            // A sink that fails fails the scan at its next flush.
+            let _ = self.publish_locked(&mut state);
+        }
     }
 
     fn flush_if_due(&self, state: &mut ExecutionState) -> Result<(), ScannerError> {
@@ -491,12 +592,18 @@ impl ExecutionObserver<'_> {
         Ok(())
     }
 
-    fn publish_locked(&self, state: &ExecutionState) -> Result<(), ScannerError> {
+    fn publish_locked(&self, state: &mut ExecutionState) -> Result<(), ScannerError> {
+        state.last_published_at = Instant::now();
+        let reading = self.reading.load(Ordering::Relaxed);
         self.progress.publish(&ScanProgress {
             session_id: state.session.id.clone(),
             status: state.session.status,
             counters: state.session.counters.clone(),
             current_relative_path: state.current_relative_path.clone(),
+            extent: state.extent.map(|extent| ScanExtent {
+                checked_bytes: (extent.checked_bytes + reading).min(extent.total_bytes),
+                ..extent
+            }),
         })
     }
 
@@ -510,6 +617,8 @@ impl ExecutionObserver<'_> {
 struct FileInspection {
     result: ScanResult,
     issues: Vec<ScanIssue>,
+    /// The bytes read of the file for its digest.
+    read: u64,
 }
 
 fn validate_prepare_request(request: &PrepareScanRequest) -> Result<(), ScannerError> {

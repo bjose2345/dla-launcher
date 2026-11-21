@@ -553,10 +553,22 @@ impl LibraryMaintenanceService {
                 .iter()
                 .any(|change| change.covers(file.relative_path.as_str()))
         });
+        // The game's own files the launcher moved aside are checked where
+        // they are now.
+        for file in &mut expected {
+            if let Some(moved) = changes
+                .iter()
+                .find_map(|change| change.moved(file.relative_path.as_str()))
+            {
+                file.relative_path = moved;
+            }
+        }
         let mut size_change = 0_i64;
         for change in &changes {
             let sizes = match &change.kind {
-                GameFileChangeKind::Added => None,
+                GameFileChangeKind::Added
+                | GameFileChangeKind::Moved { .. }
+                | GameFileChangeKind::Unpacked { .. } => None,
                 GameFileChangeKind::Changed {
                     original,
                     written_bytes,
@@ -580,7 +592,14 @@ impl LibraryMaintenanceService {
         }
         let ignored = changes
             .iter()
-            .filter(|change| change.kind == GameFileChangeKind::Added)
+            .filter(|change| {
+                matches!(
+                    change.kind,
+                    GameFileChangeKind::Added
+                        | GameFileChangeKind::Moved { .. }
+                        | GameFileChangeKind::Unpacked { .. }
+                )
+            })
             .map(|change| change.path.clone())
             .collect::<Vec<_>>();
         let expected_count = prepared

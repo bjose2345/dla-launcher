@@ -34,7 +34,7 @@ use dla_domain::{
     CatalogRomContents, CatalogWork, CatalogWorkDetail,
     android_app::{AndroidAppAssociationId, AndroidAppView},
     installation::{Installation, InstallationId},
-    launch::{LaunchActivity, LaunchActivityId, WindowScale},
+    launch::{LaunchActivity, LaunchActivityId, PictureFilter, WindowScale},
     library::{LibraryShelves, LocalPersonalization, WorkPreference, WorkPreferenceKind},
     maintenance::{
         FileNameReport, InstallationHealthReport, LibraryFileNameReport, MaintenanceCleanupReport,
@@ -169,6 +169,7 @@ pub struct AppState {
     pub launch: Arc<LaunchService>,
     pub launch_options: Arc<dyn LaunchOptionStore>,
     pub locale_remulator: dla_launch::LocaleRemulator,
+    pub magpie: dla_launch::Magpie,
     pub translation: Arc<crate::translation::TranslationController>,
     pub media: Arc<MediaService>,
     pub personalized_voice: Arc<PersonalizedVoiceQueueService>,
@@ -540,12 +541,22 @@ pub struct LaunchOptionsView {
     video_player: Option<String>,
     /// An audio player program of the user's for the work's tracks.
     audio_player: Option<String>,
-    /// How Linux shows the game's window; none leaves it as the game made it.
+    /// How the game's window is shown; none leaves it as the game made it.
     window_scale: Option<WindowScale>,
-    /// Linux with gamescope installed can enlarge a game's window.
-    window_scale_available: bool,
+    /// The program that enlarges a game's window here ("gamescope" on Linux
+    /// where it is installed, "magpie" on Windows); none hides the choices.
+    enlarger: Option<&'static str>,
     /// The refresh rate of the enlarged game, in Hz; none is the default.
     refresh_rate: Option<u32>,
+    /// How the enlarged picture is drawn; none is sharp pixels.
+    picture_filter: Option<PictureFilter>,
+    /// Show frame rate and load over the enlarged game.
+    performance_overlay: bool,
+    /// The overlay is MangoHud's `mangoapp`, which must be installed.
+    performance_overlay_available: bool,
+    /// Milliseconds without movement before the enlarged game's cursor
+    /// hides; none is ten seconds.
+    cursor_hide_delay: Option<u32>,
 }
 
 /// Which of a work's media a player program is for.
@@ -583,28 +594,55 @@ pub async fn read_launch_options(
     .await
 }
 
-/// Turning the Japanese locale on fetches Locale Remulator at once, so the
-/// game starts without a wait and a failed download shows here.
-#[tauri::command]
-pub async fn save_launch_options(
-    state: tauri::State<'_, AppState>,
-    installation_id: String,
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchOptionsRequest {
     japanese_locale: bool,
     video_player: Option<String>,
     audio_player: Option<String>,
     window_scale: Option<WindowScale>,
     refresh_rate: Option<u32>,
+    picture_filter: Option<PictureFilter>,
+    performance_overlay: bool,
+    cursor_hide_delay: Option<u32>,
+}
+
+/// Turning the Japanese locale on fetches Locale Remulator at once, and
+/// choosing a Resolution on Windows fetches Magpie, so the game starts
+/// without a wait and a failed download shows here.
+#[tauri::command]
+pub async fn save_launch_options(
+    state: tauri::State<'_, AppState>,
+    installation_id: String,
+    options: LaunchOptionsRequest,
 ) -> Result<LaunchOptionsView, String> {
+    let LaunchOptionsRequest {
+        japanese_locale,
+        video_player,
+        audio_player,
+        window_scale,
+        refresh_rate,
+        picture_filter,
+        performance_overlay,
+        cursor_hide_delay,
+    } = options;
     if refresh_rate.is_some_and(|rate| !(30..=240).contains(&rate)) {
         return Err("the refresh rate must be between 30 and 240 Hz".to_owned());
     }
+    if cursor_hide_delay.is_some_and(|delay| !(500..=60_000).contains(&delay)) {
+        return Err("the cursor must hide after half a second to a minute".to_owned());
+    }
     let store = Arc::clone(&state.launch_options);
     let locale = state.locale_remulator.clone();
+    let magpie = state.magpie.clone();
     let video_player = chosen_program(video_player)?;
     let audio_player = chosen_program(audio_player)?;
     blocking(move || {
         if japanese_locale && cfg!(target_os = "windows") {
             locale.install()?;
+        }
+        if window_scale.is_some() && cfg!(target_os = "windows") {
+            magpie.install()?;
         }
         let options = LaunchOptions {
             japanese_locale,
@@ -612,6 +650,9 @@ pub async fn save_launch_options(
             audio_player,
             window_scale,
             refresh_rate,
+            picture_filter,
+            performance_overlay,
+            cursor_hide_delay,
         };
         store.save_launch_options(&InstallationId(installation_id), options.clone())?;
         Ok::<_, dla_application::launch::LaunchError>(launch_options_view(options))
@@ -630,8 +671,12 @@ fn launch_options_view(options: LaunchOptions) -> LaunchOptionsView {
         video_player: options.video_player,
         audio_player: options.audio_player,
         window_scale: options.window_scale,
-        window_scale_available: dla_launch::window_scale_available(),
+        enlarger: dla_launch::enlarger().map(dla_launch::Enlarger::as_str),
         refresh_rate: options.refresh_rate,
+        picture_filter: options.picture_filter,
+        performance_overlay: options.performance_overlay,
+        performance_overlay_available: dla_launch::performance_overlay_available(),
+        cursor_hide_delay: options.cursor_hide_delay,
     }
 }
 
@@ -880,11 +925,12 @@ pub async fn launch_library_installation(
     let translation = Arc::clone(&state.translation);
     blocking(move || {
         let installation_id = InstallationId(installation_id);
-        translation.before_launch(&installation_id);
+        let program = translation.before_launch(&installation_id);
         let result = service.launch(LaunchInstallationRequest {
             installation_id,
             activity_id: LaunchActivityId(format!("launch-{}", Uuid::new_v4())),
             attempted_at: dla_sqlite::current_timestamp(),
+            program,
         });
         match &result {
             Ok(activity) => log::info!(target: "dla::launch", "event=launch_started activity_id={}", activity.id.0),
@@ -929,6 +975,22 @@ pub async fn list_installation_launch_history(
 ) -> Result<Vec<LaunchActivity>, String> {
     let service = Arc::clone(&state.launch);
     blocking(move || service.history(&InstallationId(installation_id), limit)).await
+}
+
+#[tauri::command]
+pub async fn reset_library_play_time(
+    state: tauri::State<'_, AppState>,
+    installation_id: String,
+) -> Result<(), String> {
+    let service = Arc::clone(&state.launch);
+    blocking(move || {
+        service
+            .reset_play_time(&InstallationId(installation_id))
+            .map(|forgotten| {
+                log::info!(target: "dla::launch", "event=play_time_reset launches={forgotten}");
+            })
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1629,9 +1691,11 @@ pub async fn add_scan_findings(
 pub async fn install_library_archive(
     state: tauri::State<'_, AppState>,
     installation_id: String,
+    destination_conflict_policy: Option<PackageDestinationConflictPolicy>,
 ) -> Result<ScanInstallView, String> {
     let controller = Arc::clone(&state.scan_installs);
-    blocking(move || controller.install_existing(InstallationId(installation_id))).await
+    let policy = destination_conflict_policy.unwrap_or(PackageDestinationConflictPolicy::Refuse);
+    blocking(move || controller.install_existing(InstallationId(installation_id), policy)).await
 }
 
 #[tauri::command]

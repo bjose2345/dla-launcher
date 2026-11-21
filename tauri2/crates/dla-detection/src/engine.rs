@@ -250,6 +250,26 @@ mod tests {
             detect(&["RGSS104J.dll", "Data/Scripts.rxdata"]),
             found(GameEngine::RpgMakerXp, None)
         );
+        // Only the archive and the library tell an archived game's
+        // generation; `Game.ini` names the same library.
+        assert_eq!(
+            detect(&[
+                "Game/Game.exe",
+                "Game/Game.ini",
+                "Game/Game.rgssad",
+                "Game/RGSS102E.dll"
+            ]),
+            found(GameEngine::RpgMakerXp, Some("Game"))
+        );
+        assert_eq!(
+            detect(&["Game.exe", "Game.ini", "Game.rgss2a", "System/RGSS202E.dll"]),
+            found(GameEngine::RpgMakerVx, None)
+        );
+        // A VX Ace game that also ships an older library for a tool.
+        assert_eq!(
+            detect(&["Game.exe", "Game.rgss3a", "RGSS102E.dll"]),
+            found(GameEngine::RpgMakerVxAce, None)
+        );
     }
 
     #[test]
@@ -264,6 +284,49 @@ mod tests {
         );
         assert_eq!(
             detect(&["Game/Data/BasicData/Game.dat"]),
+            found(GameEngine::WolfRpg, Some("Game"))
+        );
+        // The game beside a launcher of its own, in a folder below it; a
+        // bonus game deeper down does not win.
+        assert_eq!(
+            detect(&[
+                "Work/Start.exe",
+                "Work/sys/Game.exe",
+                "Work/sys/Data/BasicData.wolf",
+                "Work/sys/Data/MapData.wolf",
+                "Work/sys/Data/Picture.wolf",
+                "Work/Bonus/Extra/Data/BasicData/Game.dat",
+            ]),
+            found(GameEngine::WolfRpg, Some("Work/sys"))
+        );
+        // Translated by the launcher: the archives moved aside, the
+        // folders in their place.
+        assert_eq!(
+            detect(&[
+                "sys/Game.exe",
+                "sys/Data/BasicData.wolf.dla-original",
+                "sys/Data/BasicData/Game.dat",
+                "sys/Data/Picture.wolf",
+            ]),
+            found(GameEngine::WolfRpg, Some("sys"))
+        );
+        // The same for a game whose one archive moved aside.
+        assert_eq!(
+            detect(&[
+                "sys/Game.exe",
+                "sys/Data.wolf.dla-original",
+                "sys/Data/BasicData/Game.dat",
+                "sys/Data/Picture.wolf",
+            ]),
+            found(GameEngine::WolfRpg, Some("sys"))
+        );
+        assert_eq!(
+            detect(&[
+                "Game/Game.exe",
+                "Game/Data.wolf.dla-original",
+                "Game/Data/BasicData/Game.dat",
+                "Game/Data/MapData/Town.mps",
+            ]),
             found(GameEngine::WolfRpg, Some("Game"))
         );
     }

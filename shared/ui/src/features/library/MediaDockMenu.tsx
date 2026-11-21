@@ -43,6 +43,7 @@ export function MediaDockMenu({
   active = false,
   open,
   gap,
+  side = "top",
   onOpenChange,
 }: {
   label: string;
@@ -51,6 +52,7 @@ export function MediaDockMenu({
   active?: boolean;
   open: boolean;
   gap?: number;
+  side?: "top" | "bottom";
   onOpenChange: (open: boolean) => void;
 }) {
   const { t } = usePresentation();
@@ -81,7 +83,7 @@ export function MediaDockMenu({
           className="media-dock-menu-panel"
           role="menu"
           ariaLabel={label}
-          side="top"
+          side={side}
           align="end"
           gap={gap}
           maximumWidth={360}

@@ -130,12 +130,21 @@ and license information for every component; `plugins-ugly` and `libav` require
 an explicit redistribution review.
 
 Wine is optional and is required only to launch reviewed Windows executables
-on Linux. A functioning 32-bit Wine environment is required for 32-bit titles.
+on Linux. A functioning 32-bit Wine environment is required for 32-bit titles:
+when the system's `wine` is used and a `wine32` command exists, the launcher
+starts 32-bit games with `wine32`, which on Ubuntu keeps its own prefix
+(`~/.wine32`). Setting `DLA_WINE_BINARY` turns that choice off.
 
 gamescope and libdecor-0-plugin-1-cairo are optional and Linux only. They give
 the **Display** tab in a game's Edit details, which sets a resolution and refresh
 rate for older games that open in a small window by running them through
-gamescope; that needs a Vulkan-capable GPU. The Linux package recommends both.
+gamescope; that needs a Vulkan-capable GPU. The Linux package recommends both,
+and `mangoapp` for the performance overlay of that tab.
+
+On Windows the same tab uses [Magpie](https://github.com/Blinue/Magpie)
+(GPL-3.0). It is not part of the build: the launcher downloads the pinned
+release from Magpie's GitHub releases the first time a game needs it, checks
+its SHA-256 and runs it unmodified as a separate program.
 
 ## Linux Chromium build
 

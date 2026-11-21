@@ -4,7 +4,7 @@ use std::{
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
-    process::{Child, Command},
+    process::{Child, Command, Stdio},
 };
 
 use dla_application::launch::{
@@ -15,15 +15,21 @@ use dla_application::launch::{
 use dla_domain::installation::InstallationPlatform;
 use dla_domain::{
     installation::{LaunchActionKind, RelativePath},
-    launch::{LaunchAdapter, WindowScale},
+    launch::{LaunchAdapter, PictureFilter, Sharpness, WindowScale},
 };
 use sha2::{Digest, Sha256};
 
+mod enlarged;
 mod locale;
+mod magpie;
+#[cfg(any(target_os = "windows", test))]
+mod plain_drive;
+mod release;
 #[cfg(target_os = "windows")]
 mod windows_process;
 
 pub use locale::{LocaleRemulator, VisualCppRuntime};
+pub use magpie::Magpie;
 
 const HASH_BUFFER_BYTES: usize = 1024 * 1024;
 
@@ -81,18 +87,24 @@ impl ManagedLaunchProcess for DesktopManagedProcess {
     }
 }
 
+#[derive(Clone)]
 pub struct DesktopLaunchExecutor {
     wine_binary: String,
+    wine32_binary: Option<String>,
     gamescope_binary: String,
     locale: Option<LocaleRemulator>,
+    magpie: Option<Magpie>,
 }
 
 impl DesktopLaunchExecutor {
     pub fn new() -> Self {
+        let wine_binary = configured_program("DLA_WINE_BINARY", "wine");
         Self {
-            wine_binary: configured_program("DLA_WINE_BINARY", "wine"),
+            wine32_binary: (wine_binary == "wine").then(|| "wine32".to_owned()),
+            wine_binary,
             gamescope_binary: gamescope_binary(),
             locale: None,
+            magpie: None,
         }
     }
 
@@ -103,39 +115,70 @@ impl DesktopLaunchExecutor {
         self
     }
 
+    /// Shows the works the player gave a Resolution enlarged through Magpie,
+    /// on Windows.
+    pub fn with_magpie(mut self, magpie: Magpie) -> Self {
+        self.magpie = Some(magpie);
+        self
+    }
+
     #[cfg(test)]
     fn with_wine_binary(wine_binary: impl Into<String>) -> Self {
         Self {
             wine_binary: wine_binary.into(),
+            wine32_binary: None,
             gamescope_binary: "gamescope".to_owned(),
             locale: None,
+            magpie: None,
         }
     }
 }
 
 impl DesktopLaunchExecutor {
+    /// A 32-bit game goes to the 32-bit Wine loader when the system has one
+    /// beside `wine` (Ubuntu's `wine32`). `wine` there is the 64-bit loader,
+    /// which runs a 32-bit game through Wine's new WoW64 mode, where its
+    /// OpenGL Direct3D drew a WOLF RPG Editor game at one frame a second.
+    fn wine_program(&self, target: &Path) -> &str {
+        match &self.wine32_binary {
+            Some(wine32) if is_32_bit_windows_program(target) && program_found(wine32) => wine32,
+            _ => &self.wine_binary,
+        }
+    }
+
     fn command(
         &self,
         adapter: LaunchAdapter,
         target: &Path,
-        window_scale: Option<WindowScale>,
-        refresh_rate: Option<u32>,
+        enlargement: Option<Enlargement>,
         session: DisplaySession,
     ) -> Command {
         let (program, arguments): (&OsStr, Vec<&OsStr>) = match adapter {
             LaunchAdapter::WindowsNative | LaunchAdapter::LinuxNative => {
                 (target.as_os_str(), vec![])
             }
-            LaunchAdapter::LinuxWine => (OsStr::new(&self.wine_binary), vec![target.as_os_str()]),
+            LaunchAdapter::LinuxWine => (
+                OsStr::new(self.wine_program(target)),
+                vec![target.as_os_str()],
+            ),
         };
-        let mut command = match window_scale {
+        let mut command = match enlargement {
             // gamescope gives the game a screen of its own and draws that
             // screen enlarged on the monitor, so a game that only knows how
             // to open a 640x480 window fills a 4K screen.
-            Some(scale) if adapter != LaunchAdapter::WindowsNative => {
+            Some(enlargement) if adapter != LaunchAdapter::WindowsNative => {
+                // Without mangoapp gamescope would start the game with no
+                // overlay and an error in its log.
+                let overlay = enlargement.performance_overlay && performance_overlay_available();
                 let mut command = Command::new(&self.gamescope_binary);
+                if overlay && std::env::var_os("MANGOHUD_CONFIG").is_none() {
+                    command.env("MANGOHUD_CONFIG", OVERLAY_CONFIG);
+                }
                 command
-                    .args(gamescope_arguments(scale, refresh_rate))
+                    .args(gamescope_arguments(Enlargement {
+                        performance_overlay: overlay,
+                        ..enlargement
+                    }))
                     .arg("--")
                     .args(["sh", "-c", GAME_SUPERVISOR])
                     .arg(program)
@@ -198,19 +241,54 @@ impl DesktopLaunchExecutor {
     }
 }
 
-/// Full screen with the picture fitted to the monitor through gamescope's
-/// pixel-art filter, full screen enlarged by whole numbers so every game pixel
-/// keeps one size, or a window of the chosen size with the picture fitted in.
-fn gamescope_arguments(scale: WindowScale, refresh_rate: Option<u32>) -> Vec<String> {
+/// What the player chose for a game shown through gamescope.
+#[derive(Clone, Copy, Debug)]
+struct Enlargement {
+    scale: WindowScale,
+    refresh_rate: Option<u32>,
+    picture_filter: Option<PictureFilter>,
+    performance_overlay: bool,
+    cursor_hide_delay: Option<u32>,
+}
+
+impl Enlargement {
+    fn of(plan: &LaunchExecutionPlan) -> Option<Self> {
+        plan.window_scale.map(|scale| Self {
+            scale,
+            refresh_rate: plan.refresh_rate,
+            picture_filter: plan.picture_filter,
+            performance_overlay: plan.performance_overlay,
+            cursor_hide_delay: plan.cursor_hide_delay,
+        })
+    }
+}
+
+/// Full screen with the picture fitted to the monitor, cropped to cover it or
+/// stretched over it, full screen enlarged by whole numbers so every game
+/// pixel keeps one size, or a window of the chosen size with the picture
+/// fitted in. The picture keeps hard pixels unless the player chose another
+/// filter; whole numbers always do. gamescope's pixel-art filter is a choice
+/// and not the default: at full screen on integrated graphics it drew 20
+/// frames a second where hard pixels drew 60 (measured 2026-11-11).
+fn gamescope_arguments(enlargement: Enlargement) -> Vec<String> {
+    let Enlargement {
+        scale,
+        refresh_rate,
+        picture_filter,
+        performance_overlay,
+        cursor_hide_delay,
+    } = enlargement;
     // The game paces itself by gamescope's nested display: at 120 Hz, with
     // every new frame shown at once, a 60 fps game no longer judders
     // against gamescope's own 60 Hz tick; 60 Hz stays a choice for games
     // that misbehave at the higher rate.
     let rate = refresh_rate.unwrap_or(DEFAULT_REFRESH_RATE).to_string();
     let pacing = ["--backend", "sdl", "-r", rate.as_str(), "--immediate-flips"];
-    let (output, scaler, filter): (Vec<String>, &str, &str) = match scale {
-        WindowScale::Fit => (vec!["-f".to_owned()], "fit", "pixel"),
-        WindowScale::Integer => (vec!["-f".to_owned()], "integer", "nearest"),
+    let (output, scaler): (Vec<String>, &str) = match scale {
+        WindowScale::Fit => (vec!["-f".to_owned()], "fit"),
+        WindowScale::Fill => (vec!["-f".to_owned()], "fill"),
+        WindowScale::Stretch => (vec!["-f".to_owned()], "stretch"),
+        WindowScale::Integer => (vec!["-f".to_owned()], "integer"),
         WindowScale::Window { width, height } => (
             vec![
                 "-W".to_owned(),
@@ -219,15 +297,43 @@ fn gamescope_arguments(scale: WindowScale, refresh_rate: Option<u32>) -> Vec<Str
                 height.to_string(),
             ],
             "fit",
-            "pixel",
         ),
+    };
+    let (filter, sharpness) = match (scale, picture_filter) {
+        (WindowScale::Integer, _) => ("nearest", None),
+        (_, None) => ("nearest", None),
+        (_, Some(PictureFilter::EvenPixels)) => ("pixel", None),
+        (_, Some(PictureFilter::Smooth)) => ("linear", None),
+        (_, Some(PictureFilter::Fsr(sharpness))) => ("fsr", Some(sharpness)),
+        (_, Some(PictureFilter::Nis(sharpness))) => ("nis", Some(sharpness)),
     };
     pacing
         .map(str::to_owned)
         .into_iter()
         .chain(output)
         .chain(["-S", scaler, "-F", filter].map(str::to_owned))
+        .chain(
+            sharpness
+                .into_iter()
+                .flat_map(|sharpness| ["--sharpness", gamescope_sharpness(sharpness)])
+                .map(str::to_owned),
+        )
+        .chain(performance_overlay.then(|| "--mangoapp".to_owned()))
+        .chain(
+            cursor_hide_delay
+                .into_iter()
+                .flat_map(|delay| ["--hide-cursor-delay".to_owned(), delay.to_string()]),
+        )
         .collect()
+}
+
+/// gamescope counts sharpness from 0, the most, to 20, the least.
+fn gamescope_sharpness(sharpness: Sharpness) -> &'static str {
+    match sharpness {
+        Sharpness::Strong => "0",
+        Sharpness::Medium => "5",
+        Sharpness::Soft => "10",
+    }
 }
 
 const DEFAULT_REFRESH_RATE: u32 = 120;
@@ -280,9 +386,43 @@ fn gamescope_binary() -> String {
     configured_program("DLA_GAMESCOPE_BINARY", "gamescope")
 }
 
-/// Whether this computer can enlarge a game's window: Linux with gamescope.
-pub fn window_scale_available() -> bool {
-    cfg!(target_os = "linux") && program_found(&gamescope_binary())
+/// The overlay goes top right, where MangoHud alone would put it top left.
+/// `read_cfg` keeps the player's own MangoHud file in force for the rest.
+const OVERLAY_CONFIG: &str = "read_cfg,position=top-right";
+
+/// Whether gamescope can draw the performance overlay: Linux with MangoHud's
+/// `mangoapp`, which gamescope starts itself.
+pub fn performance_overlay_available() -> bool {
+    cfg!(target_os = "linux") && program_found("mangoapp")
+}
+
+/// The program that shows a game's window enlarged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Enlarger {
+    Gamescope,
+    Magpie,
+}
+
+impl Enlarger {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Gamescope => "gamescope",
+            Self::Magpie => "magpie",
+        }
+    }
+}
+
+/// What can enlarge a game's window on this computer: gamescope on Linux
+/// where it is installed, Magpie on Windows, which the launcher fetches
+/// itself.
+pub fn enlarger() -> Option<Enlarger> {
+    if cfg!(target_os = "windows") {
+        Some(Enlarger::Magpie)
+    } else if cfg!(target_os = "linux") && program_found(&gamescope_binary()) {
+        Some(Enlarger::Gamescope)
+    } else {
+        None
+    }
 }
 
 fn program_found(program: &str) -> bool {
@@ -293,6 +433,26 @@ fn program_found(program: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|paths| {
         std::env::split_paths(&paths).any(|directory| directory.join(program).is_file())
     })
+}
+
+fn is_32_bit_windows_program(path: &Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+
+    const I386: u16 = 0x014c;
+    let read = || -> std::io::Result<bool> {
+        let mut file = std::fs::File::open(path)?;
+        let mut dos = [0u8; 0x40];
+        file.read_exact(&mut dos)?;
+        if &dos[..2] != b"MZ" {
+            return Ok(false);
+        }
+        let pe = u32::from_le_bytes([dos[0x3c], dos[0x3d], dos[0x3e], dos[0x3f]]);
+        file.seek(SeekFrom::Start(u64::from(pe)))?;
+        let mut header = [0u8; 6];
+        file.read_exact(&mut header)?;
+        Ok(&header[..4] == b"PE\0\0" && u16::from_le_bytes([header[4], header[5]]) == I386)
+    };
+    read().unwrap_or(false)
 }
 
 fn wine_missing(wine_binary: &str) -> LaunchError {
@@ -360,6 +520,8 @@ impl LaunchExecutor for DesktopLaunchExecutor {
             plan.expected_sha256.as_deref(),
         )?;
         let adapter = select_adapter(plan)?;
+        #[cfg(target_os = "windows")]
+        let (target, drive) = plain_drive::PlainDrive::for_game(target);
         let working_directory = target
             .parent()
             .ok_or_else(|| LaunchError::adapter("the executable has no valid working directory"))?;
@@ -368,43 +530,81 @@ impl LaunchExecutor for DesktopLaunchExecutor {
             && adapter == LaunchAdapter::WindowsNative
             && let Some(locale) = &self.locale
         {
+            let process = start_in_japanese(locale, &target, working_directory)?;
             return Ok(LaunchExecutionResult {
                 adapter,
-                process: start_in_japanese(locale, &target, working_directory)?,
+                process: plain_drive::on_drive(self.enlarged_through_magpie(plan, process), drive),
             });
         }
         let enlarged = plan.window_scale.is_some() && adapter != LaunchAdapter::WindowsNative;
-        if enlarged && adapter == LaunchAdapter::LinuxWine && !program_found(&self.wine_binary) {
-            return Err(wine_missing(&self.wine_binary));
+        let wine = self.wine_program(&target);
+        if enlarged && adapter == LaunchAdapter::LinuxWine && !program_found(wine) {
+            return Err(wine_missing(wine));
         }
-        let mut command = self.command(
-            adapter,
-            &target,
-            plan.window_scale,
-            plan.refresh_rate,
-            display_session(),
-        );
-        let child = command
-            .current_dir(working_directory)
-            .spawn()
-            .map_err(|error| {
-                if error.kind() != std::io::ErrorKind::NotFound {
-                    LaunchError::adapter(format!("could not start {}: {error}", target.display()))
-                } else if enlarged {
-                    LaunchError::adapter(format!(
-                        "gamescope is required to enlarge this game's window, but '{}' was not found",
-                        self.gamescope_binary
-                    ))
-                } else if adapter == LaunchAdapter::LinuxWine {
-                    wine_missing(&self.wine_binary)
-                } else {
-                    LaunchError::adapter(format!("could not start {}: {error}", target.display()))
+        let start = {
+            let executor = self.clone();
+            let target = target.clone();
+            let working_directory = working_directory.to_path_buf();
+            let enlargement = Enlargement::of(plan);
+            let session = display_session();
+            move |watched: bool| {
+                let mut command = executor.command(adapter, &target, enlargement, session);
+                command.current_dir(&working_directory);
+                if watched {
+                    command.stderr(Stdio::piped());
                 }
-            })?;
-        Ok(LaunchExecutionResult {
-            adapter,
-            process: Box::new(DesktopManagedProcess { child }),
-        })
+                command.spawn()
+            }
+        };
+        let process: std::io::Result<Box<dyn ManagedLaunchProcess>> = if enlarged {
+            enlarged::EnlargedProcess::start(Box::new(move || start(true)))
+                .map(|process| Box::new(process) as Box<dyn ManagedLaunchProcess>)
+        } else {
+            start(false).map(|child| {
+                Box::new(DesktopManagedProcess { child }) as Box<dyn ManagedLaunchProcess>
+            })
+        };
+        let process = process.map_err(|error| {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                LaunchError::adapter(format!("could not start {}: {error}", target.display()))
+            } else if enlarged {
+                LaunchError::adapter(format!(
+                    "gamescope is required to enlarge this game's window, but '{}' was not found",
+                    self.gamescope_binary
+                ))
+            } else if adapter == LaunchAdapter::LinuxWine {
+                wine_missing(wine)
+            } else {
+                LaunchError::adapter(format!("could not start {}: {error}", target.display()))
+            }
+        })?;
+        #[cfg(target_os = "windows")]
+        let process = plain_drive::on_drive(self.enlarged_through_magpie(plan, process), drive);
+        Ok(LaunchExecutionResult { adapter, process })
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl DesktopLaunchExecutor {
+    /// Magpie works on a window that is already there, so the game starts as
+    /// it always does and is followed until its window opens.
+    fn enlarged_through_magpie(
+        &self,
+        plan: &LaunchExecutionPlan,
+        game: Box<dyn ManagedLaunchProcess>,
+    ) -> Box<dyn ManagedLaunchProcess> {
+        match (&self.magpie, plan.window_scale) {
+            (Some(magpie), Some(scale)) => Box::new(magpie::windows::EnlargedGame::follow(
+                game,
+                magpie.clone(),
+                magpie::settings::Shown {
+                    scale,
+                    picture_filter: plan.picture_filter,
+                    cursor_hide_delay: plan.cursor_hide_delay,
+                },
+            )),
+            _ => game,
+        }
     }
 }
 
@@ -598,11 +798,13 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::symlink;
 
+    #[cfg(target_os = "linux")]
     use dla_domain::installation::{InstallationId, InstallationPlatform, LaunchActionKind};
     use tempfile::tempdir;
 
     use super::*;
 
+    #[cfg(target_os = "linux")]
     fn plan(root: &Path, target: &str) -> LaunchExecutionPlan {
         LaunchExecutionPlan {
             installation_id: InstallationId("installation-1".to_owned()),
@@ -614,6 +816,9 @@ mod tests {
             japanese_locale: false,
             window_scale: None,
             refresh_rate: None,
+            picture_filter: None,
+            performance_overlay: false,
+            cursor_hide_delay: None,
         }
     }
 
@@ -680,13 +885,47 @@ mod tests {
         );
     }
 
+    fn windows_program(machine: u16) -> tempfile::NamedTempFile {
+        use std::io::Write;
+
+        let mut bytes = vec![0u8; 0x80];
+        bytes[..2].copy_from_slice(b"MZ");
+        bytes[0x3c..0x40].copy_from_slice(&0x40u32.to_le_bytes());
+        bytes[0x40..0x44].copy_from_slice(b"PE\0\0");
+        bytes[0x44..0x46].copy_from_slice(&machine.to_le_bytes());
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(&bytes).unwrap();
+        file
+    }
+
+    #[test]
+    fn sends_32_bit_games_to_the_32_bit_wine_loader_when_there_is_one() {
+        let loader = tempfile::NamedTempFile::new().unwrap();
+        let wine32 = loader.path().to_str().unwrap().to_owned();
+        let mut executor = DesktopLaunchExecutor::with_wine_binary("wine");
+        executor.wine32_binary = Some(wine32.clone());
+        let game32 = windows_program(0x014c);
+        let game64 = windows_program(0x8664);
+
+        assert_eq!(executor.wine_program(game32.path()), wine32);
+        assert_eq!(executor.wine_program(game64.path()), "wine");
+        assert_eq!(
+            executor.wine_program(Path::new("/games/Missing.exe")),
+            "wine"
+        );
+
+        executor.wine32_binary = Some("/missing/wine32".to_owned());
+        assert_eq!(executor.wine_program(game32.path()), "wine");
+        executor.wine32_binary = None;
+        assert_eq!(executor.wine_program(game32.path()), "wine");
+    }
+
     #[test]
     fn runs_wine_games_in_japanese_and_leaves_other_games_alone() {
         let executor = DesktopLaunchExecutor::with_wine_binary("wine");
         let wine = executor.command(
             LaunchAdapter::LinuxWine,
             Path::new("/games/Game.exe"),
-            None,
             None,
             DisplaySession::Wayland,
         );
@@ -706,7 +945,6 @@ mod tests {
             LaunchAdapter::LinuxNative,
             Path::new("/games/game"),
             None,
-            None,
             DisplaySession::Wayland,
         );
         assert_eq!(native.get_envs().count(), 0);
@@ -720,8 +958,7 @@ mod tests {
         let fit = executor.command(
             LaunchAdapter::LinuxWine,
             Path::new("/games/Game.exe"),
-            Some(WindowScale::Fit),
-            None,
+            Some(shown(WindowScale::Fit)),
             DisplaySession::Wayland,
         );
         assert_eq!(fit.get_program(), "gamescope");
@@ -737,7 +974,7 @@ mod tests {
                 "-S",
                 "fit",
                 "-F",
-                "pixel",
+                "nearest",
                 "--",
                 "sh",
                 "-c",
@@ -761,8 +998,10 @@ mod tests {
         let integer = executor.command(
             LaunchAdapter::LinuxNative,
             Path::new("/games/game"),
-            Some(WindowScale::Integer),
-            Some(60),
+            Some(Enlargement {
+                refresh_rate: Some(60),
+                ..shown(WindowScale::Integer)
+            }),
             DisplaySession::X11,
         );
         assert_eq!(
@@ -792,11 +1031,10 @@ mod tests {
         let sized = executor.command(
             LaunchAdapter::LinuxWine,
             Path::new("/games/Game.exe"),
-            Some(WindowScale::Window {
+            Some(shown(WindowScale::Window {
                 width: 1920,
                 height: 1440,
-            }),
-            None,
+            })),
             DisplaySession::Wayland,
         );
         assert_eq!(
@@ -817,10 +1055,101 @@ mod tests {
         let windows = executor.command(
             LaunchAdapter::WindowsNative,
             Path::new("C:/games/Game.exe"),
-            Some(WindowScale::Fit),
-            None,
+            Some(shown(WindowScale::Fit)),
             DisplaySession::Wayland,
         );
         assert_eq!(windows.get_program(), "C:/games/Game.exe");
+    }
+
+    #[test]
+    fn draws_the_enlarged_picture_the_way_the_player_chose() {
+        let arguments = |scale, picture_filter| {
+            gamescope_arguments(Enlargement {
+                picture_filter,
+                ..shown(scale)
+            })
+            .into_iter()
+            .skip(5)
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            arguments(WindowScale::Fill, None),
+            ["-f", "-S", "fill", "-F", "nearest"]
+        );
+        assert_eq!(
+            arguments(WindowScale::Fit, Some(PictureFilter::EvenPixels)),
+            ["-f", "-S", "fit", "-F", "pixel"]
+        );
+        assert_eq!(
+            arguments(WindowScale::Stretch, Some(PictureFilter::Smooth)),
+            ["-f", "-S", "stretch", "-F", "linear"]
+        );
+        assert_eq!(
+            arguments(
+                WindowScale::Fit,
+                Some(PictureFilter::Fsr(Sharpness::Strong))
+            ),
+            ["-f", "-S", "fit", "-F", "fsr", "--sharpness", "0"]
+        );
+        assert_eq!(
+            arguments(
+                WindowScale::Window {
+                    width: 1280,
+                    height: 960
+                },
+                Some(PictureFilter::Nis(Sharpness::Soft))
+            ),
+            [
+                "-W",
+                "1280",
+                "-H",
+                "960",
+                "-S",
+                "fit",
+                "-F",
+                "nis",
+                "--sharpness",
+                "10"
+            ]
+        );
+        // Whole steps keep hard pixels whatever was chosen.
+        assert_eq!(
+            arguments(
+                WindowScale::Integer,
+                Some(PictureFilter::Fsr(Sharpness::Medium))
+            ),
+            ["-f", "-S", "integer", "-F", "nearest"]
+        );
+    }
+
+    #[test]
+    fn adds_the_performance_overlay_and_the_cursor_delay_when_chosen() {
+        let plain = gamescope_arguments(shown(WindowScale::Fit));
+        assert!(!plain.iter().any(|argument| argument == "--mangoapp"));
+        assert!(
+            !plain
+                .iter()
+                .any(|argument| argument == "--hide-cursor-delay")
+        );
+
+        let chosen = gamescope_arguments(Enlargement {
+            performance_overlay: true,
+            cursor_hide_delay: Some(3000),
+            ..shown(WindowScale::Fit)
+        });
+        assert_eq!(
+            chosen[chosen.len() - 3..],
+            ["--mangoapp", "--hide-cursor-delay", "3000"]
+        );
+    }
+
+    fn shown(scale: WindowScale) -> Enlargement {
+        Enlargement {
+            scale,
+            refresh_rate: None,
+            picture_filter: None,
+            performance_overlay: false,
+            cursor_hide_delay: None,
+        }
     }
 }

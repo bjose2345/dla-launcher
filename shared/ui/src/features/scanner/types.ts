@@ -73,11 +73,21 @@ export interface ScannerRootPreferenceGateway {
   preparePreferredRoot(): Promise<SelectedScanRoot>;
 }
 
+/** How much a scan has to check, in files' bytes, and how much of it is checked. */
+export interface ScanExtent {
+  totalFiles: number;
+  totalBytes: number;
+  checkedBytes: number;
+}
+
 export interface ScanProgress {
   sessionId: string;
   status: ScanStatus;
   counters: ScanCounters;
+  /** The file being read, or the one checked last. */
   currentRelativePath: string | null;
+  /** Known once the folder has been counted; absent where the scanner does not count. */
+  extent?: ScanExtent | null;
 }
 
 export type ScanFindingKind = "folder" | "archive" | "file";
@@ -151,7 +161,19 @@ export interface ScanInstall {
   workCode: string | null;
   status: ScanInstallStatus;
   detail: string | null;
+  /** Set on a failed install whose folder is already in the install folder. */
+  conflict: ScanInstallConflict | null;
 }
+
+export interface ScanInstallConflict {
+  folderName: string;
+  keepBothName: string | null;
+  /** False for the folder of another work in the Library. */
+  replaceable: boolean;
+}
+
+/** The user's answer to a taken folder: install beside it, or in its place. */
+export type TakenFolderChoice = "keep_both" | "replace_existing";
 
 export interface ScanInstallView {
   /** Counts changes; the newest view wins when replies and events cross. */
@@ -176,7 +198,7 @@ export interface ScanInstallGateway {
   readInstalls(): Promise<ScanInstallView>;
   subscribeInstalls(listener: (view: ScanInstallView) => void): Promise<() => void>;
   selectInstallFolder(): Promise<ScanInstallView | null>;
-  installArchive(installationId: string): Promise<ScanInstallView>;
+  installArchive(installationId: string, takenFolder?: TakenFolderChoice): Promise<ScanInstallView>;
   cancelInstall(installationId: string): Promise<ScanInstallView>;
 }
 

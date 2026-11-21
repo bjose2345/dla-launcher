@@ -29,6 +29,7 @@ export function TranslationSettingsSection({ gateway }: { gateway: TranslationGa
   const [model, setModel] = useState<string>(localModelDefaults.model);
   const [freePlan, setFreePlan] = useState(true);
   const [deeplKey, setDeeplKey] = useState("");
+  const [modelKey, setModelKey] = useState("");
   const [help, setHelp] = useState(false);
 
   // The saved settings fill the fields once they arrive.
@@ -52,17 +53,19 @@ export function TranslationSettingsSection({ gateway }: { gateway: TranslationGa
   };
   const save = useMutation({
     mutationFn: ({ next, key }: { next: TranslatorSettings; key?: string }) =>
-      gateway.saveSettings({ translator: next, deeplKey: key }),
+      gateway.saveSettings({ translator: next, key }),
     onSuccess: (saved: TranslationSettings) => {
       queryClient.setQueryData(translationSettingsKey, saved);
       void queryClient.invalidateQueries({ queryKey: ["translation", "game"] });
     },
   });
   // A translator that works is the one the player wants: it is kept.
+  const typedKey = () => (kind === "deepl" ? deeplKey : modelKey).trim() || undefined;
   const test = useMutation({
-    mutationFn: () => gateway.testTranslator(translator(), deeplKey.trim() || undefined),
-    onSuccess: () => save.mutate({ next: translator(), key: deeplKey.trim() || undefined }),
+    mutationFn: () => gateway.testTranslator(translator(), typedKey()),
+    onSuccess: () => save.mutate({ next: translator(), key: typedKey() }),
   });
+  const keySaved = settings.data?.translator?.kind === kind && settings.data.keySaved;
   const saveChange = (next: Partial<{ kind: Kind; address: string; model: string; freePlan: boolean }>) => {
     test.reset();
     save.mutate({ next: translator(next) });
@@ -129,12 +132,44 @@ export function TranslationSettingsSection({ gateway }: { gateway: TranslationGa
               />
             )}
           </Field>
+          <Field label={t("settings.modelKey")} help={t(keySaved ? "settings.modelKeySaved" : "settings.modelKeyHelp")}>
+            {(props) => (
+              <input
+                {...props}
+                className="library-manage-input"
+                type="password"
+                value={modelKey}
+                autoComplete="off"
+                placeholder={keySaved ? "••••••••" : undefined}
+                onChange={(event) => setModelKey(event.target.value)}
+                onBlur={() => {
+                  if (modelKey.trim()) {
+                    test.reset();
+                    save.mutate({ next: translator(), key: modelKey.trim() });
+                  }
+                }}
+              />
+            )}
+          </Field>
+          {keySaved ? (
+            <button
+              className="library-manage-link"
+              type="button"
+              onClick={() => {
+                setModelKey("");
+                test.reset();
+                save.mutate({ next: translator(), key: "" });
+              }}
+            >
+              {t("settings.modelKeyRemove")}
+            </button>
+          ) : null}
         </div>
       ) : (
         <div className="translation-settings-fields">
           <Field
             label={t("settings.deeplKey")}
-            help={t(settings.data?.deeplKeySaved ? "settings.deeplKeySaved" : "settings.deeplKeyHelp")}
+            help={t(keySaved ? "settings.deeplKeySaved" : "settings.deeplKeyHelp")}
           >
             {(props) => (
               <input
@@ -143,7 +178,7 @@ export function TranslationSettingsSection({ gateway }: { gateway: TranslationGa
                 type="password"
                 value={deeplKey}
                 autoComplete="off"
-                placeholder={settings.data?.deeplKeySaved ? "••••••••" : undefined}
+                placeholder={keySaved ? "••••••••" : undefined}
                 onChange={(event) => setDeeplKey(event.target.value)}
                 onBlur={() => {
                   if (deeplKey.trim()) {

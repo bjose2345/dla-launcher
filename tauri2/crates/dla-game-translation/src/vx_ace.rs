@@ -1,254 +1,24 @@
-//! RPG Maker VX Ace: the launcher's script goes first in the game's scripts.
-//! With an archive, the archive's scripts entry is patched in place
-//! (`rgss3a`); a game without one has its `Data/Scripts.rvdata2` replaced and
-//! the original kept, like MV and MZ's plugin list.
-
-use std::{collections::BTreeMap, fs, io, io::Write, path::Path};
-
-use dla_application::game_translation::GameTranslationError;
-use dla_domain::{
-    installation::RelativePath,
-    translation::{GameFileChange, GameFileChangeKind},
-};
-use flate2::{Compression, write::ZlibEncoder};
-use sha2::{Digest, Sha256};
-
-use crate::{
-    rgss3a::{self, Archive},
-    ruby_marshal::{self, Value, Writer},
-    vx_ace_data::{OUR_SECTION, archive_in},
-};
+//! RPG Maker VX Ace (RGSS3, Ruby 1.9): the launcher's script for it, and a
+//! check on a copy of a real game. Putting the script into a game is
+//! `rgss::install`.
 
 pub const SCRIPT: &str = include_str!("../plugins/rpg-maker-vx-ace/DLA_Translate.rb");
-const SECTION_TITLE: &str = "DLA Translation";
-pub const SCRIPTS: &str = "Data/Scripts.rvdata2";
 pub const TRANSLATIONS: &str = "translations.rvdata2";
-pub const PLACE: &str = "place.txt";
-
-pub fn fingerprint() -> [u8; 32] {
-    Sha256::digest(SCRIPT.as_bytes()).into()
-}
-
-/// Puts the script first in the game's scripts. `game` is the folder with
-/// `Game.exe`; `relative` turns a path in it into one the change records.
-pub fn install(
-    game: &Path,
-    relative: impl Fn(&str) -> Result<RelativePath, GameTranslationError>,
-    previous: &[GameFileChange],
-) -> Result<GameFileChange, GameTranslationError> {
-    match archive_in(game).map_err(GameTranslationError::folder)? {
-        Some(path) => {
-            let name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| {
-                    GameTranslationError::folder("the archive's name is not readable")
-                })?;
-            let patch = patch_archive(&path).map_err(|error| {
-                GameTranslationError::folder(format!("{name} could not be changed: {error}"))
-            })?;
-            Ok(GameFileChange {
-                path: relative(name)?,
-                kind: GameFileChangeKind::Patched {
-                    at: patch.fields_at,
-                    original: patch.original_fields,
-                    original_bytes: patch.original_bytes,
-                    written_sha256: patch.written_sha256,
-                    written_bytes: patch.written_bytes,
-                },
-            })
-        }
-        None => replace_scripts_file(game, relative, previous),
-    }
-}
-
-fn patch_archive(path: &Path) -> io::Result<rgss3a::Patch> {
-    let fingerprint = fingerprint();
-    if let Some(patch) = rgss3a::find_patch(path)? {
-        if patch.fingerprint == fingerprint && rgss3a::patch_in_use(path, &patch)? {
-            return Ok(patch);
-        }
-        // An older script, or a patch left halfway.
-        rgss3a::remove_patch(path)?;
-    }
-    let archive = Archive::open(path)?;
-    let entry = archive.entry(SCRIPTS).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            "the archive has no Data\\Scripts.rvdata2",
-        )
-    })?;
-    let scripts = with_our_section(&archive.read(path, entry)?)?;
-    rgss3a::add_patch(path, &scripts, fingerprint)
-}
-
-fn replace_scripts_file(
-    game: &Path,
-    relative: impl Fn(&str) -> Result<RelativePath, GameTranslationError>,
-    previous: &[GameFileChange],
-) -> Result<GameFileChange, GameTranslationError> {
-    let path = game.join(SCRIPTS);
-    let recorded = relative(SCRIPTS)?;
-    let original = match previous.iter().find(|change| change.path == recorded) {
-        Some(GameFileChange {
-            kind: GameFileChangeKind::Changed { original, .. },
-            ..
-        }) => original.clone(),
-        _ => fs::read(&path).map_err(|error| {
-            GameTranslationError::folder(format!("{SCRIPTS} could not be read: {error}"))
-        })?,
-    };
-    let scripts = with_our_section(&original).map_err(GameTranslationError::folder)?;
-    let written = hex::encode(Sha256::digest(&scripts));
-    if fs::read(&path).ok().as_deref() != Some(scripts.as_slice()) {
-        crate::replace(&path, &scripts)?;
-    }
-    Ok(GameFileChange {
-        path: recorded,
-        kind: GameFileChangeKind::Changed {
-            original,
-            written_sha256: written,
-            written_bytes: scripts.len() as u64,
-        },
-    })
-}
-
-/// The game's script sections with the launcher's first; an earlier copy of
-/// the launcher's is dropped.
-pub fn with_our_section(original: &[u8]) -> io::Result<Vec<u8>> {
-    let invalid = |message: &str| io::Error::new(io::ErrorKind::InvalidData, message.to_owned());
-    let sections = ruby_marshal::read(original).map_err(|error| invalid(&error.to_string()))?;
-    let sections = sections
-        .items()
-        .iter()
-        .filter(|section| section.items().first().and_then(Value::as_integer) != Some(OUR_SECTION))
-        .collect::<Vec<_>>();
-    let mut code = ZlibEncoder::new(Vec::new(), Compression::default());
-    code.write_all(SCRIPT.as_bytes())?;
-    let code = code.finish()?;
-
-    let mut writer = Writer::new();
-    writer.array(sections.len() + 1);
-    writer.array(3);
-    writer.integer(OUR_SECTION);
-    writer.text(SECTION_TITLE);
-    writer.binary(&code);
-    for section in sections {
-        let parts = section.items();
-        let (Some(id), Some(title), Some(code)) = (
-            parts.first().and_then(Value::as_integer),
-            parts.get(1).and_then(Value::as_bytes),
-            parts.get(2).and_then(Value::as_bytes),
-        ) else {
-            return Err(invalid(
-                "a script section is laid out in a way the launcher does not know",
-            ));
-        };
-        writer.array(3);
-        writer.integer(id);
-        match std::str::from_utf8(title) {
-            Ok(title) => writer.text(title),
-            Err(_) => writer.binary(title),
-        }
-        writer.binary(code);
-    }
-    Ok(writer.finish())
-}
-
-/// The translations as the script reads them: a Ruby hash with `texts` and
-/// `names`, each from the Japanese to the English, and `kept`, the texts the
-/// game's scripts use, whose English is only drawn: the data keeps the
-/// Japanese the scripts compare.
-pub fn translations_file(
-    texts: &BTreeMap<String, String>,
-    names: &BTreeMap<String, String>,
-    kept: &[String],
-) -> Vec<u8> {
-    let mut writer = Writer::new();
-    writer.hash(4);
-    writer.text("version");
-    writer.integer(1);
-    for (key, entries) in [("texts", texts), ("names", names)] {
-        writer.text(key);
-        writer.hash(entries.len());
-        for (japanese, english) in entries {
-            writer.text(japanese);
-            writer.text(english);
-        }
-    }
-    writer.text("kept");
-    writer.array(kept.len());
-    for text in kept {
-        writer.text(text);
-    }
-    writer.finish()
-}
-
-/// Where the player is, as the script last wrote it.
-pub fn place(data_folder: &Path) -> Option<String> {
-    let place = fs::read_to_string(data_folder.join(PLACE)).ok()?;
-    let place = place.trim();
-    (place.starts_with("map:") && place.len() < 32).then(|| place.to_owned())
-}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::vx_ace_data::{inflate, script_sections};
+    use std::{fs, io::Write};
 
-    fn game_scripts() -> Vec<u8> {
-        let section = |writer: &mut Writer, id, title: &str, source: &str| {
-            let mut code = ZlibEncoder::new(Vec::new(), Compression::default());
-            code.write_all(source.as_bytes()).unwrap();
-            writer.array(3);
-            writer.integer(id);
-            writer.text(title);
-            writer.binary(&code.finish().unwrap());
-        };
-        let mut writer = Writer::new();
-        writer.array(2);
-        section(
-            &mut writer,
-            12_345,
-            "Vocab",
-            "module Vocab\n  Attack = \"%sの攻撃！\"\nend\n",
-        );
-        section(
-            &mut writer,
-            67_890,
-            "Main",
-            "rgss_main { SceneManager.run }\n",
-        );
-        writer.finish()
-    }
+    use flate2::{Compression, write::ZlibEncoder};
+    use sha2::{Digest, Sha256};
 
-    #[test]
-    fn puts_the_script_first_once_and_keeps_the_games_sections() {
-        let patched = with_our_section(&game_scripts()).unwrap();
-        let again = with_our_section(&patched).unwrap();
-        assert_eq!(again, patched);
-        let sections = ruby_marshal::read(&patched).unwrap();
-        let first = &sections.items()[0];
-        assert_eq!(first.items()[0].as_integer(), Some(OUR_SECTION));
-        assert_eq!(first.items()[1].as_str(), Some(SECTION_TITLE));
-        assert_eq!(
-            inflate(first.items()[2].as_bytes().unwrap()).as_deref(),
-            Some(SCRIPT)
-        );
-        assert_eq!(
-            script_sections(&sections),
-            vec![
-                (
-                    "Vocab".to_owned(),
-                    "module Vocab\n  Attack = \"%sの攻撃！\"\nend\n".to_owned()
-                ),
-                (
-                    "Main".to_owned(),
-                    "rgss_main { SceneManager.run }\n".to_owned()
-                ),
-            ]
-        );
-    }
+    use crate::{
+        rgss::{Generation, OUR_SECTION, archive_in},
+        rgss3a::{self, Archive},
+        ruby_marshal::{self, Writer},
+    };
+
+    const SCRIPTS: &str = "Data/Scripts.rvdata2";
 
     /// Records facts only, never the game's text: whether the menus and the
     /// messages came out in English, how wide each message drew against the
@@ -302,6 +72,20 @@ class Object
           japanese = $data_system.terms.commands.compact.count { |text| text =~ DLA_Probe::JAPANESE }
           vocab = Vocab.constants.count { |name| Vocab.const_get(name).to_s =~ DLA_Probe::JAPANESE }
           DLA_Probe.log("title: #{japanese} menu commands and #{vocab} battle messages still Japanese")
+          # Each English image is what the game gets where it asks for its own.
+          (DLA_Translate.instance_variable_get(:@images) || {}).each do |key, file|
+            english = Bitmap.new(file)
+            got = Bitmap.new("Graphics/" + key + ".png")
+            DLA_Translate.instance_variable_set(:@shown, false)
+            own = Bitmap.new("Graphics/" + key)
+            DLA_Translate.instance_variable_set(:@shown, true)
+            points = (0...48).to_a.product((0...64).to_a).map { |row, column| [got.width * column / 64, got.height * row / 48] }
+            pixel = lambda { |bitmap, at| color = bitmap.get_pixel(*at); [color.red, color.green, color.blue, color.alpha] }
+            DLA_Probe.log("image #{key}: #{got.width}x#{got.height}, the game's own #{own.width}x#{own.height}, " +
+              "unlike the English file at #{points.count { |at| pixel.call(got, at) != pixel.call(english, at) }} points, " +
+              "unlike the game's own at #{points.count { |at| pixel.call(got, at) != pixel.call(own, at) }} of #{points.size}")
+            [english, got, own].each(&:dispose)
+          end
           [["items", $data_items], ["weapons", $data_weapons], ["armors", $data_armors]].each do |label, table|
             rows = table.compact
             left = rows.select { |row| row.name =~ DLA_Probe::JAPANESE }
@@ -491,9 +275,11 @@ end
 "##;
 
     /// On a copy of a VX Ace game (`DLA_VXACE_GAME`): reads its texts,
-    /// patches its archive twice, hands it made-up English and, with
-    /// `DLA_VXACE_PROBE=1`, adds the probe after the launcher's script. Run
-    /// the copy, then again with `DLA_VXACE_REMOVE=1` to take it all off.
+    /// patches its archive twice, hands it made-up English, the English
+    /// images of a folder (`DLA_VXACE_PICTURES`, laid out as the game's
+    /// `Graphics`) and, with `DLA_VXACE_PROBE=1`, adds the probe after the
+    /// launcher's script. Run the copy, then again with `DLA_VXACE_REMOVE=1`
+    /// to take it all off.
     #[test]
     #[ignore = "needs a copy of an RPG Maker VX Ace game"]
     fn smoke_test_on_a_game_copy() {
@@ -514,7 +300,7 @@ end
             engine: GameEngine::RpgMakerVxAce,
             root: None,
         };
-        let archive = archive_in(&game).unwrap().unwrap();
+        let archive = archive_in(&game, Generation::VxAce).unwrap().unwrap();
         if std::env::var_os("DLA_VXACE_REMOVE").is_some() {
             let changes = folder.install(root, &detection, &[]).unwrap();
             folder.remove(root, &changes).unwrap();
@@ -549,7 +335,32 @@ end
             }
             english
         };
+        let pictures = std::env::var_os("DLA_VXACE_PICTURES")
+            .map(std::path::PathBuf::from)
+            .map(|source| {
+                walkdir::WalkDir::new(&source)
+                    .sort_by_file_name()
+                    .into_iter()
+                    .filter_map(Result::ok)
+                    .filter(|entry| entry.file_type().is_file())
+                    .map(|entry| dla_application::translation::TranslatedPicture {
+                        path: entry
+                            .path()
+                            .strip_prefix(&source)
+                            .unwrap()
+                            .to_str()
+                            .unwrap()
+                            .strip_suffix(".png")
+                            .unwrap()
+                            .to_owned(),
+                        png: fs::read(entry.path()).unwrap(),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let translations = WorkTranslations {
+            speakers: Vec::new(),
+            pictures,
             texts: texts
                 .texts
                 .iter()
@@ -575,6 +386,14 @@ end
             prepared: None,
             pack: None,
         };
+        for picture in &translations.pictures {
+            assert!(
+                folder.has_image(root, &translation, &picture.path).unwrap(),
+                "the game has no image {}",
+                picture.path
+            );
+        }
+        eprintln!("images in English {}", translations.pictures.len());
         let session = GameSession {
             work: "smoke".to_owned(),
             shown: true,
@@ -615,35 +434,5 @@ end
 
     fn regex_lite_count(text: &str) -> usize {
         text.matches("%s").count() + text.matches("%d").count()
-    }
-
-    #[test]
-    fn writes_translations_ruby_reads_as_utf8_hashes() {
-        let texts = BTreeMap::from([("剣".to_owned(), "Sword".to_owned())]);
-        let names = BTreeMap::from([("ルーク".to_owned(), "Luke".to_owned())]);
-        let kept = ["古い鍵".to_owned()];
-        let file = ruby_marshal::read(&translations_file(&texts, &names, &kept)).unwrap();
-        let Value::Hash(pairs) = file else {
-            panic!("a hash");
-        };
-        assert_eq!(
-            pairs[0],
-            (Value::String(b"version".to_vec()), Value::Integer(1))
-        );
-        assert_eq!(
-            pairs[1].1,
-            Value::Hash(vec![(
-                Value::String("剣".as_bytes().to_vec()),
-                Value::String(b"Sword".to_vec())
-            )])
-        );
-        assert_eq!(pairs[2].0, Value::String(b"names".to_vec()));
-        assert_eq!(
-            pairs[3],
-            (
-                Value::String(b"kept".to_vec()),
-                Value::Array(vec![Value::String("古い鍵".as_bytes().to_vec())])
-            )
-        );
     }
 }

@@ -5,6 +5,7 @@ import {
   Square,
   Gamepad2,
   Grid3X3,
+  Languages,
   Library as LibraryIcon,
   List,
   ListChecks,
@@ -22,10 +23,11 @@ import {
 import type { AndroidAppGateway, AndroidAppRuntimeState, AndroidAppView } from "../../android-package";
 import type { CatalogDetailGateway, CatalogWork } from "../catalog";
 import { catalogKeys } from "../catalog/catalogQueryKeys";
-import { workTitle } from "../catalog/localizedNames";
+import { localizedName, workTitle } from "../catalog/localizedNames";
 import type { ScanInstallGateway } from "../scanner/types";
 import type { SearchGateway } from "../search/types";
 import type { DeliveryGateway } from "../delivery/types";
+import { shownGamesKey } from "../translation/GameTranslationTab";
 import { TranslatedWorksProvider } from "../translation/TranslatedWorks";
 import type { TranslationGateway } from "../translation/types";
 import { usePresentation } from "../../preferences/PresentationProvider";
@@ -45,14 +47,13 @@ import { LibraryWorkMenu } from "./LibraryWorkMenu";
 import { useMediaPlayback } from "./MediaPlaybackProvider";
 import { isReaderAction, useReader } from "./ReaderProvider";
 import { mediaItemName } from "./mediaSession";
-import { playTimeLabel } from "./LibraryPlayTime";
+import { LibraryPlayed } from "./LibraryPlayTime";
 import { OwnWorkDetailsProvider, useOwnWork } from "./ownWorkDetails";
 import type { LibraryAddGateway } from "./libraryAdd";
 import { LibraryAddButton, LibraryAddSheet, useLibraryAdd } from "./LibraryAddSheet";
 import {
   featuredInstallationId,
   libraryContentKind,
-  libraryContentKindLabel,
   libraryDisplayCode,
   libraryDisplayCreator,
   libraryDisplayTitle,
@@ -338,6 +339,16 @@ export function LibraryPage({
     mutationFn: (activityId: string) => gateway.stopLaunch(activityId),
     onSettled: invalidateActivity,
   });
+  const resetPlayTime = useMutation({
+    mutationFn: (installationId: string) => gateway.resetPlayTime!(installationId),
+    onSettled: invalidateActivity,
+  });
+  const shownGames = useQuery({
+    queryKey: shownGamesKey,
+    queryFn: () => translationGateway!.shownGames!(),
+    enabled: Boolean(translationGateway?.shownGames),
+    staleTime: 5 * 60_000,
+  });
   const launch = useMutation({
     mutationFn: (installationId: string) => gateway.launchInstallation(installationId),
     onSuccess: (activity) => {
@@ -523,6 +534,11 @@ export function LibraryPage({
                 preferEnglish={locale !== "ja-JP"}
                 busy={launch.isPending && launch.variables === featured.installation.id}
                 stopping={stop.isPending}
+                english={Boolean(shownGames.data?.includes(featured.installation.id))}
+                resetting={resetPlayTime.isPending}
+                onResetPlayTime={gateway.resetPlayTime
+                  ? () => resetPlayTime.mutate(featured.installation.id)
+                  : undefined}
                 onActivate={() => activate(featured)}
                 onStop={() => {
                   const active = launches.data?.find((activity) => (
@@ -784,8 +800,11 @@ function LibraryFeature({
   preferEnglish,
   busy,
   stopping,
+  english,
+  resetting,
   onActivate,
   onStop,
+  onResetPlayTime,
   onManage,
   onOpenWork,
   onBrowse,
@@ -797,15 +816,20 @@ function LibraryFeature({
   busy: boolean;
   /** Stopping the running game. */
   stopping: boolean;
+  /** The game's translation is on and shown. */
+  english: boolean;
+  resetting: boolean;
+  onResetPlayTime?: () => void;
   onActivate: () => void;
   onStop: () => void;
   onManage: (tab: ManageTab) => void;
   onOpenWork?: () => void;
   onBrowse?: () => void;
 }) {
-  const { locale, showPlayTime, t } = usePresentation();
+  const { locale, setShowPlayTime, showPlayTime, t } = usePresentation();
   const playback = useMediaPlayback();
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
   const currentHere = playback.session?.installationId === entry.installation.id;
   const running = entry.latestLaunch !== null
     && launchActivityIsActive(entry.latestLaunch.status);
@@ -863,6 +887,7 @@ function LibraryFeature({
     : null;
 
   useEffect(() => setSeekPreview(null), [installation.id, resumeOrdinal]);
+  useEffect(() => setConfirmReset(false), [installation.id]);
 
   // A seek on the card starts the player at that point and opens it.
   const commitSeek = (positionSeconds: number) => {
@@ -893,13 +918,22 @@ function LibraryFeature({
         {creator ? <p>{creator}</p> : null}
         <div className="library-feature-meta">
           {code ? <span className="library-feature-code"><code>{code}</code></span> : null}
-          <span>{libraryContentKindLabel(kind, t)}</span>
-          <span>
-            {pluralText(t, locale, entry.fileCount, "library.home.filesOne", "library.home.files")}
-          </span>
+          {work?.categories.map((category) => (
+            <span key={category.code}>
+              {localizedName(category.name, category.nameEnglish, preferEnglish)}
+            </span>
+          ))}
+          {kind === "apps" ? null : (
+            <span>
+              {pluralText(t, locale, entry.fileCount, "library.home.filesOne", "library.home.files")}
+            </span>
+          )}
           {releaseDate ? <span>{releaseDate.slice(0, 4)}</span> : null}
-          {showPlayTime && entry.launchTotals ? (
-            <span>{playTimeLabel(entry.launchTotals.totalDurationMs, t)}</span>
+          {english ? (
+            <span className="library-feature-english">
+              <Languages aria-hidden="true" />
+              {t("library.home.english")}
+            </span>
           ) : null}
         </div>
         <LibraryFeatureUpNext
@@ -963,8 +997,31 @@ function LibraryFeature({
             ownWork={!work}
             onManage={onManage}
             onBrowse={onBrowse}
+            playTime={entry.launchTotals ? {
+              shown: showPlayTime,
+              onShow: setShowPlayTime,
+              onReset: onResetPlayTime ? () => setConfirmReset(true) : undefined,
+            } : undefined}
           />
+          {showPlayTime && entry.launchTotals ? <LibraryPlayed totals={entry.launchTotals} /> : null}
         </div>
+        {confirmReset && entry.launchTotals && onResetPlayTime ? (
+          <div
+            className="library-feature-confirm"
+            role="alertdialog"
+            aria-modal="false"
+            aria-label={t("library.playTime.resetConfirm")}
+          >
+            <span>{t("library.playTime.resetConfirm")}</span>
+            <button className="app-button is-solid-danger" type="button" disabled={resetting} onClick={onResetPlayTime}>
+              {resetting ? <LoaderCircle className="app-spin" aria-hidden="true" /> : null}
+              {t("library.playTime.reset")}
+            </button>
+            <button className="library-manage-link" type="button" disabled={resetting} onClick={() => setConfirmReset(false)}>
+              {t("common.cancel")}
+            </button>
+          </div>
+        ) : null}
       </div>
     </section>
   );

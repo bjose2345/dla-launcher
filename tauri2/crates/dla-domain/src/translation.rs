@@ -32,6 +32,17 @@ impl TextKind {
 #[serde(rename_all = "snake_case")]
 pub enum TextMarkup {
     RpgMaker,
+    /// WOLF RPG Editor: `\c[2]`, `\cself[8]`, `\f[\cself[19]]`, `\^`, `<C>`.
+    Wolf,
+}
+
+impl TextMarkup {
+    pub fn of(engine: GameEngine) -> Self {
+        match engine {
+            GameEngine::WolfRpg => Self::Wolf,
+            _ => Self::RpgMaker,
+        }
+    }
 }
 
 /// Where a translation came from. When a text has several, the player's own
@@ -125,10 +136,11 @@ pub enum GameFileChangeKind {
         written_sha256: String,
         written_bytes: u64,
     },
-    /// A game file too large to keep a copy of (an RPG Maker VX Ace
-    /// archive), changed in place: `original` held the bytes at `at`, and the
-    /// file grew from `original_bytes` to `written_bytes`. The hash covers
-    /// the bytes written at `at` and everything after `original_bytes`.
+    /// A game file too large to keep a copy of (an RPG Maker XP, VX or VX
+    /// Ace archive), changed in place: `original` held the bytes at `at`,
+    /// and the file grew from `original_bytes` to `written_bytes`. The hash
+    /// covers the bytes written at `at` and everything after
+    /// `original_bytes`.
     Patched {
         at: u64,
         original: Vec<u8>,
@@ -136,16 +148,76 @@ pub enum GameFileChangeKind {
         written_sha256: String,
         written_bytes: u64,
     },
+    /// A game file or folder the launcher moved to `to`, untouched, to put
+    /// its own in its place (a WOLF RPG Editor data archive or folder):
+    /// whatever is at the path now is the launcher's.
+    Moved { to: RelativePath },
+    /// A file of the game the launcher took out of `from`, an executable
+    /// that holds the game's files packed inside it, and wrote where the
+    /// game reads it from. The program among them starts in place of
+    /// `from`: its `starts` is the SHA-256 of the list of files `from` held.
+    Unpacked {
+        from: RelativePath,
+        sha256: String,
+        bytes: u64,
+        starts: Option<String>,
+    },
+}
+
+/// The program that starts in place of the executable a game was unpacked
+/// from, which reads only the files packed inside it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnpackedProgram {
+    pub in_place_of: RelativePath,
+    pub path: RelativePath,
+    pub sha256: String,
 }
 
 impl GameFileChange {
-    /// Whether `path` is this added file or lies inside this added folder.
+    /// Whether `path` is this added or unpacked file, or lies inside this
+    /// added folder.
     pub fn covers(&self, path: &str) -> bool {
-        matches!(self.kind, GameFileChangeKind::Added)
-            && path
-                .strip_prefix(self.path.as_str())
-                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+        match self.kind {
+            GameFileChangeKind::Added => inside(path, &self.path).is_some(),
+            GameFileChangeKind::Unpacked { .. } => path == self.path.as_str(),
+            _ => false,
+        }
     }
+
+    /// This file as the program that starts in place of the executable it
+    /// was unpacked from.
+    pub fn unpacked_program(&self) -> Option<UnpackedProgram> {
+        match &self.kind {
+            GameFileChangeKind::Unpacked {
+                from,
+                sha256,
+                starts: Some(_),
+                ..
+            } => Some(UnpackedProgram {
+                in_place_of: from.clone(),
+                path: self.path.clone(),
+                sha256: sha256.clone(),
+            }),
+            _ => None,
+        }
+    }
+
+    /// Where the game's own file `path` is now, when it is this moved file
+    /// or lies inside this moved folder.
+    pub fn moved(&self, path: &str) -> Option<RelativePath> {
+        let GameFileChangeKind::Moved { to } = &self.kind else {
+            return None;
+        };
+        let rest = inside(path, &self.path)?;
+        RelativePath::parse(format!("{}{rest}", to.as_str())).ok()
+    }
+}
+
+/// What follows `folder` in `path`: nothing for the path itself, `/…` for
+/// one inside it.
+fn inside<'a>(path: &'a str, folder: &RelativePath) -> Option<&'a str> {
+    path.strip_prefix(folder.as_str())
+        .filter(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
 #[cfg(test)]
@@ -171,6 +243,56 @@ mod tests {
             },
         };
         assert!(!changed.covers("www/js/plugins.js"));
+    }
+
+    #[test]
+    fn a_moved_file_or_folder_says_where_the_games_own_files_are() {
+        let moved = |path: &str, to: &str| GameFileChange {
+            path: RelativePath::parse(path).unwrap(),
+            kind: GameFileChangeKind::Moved {
+                to: RelativePath::parse(to).unwrap(),
+            },
+        };
+        let archive = moved(
+            "sys/Data/BasicData.wolf",
+            "sys/Data/BasicData.wolf.dla-original",
+        );
+        assert_eq!(
+            archive.moved("sys/Data/BasicData.wolf").unwrap().as_str(),
+            "sys/Data/BasicData.wolf.dla-original"
+        );
+        assert_eq!(archive.moved("sys/Data/BasicData.wolf.bak"), None);
+        assert!(!archive.covers("sys/Data/BasicData.wolf"));
+        let folder = moved("Data/MapData", "Data/MapData.dla-original");
+        assert_eq!(
+            folder.moved("Data/MapData/Map001.mps").unwrap().as_str(),
+            "Data/MapData.dla-original/Map001.mps"
+        );
+        assert_eq!(folder.moved("Data/MapDataOld/Map001.mps"), None);
+    }
+
+    #[test]
+    fn an_unpacked_file_covers_itself_and_the_program_says_what_it_replaces() {
+        let unpacked = |path: &str, starts: Option<&str>| GameFileChange {
+            path: RelativePath::parse(path).unwrap(),
+            kind: GameFileChangeKind::Unpacked {
+                from: RelativePath::parse("game/Packed.exe").unwrap(),
+                sha256: "ab".repeat(32),
+                bytes: 7,
+                starts: starts.map(str::to_owned),
+            },
+        };
+        let data = unpacked("game/data/System.json", None);
+        assert!(data.covers("game/data/System.json"));
+        assert!(!data.covers("game/data/System.json/x"));
+        assert!(!data.covers("game/data/Map001.json"));
+        assert_eq!(data.unpacked_program(), None);
+        let program = unpacked("game/Game.exe", Some("list"))
+            .unpacked_program()
+            .unwrap();
+        assert_eq!(program.in_place_of.as_str(), "game/Packed.exe");
+        assert_eq!(program.path.as_str(), "game/Game.exe");
+        assert_eq!(program.sha256, "ab".repeat(32));
     }
 
     #[test]

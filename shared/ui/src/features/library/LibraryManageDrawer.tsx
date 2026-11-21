@@ -32,7 +32,7 @@ import { workTitle } from "../catalog/localizedNames";
 import type { CatalogDetailGateway, CatalogWork } from "../catalog/types";
 import type { DeliveryGateway } from "../delivery/types";
 import { WorkCardImage } from "../catalog/WorkCardImage";
-import type { ScanInstallGateway } from "../scanner/types";
+import type { ScanInstallGateway, TakenFolderChoice } from "../scanner/types";
 import { scanInstallIsActive } from "../scanner/types";
 import { acceptScanInstallView, useScanInstalls } from "../scanner/useScanInstalls";
 import type { SearchGateway } from "../search/types";
@@ -65,14 +65,17 @@ import type {
   LibraryGateway,
   MediaPlayerKind,
   MediaType,
-  PreparedPackageInstallation,
   OwnWorkDetails,
+  PictureFilter,
+  PictureSharpness,
+  PictureUpscaler,
+  PreparedPackageInstallation,
   VisualCppRuntime,
   WindowScale,
 } from "./types";
 import { packagePreparationPercent, usePackagePreparationProgress } from "./usePackagePreparationProgress";
 
-import { manageTabs, type ManageTab } from "./types";
+import { launchActivityIsActive, manageTabs, type ManageTab } from "./types";
 import { pluralText } from "../../i18n/pluralText";
 
 export type { ManageTab };
@@ -227,6 +230,22 @@ export function LibraryManageDrawer({
     mutationFn: () => gateway.launchInstallation(installationId),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["library", "launches"] }),
   });
+  // The library page keeps this list fresh while a game runs.
+  const launched = useQuery({
+    queryKey: ["library", "launches", "recent"],
+    queryFn: () => gateway.listRecentLaunches(50),
+    enabled: shownTab === "translation" && Boolean(translationGateway),
+    select: (activities) => activities.find((activity) => (
+      activity.installationId === installationId && launchActivityIsActive(activity.status)
+    )) ?? null,
+  });
+  const stop = useMutation({
+    mutationFn: (activityId: string) => gateway.stopLaunch(activityId),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["library", "launches"] }),
+  });
+  const playing = launch.isPending || launched.data?.status === "starting"
+    ? "starting"
+    : launched.data ? "running" : null;
 
   return (
     <div className="library-manage-layer">
@@ -384,6 +403,11 @@ export function LibraryManageDrawer({
                 onOpenSettings={onOpenTranslationSettings}
                 onOpenExternal={onOpenExternal}
                 onPlay={() => launch.mutate()}
+                playing={playing}
+                onStop={() => {
+                  if (launched.data) stop.mutate(launched.data.id);
+                }}
+                stopping={stop.isPending}
               />
             )
           ) : null}
@@ -639,6 +663,9 @@ function JapaneseLocaleSection({ installationId, gateway }: { installationId: st
       audioPlayer: options.data?.audioPlayer ?? null,
       windowScale: options.data?.windowScale ?? null,
       refreshRate: options.data?.refreshRate ?? null,
+      pictureFilter: options.data?.pictureFilter ?? null,
+      performanceOverlay: options.data?.performanceOverlay ?? false,
+      cursorHideDelay: options.data?.cursorHideDelay ?? null,
     }),
     onSuccess: (saved) => queryClient.setQueryData(key, saved),
   });
@@ -686,8 +713,29 @@ const windowSizes = [
 
 const fullScreenScales = {
   fit: "library.manage.windowScaleFit",
+  fill: "library.manage.windowScaleFill",
+  stretch: "library.manage.windowScaleStretch",
   integer: "library.manage.windowScaleInteger",
 } as const satisfies Partial<Record<WindowScale, string>>;
+
+const pictureKinds = {
+  even: "library.manage.pictureFilterEven",
+  smooth: "library.manage.pictureFilterSmooth",
+  fsr: "library.manage.pictureFilterFsr",
+  nis: "library.manage.pictureFilterNis",
+} as const satisfies Record<"even" | "smooth" | PictureUpscaler, string>;
+
+const sharpnessLevels = {
+  soft: "library.manage.sharpnessSoft",
+  medium: "library.manage.sharpnessMedium",
+  strong: "library.manage.sharpnessStrong",
+} as const satisfies Record<PictureSharpness, string>;
+
+function pictureParts(filter: PictureFilter | null): { kind: "" | keyof typeof pictureKinds; sharpness: PictureSharpness } {
+  if (filter === null || filter === "even" || filter === "smooth") return { kind: filter ?? "", sharpness: "medium" };
+  const [upscaler, sharpness] = filter.split("-") as [PictureUpscaler, PictureSharpness];
+  return { kind: upscaler, sharpness };
+}
 
 const refreshRates = {
   60: "library.manage.refreshRate60",
@@ -696,17 +744,33 @@ const refreshRates = {
 
 const DEFAULT_REFRESH_RATE = 120;
 
-type DisplayChange = { windowScale?: WindowScale | null; refreshRate?: number | null };
+const cursorHideDelays = {
+  3000: "library.manage.cursorHide3",
+  1000: "library.manage.cursorHide1",
+} as const;
+
+type DisplayChange = {
+  windowScale?: WindowScale | null;
+  refreshRate?: number | null;
+  pictureFilter?: PictureFilter | null;
+  performanceOverlay?: boolean;
+  cursorHideDelay?: number | null;
+};
 
 /**
  * Linux only, experimental: an app that opens small shown at a chosen size or
- * full screen through gamescope, paced at a chosen refresh rate.
+ * full screen through gamescope, paced at a chosen refresh rate and drawn
+ * sharp, smoothed or sharpened, with the cursor hidden sooner and MangoHud's
+ * overlay over it when asked.
  */
 function DisplayTab({ installationId, gateway }: { installationId: string; gateway: LibraryGateway }) {
   const { t } = usePresentation();
   const queryClient = useQueryClient();
   const resolutionId = useId();
   const rateId = useId();
+  const pictureId = useId();
+  const sharpnessId = useId();
+  const cursorId = useId();
   const key = ["library", "launch-options", installationId] as const;
   const options = useQuery({ queryKey: key, queryFn: () => gateway.readLaunchOptions!(installationId) });
   const save = useMutation({
@@ -716,6 +780,9 @@ function DisplayTab({ installationId, gateway }: { installationId: string; gatew
       audioPlayer: options.data?.audioPlayer ?? null,
       windowScale: change.windowScale !== undefined ? change.windowScale : options.data?.windowScale ?? null,
       refreshRate: change.refreshRate !== undefined ? change.refreshRate : options.data?.refreshRate ?? null,
+      pictureFilter: change.pictureFilter !== undefined ? change.pictureFilter : options.data?.pictureFilter ?? null,
+      performanceOverlay: change.performanceOverlay ?? options.data?.performanceOverlay ?? false,
+      cursorHideDelay: change.cursorHideDelay !== undefined ? change.cursorHideDelay : options.data?.cursorHideDelay ?? null,
     }),
     onSuccess: (saved) => queryClient.setQueryData(key, saved),
   });
@@ -723,13 +790,23 @@ function DisplayTab({ installationId, gateway }: { installationId: string; gatew
   const pending = save.isPending ? save.variables : undefined;
   const scale = pending?.windowScale !== undefined ? pending.windowScale : options.data.windowScale;
   const rate = (pending?.refreshRate !== undefined ? pending.refreshRate : options.data.refreshRate) ?? DEFAULT_REFRESH_RATE;
+  const picture = pictureParts(pending?.pictureFilter !== undefined ? pending.pictureFilter : options.data.pictureFilter);
+  // Whole steps always keep hard pixels, so there is nothing to choose.
+  const pictureFixed = scale === null || scale === "integer";
+  const cursorDelay = pending?.cursorHideDelay !== undefined ? pending.cursorHideDelay : options.data.cursorHideDelay;
+  const overlay = pending?.performanceOverlay ?? options.data.performanceOverlay;
+  const overlayAvailable = options.data.performanceOverlayAvailable;
+  const enlarger = options.data.enlarger;
+  // Magpie cannot cover the screen with the edges cut off.
+  const fullScreen = (Object.keys(fullScreenScales) as (keyof typeof fullScreenScales)[])
+    .filter((value) => enlarger !== "magpie" || value !== "fill");
   return (
     <>
       <div className="app-callout">
         <AlertTriangle aria-hidden="true" />{t("library.manage.displayExperimental")}
       </div>
-      {options.data.windowScaleAvailable ? (
-        <>
+      {enlarger ? (
+        <div className="library-manage-stack">
           <section className="library-manage-field">
             <label htmlFor={resolutionId}><h3>{t("library.manage.windowScale")}</h3></label>
             <select
@@ -743,12 +820,15 @@ function DisplayTab({ installationId, gateway }: { installationId: string; gatew
               {windowSizes.map((size) => (
                 <option value={size} key={size}>{size.replace("x", " × ")}</option>
               ))}
-              {(Object.keys(fullScreenScales) as (keyof typeof fullScreenScales)[]).map((value) => (
+              {fullScreen.map((value) => (
                 <option value={value} key={value}>{t(fullScreenScales[value])}</option>
               ))}
             </select>
-            <p className="library-manage-help">{t("library.manage.windowScaleHelp")}</p>
+            <p className="library-manage-help">
+              {t(enlarger === "magpie" ? "library.manage.windowScaleHelpMagpie" : "library.manage.windowScaleHelp")}
+            </p>
           </section>
+          {enlarger === "gamescope" ? (
           <section className="library-manage-field">
             <label htmlFor={rateId}><h3>{t("library.manage.refreshRate")}</h3></label>
             <select
@@ -764,7 +844,79 @@ function DisplayTab({ installationId, gateway }: { installationId: string; gatew
             </select>
             <p className="library-manage-help">{t("library.manage.refreshRateHelp")}</p>
           </section>
-        </>
+          ) : null}
+          <section className="library-manage-field">
+            <label htmlFor={pictureId}><h3>{t("library.manage.pictureFilter")}</h3></label>
+            <select
+              id={pictureId}
+              className="library-manage-input"
+              value={pictureFixed ? "" : picture.kind}
+              disabled={save.isPending || pictureFixed}
+              onChange={(event) => {
+                const kind = event.target.value as typeof picture.kind;
+                save.mutate({
+                  pictureFilter: kind === ""
+                    ? null
+                    : kind === "fsr" || kind === "nis" ? `${kind}-${picture.sharpness}` : kind,
+                });
+              }}
+            >
+              <option value="">{t("library.manage.pictureFilterSharp")}</option>
+              {(Object.keys(pictureKinds) as (keyof typeof pictureKinds)[]).map((value) => (
+                <option value={value} key={value}>{t(pictureKinds[value])}</option>
+              ))}
+            </select>
+            <p className="library-manage-help">{t("library.manage.pictureFilterHelp")}</p>
+          </section>
+          {!pictureFixed && (picture.kind === "fsr" || picture.kind === "nis") ? (
+            <section className="library-manage-field">
+              <label htmlFor={sharpnessId}><h3>{t("library.manage.sharpness")}</h3></label>
+              <select
+                id={sharpnessId}
+                className="library-manage-input"
+                value={picture.sharpness}
+                disabled={save.isPending}
+                onChange={(event) => save.mutate({
+                  pictureFilter: `${picture.kind as PictureUpscaler}-${event.target.value as PictureSharpness}`,
+                })}
+              >
+                {(Object.keys(sharpnessLevels) as PictureSharpness[]).map((value) => (
+                  <option value={value} key={value}>{t(sharpnessLevels[value])}</option>
+                ))}
+              </select>
+            </section>
+          ) : null}
+          <section className="library-manage-field">
+            <label htmlFor={cursorId}><h3>{t("library.manage.cursorHide")}</h3></label>
+            <select
+              id={cursorId}
+              className="library-manage-input"
+              value={scale === null ? "" : cursorDelay ?? ""}
+              disabled={save.isPending || scale === null}
+              onChange={(event) => save.mutate({ cursorHideDelay: event.target.value === "" ? null : Number(event.target.value) })}
+            >
+              <option value="">
+                {t(enlarger === "magpie" ? "library.manage.cursorHideNever" : "library.manage.cursorHideDefault")}
+              </option>
+              {(Object.keys(cursorHideDelays) as unknown as (keyof typeof cursorHideDelays)[]).map((value) => (
+                <option value={value} key={value}>{t(cursorHideDelays[value])}</option>
+              ))}
+            </select>
+            <p className="library-manage-help">{t("library.manage.cursorHideHelp")}</p>
+          </section>
+          {enlarger === "gamescope" ? (
+          <section className="library-manage-field">
+            <h3>{t("library.manage.performanceOverlay")}</h3>
+            <Switch
+              checked={overlay && overlayAvailable && scale !== null}
+              disabled={save.isPending || scale === null || !overlayAvailable}
+              label={t("library.manage.performanceOverlaySwitch")}
+              help={t(overlayAvailable ? "library.manage.performanceOverlayHelp" : "library.manage.performanceOverlayNeedsMangoapp")}
+              onChange={(next) => save.mutate({ performanceOverlay: next })}
+            />
+          </section>
+          ) : null}
+        </div>
       ) : (
         <p className="library-manage-note">{t("library.manage.displayNeedsGamescope")}</p>
       )}
@@ -798,6 +950,9 @@ function ExternalPlayerSection({
       audioPlayer: kind === "audio" ? player : options.data?.audioPlayer ?? null,
       windowScale: options.data?.windowScale ?? null,
       refreshRate: options.data?.refreshRate ?? null,
+      pictureFilter: options.data?.pictureFilter ?? null,
+      performanceOverlay: options.data?.performanceOverlay ?? false,
+      cursorHideDelay: options.data?.cursorHideDelay ?? null,
     }),
     onSuccess: (saved) => queryClient.setQueryData(key, saved),
   });
@@ -917,16 +1072,19 @@ function InstalledFilesTab({
   const scanInstalls = useScanInstalls(installs);
   const progress = usePackagePreparationProgress(installs ? gateway : undefined);
   const install = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (takenFolder: TakenFolderChoice | undefined) => {
       if (!installs) return;
       if (!scanInstalls.data?.installFolder) {
         const chosen = await installs.selectInstallFolder();
         if (!chosen?.installFolder) return;
         acceptScanInstallView(queryClient, chosen);
       }
-      acceptScanInstallView(queryClient, await installs.installArchive(installation.id));
+      acceptScanInstallView(queryClient, takenFolder
+        ? await installs.installArchive(installation.id, takenFolder)
+        : await installs.installArchive(installation.id));
     },
   });
+  const [replacingFolder, setReplacingFolder] = useState(false);
 
   const report = health.data;
   const busy = verify.isPending || locate.isPending || rescan.isPending || repair.isPending || cleanup.isPending
@@ -942,6 +1100,9 @@ function InstalledFilesTab({
   const percent = running && progress.data?.installationId === installation.id
     ? packagePreparationPercent(progress.data)
     : null;
+  const takenFolder = scanInstalls.data?.installs.find((item) => (
+    item.installationId === installation.id && item.status === "failed"
+  ))?.conflict ?? null;
   const location = displayPath(prepared?.destinationRoot ?? installationFolder(installation));
   const fileCount = prepared?.installedFileCount ?? installation.detection.contentItems.length;
   const sizeBytes = prepared?.installedBytes
@@ -994,8 +1155,47 @@ function InstalledFilesTab({
               </span>
               <ProgressBar percent={percent} size="slim" />
             </span>
+          ) : installs && takenFolder ? (
+            <>
+              <div className="library-manage-result is-problem" role="status">
+                <AlertTriangle aria-hidden="true" />
+                <span>{t("folderTaken.message", { name: takenFolder.folderName })}</span>
+              </div>
+              {replacingFolder ? (
+                <ConfirmRow
+                  question={t("folderTaken.replaceConfirm", { name: takenFolder.folderName })}
+                  confirmLabel={t("folderTaken.replace")}
+                  danger
+                  busy={install.isPending}
+                  onConfirm={() => {
+                    setReplacingFolder(false);
+                    install.mutate("replace_existing");
+                  }}
+                  onCancel={() => setReplacingFolder(false)}
+                />
+              ) : (
+                <div className="library-manage-row">
+                  {takenFolder.keepBothName ? (
+                    <button className="app-button is-primary" type="button" disabled={install.isPending} onClick={() => install.mutate("keep_both")}>
+                      {t("folderTaken.keepBoth")}
+                    </button>
+                  ) : null}
+                  {takenFolder.replaceable ? (
+                    <button className="app-button is-danger" type="button" disabled={install.isPending} onClick={() => setReplacingFolder(true)}>
+                      {t("folderTaken.replace")}
+                    </button>
+                  ) : null}
+                </div>
+              )}
+              <p className="library-manage-help">
+                {[
+                  takenFolder.keepBothName ? t("folderTaken.keepBothHelp", { name: takenFolder.keepBothName }) : null,
+                  takenFolder.replaceable ? null : t("folderTaken.inUse"),
+                ].filter(Boolean).join(" ")}
+              </p>
+            </>
           ) : installs ? (
-            <button className="app-button is-primary" type="button" disabled={install.isPending} onClick={() => install.mutate()}>
+            <button className="app-button is-primary" type="button" disabled={install.isPending} onClick={() => install.mutate(undefined)}>
               {install.isPending ? <LoaderCircle className="app-spin" aria-hidden="true" /> : <PackageOpen aria-hidden="true" />}
               {t("library.manage.install")}
             </button>

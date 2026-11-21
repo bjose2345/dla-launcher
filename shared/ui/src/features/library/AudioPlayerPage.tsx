@@ -1,27 +1,81 @@
-import { AudioLines, AudioWaveform, Headphones, Pause } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { AudioLines, Headphones, Pause } from "lucide-react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 
 import { BackButton } from "../../app/BackButton";
-import { readStoredText, writeStoredText } from "../../preferences/browserStorage";
 import { isInteractiveTarget } from "../../preferences/keyBindings";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import type { CatalogWork } from "../catalog";
 import { VOLUME_WHEEL_STEP } from "./audioPlayer";
+import { LiveVisual } from "./AudioVisualCanvas";
+import {
+  VISUAL_COLORS,
+  VISUAL_COLOR_LABELS,
+  VISUAL_STYLES,
+  VISUAL_STYLE_LABELS,
+  coverColor,
+  readVisualColor,
+  readVisualStyle,
+  showsWholeTrack,
+  writeVisualColor,
+  writeVisualStyle,
+  type VisualColor,
+  type VisualStyle,
+} from "./audioVisual";
 import { LibraryArtwork } from "./LibraryArtwork";
 import { installationTitle } from "./libraryPresentation";
+import { MediaDockMenu, MediaDockMenuGroup, MediaDockMenuItem } from "./MediaDockMenu";
 import { useMediaPlayback } from "./MediaPlaybackProvider";
 import { mediaItemName, orderedSessionItems } from "./mediaSession";
-import { NowPlayingBars } from "./NowPlayingBars";
 import { useOwnWork } from "./ownWorkDetails";
-import { TrackWaveform } from "./TrackWaveform";
+import { TrackWaveform, useWarmWaveforms } from "./TrackWaveform";
 import type { Installation, LibraryGateway, MediaSession } from "./types";
 
-const VISUALIZER_STORAGE_KEY = "dla.library.audio-visualizer";
+const COVER_SAMPLE_PX = 24;
+const RAINBOW_SWATCH =
+  "linear-gradient(90deg, hsl(0 85% 64%), hsl(100 85% 64%), hsl(200 85% 64%), hsl(300 85% 64%))";
 
-type VisualizerMode = "waveform" | "analyser";
-
-function readVisualizerMode(): VisualizerMode {
-  return readStoredText(VISUALIZER_STORAGE_KEY) === "analyser" ? "analyser" : "waveform";
+/**
+ * The colour the stage's artwork gives the "From the cover" set. The cover
+ * is loaded once more as a picture the page may read; one it may not read
+ * gives no colour.
+ */
+function useCoverColor(stageRef: RefObject<HTMLElement | null>, artwork: string): string | null {
+  const [color, setColor] = useState<string | null>(null);
+  useEffect(() => {
+    const image = stageRef.current?.querySelector<HTMLImageElement>(".library-artwork img");
+    if (!image) {
+      setColor(null);
+      return undefined;
+    }
+    let stale = false;
+    const read = () => {
+      if (!image.currentSrc) return;
+      const copy = new Image();
+      copy.crossOrigin = "anonymous";
+      copy.onload = () => {
+        if (stale) return;
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = COVER_SAMPLE_PX;
+          canvas.height = COVER_SAMPLE_PX;
+          const context = canvas.getContext("2d");
+          if (!context) return;
+          context.drawImage(copy, 0, 0, COVER_SAMPLE_PX, COVER_SAMPLE_PX);
+          setColor(coverColor(context.getImageData(0, 0, COVER_SAMPLE_PX, COVER_SAMPLE_PX).data));
+        } catch {
+          setColor(null);
+        }
+      };
+      copy.src = image.currentSrc;
+    };
+    if (image.complete) read();
+    image.addEventListener("load", read);
+    return () => {
+      stale = true;
+      image.removeEventListener("load", read);
+    };
+  }, [artwork, stageRef]);
+  return color;
 }
 
 interface AudioPlayerProps {
@@ -43,7 +97,10 @@ export function AudioPlayer({ gateway, installation, session, work, onBack }: Au
   const playback = useMediaPlayback();
   const own = useOwnWork();
   const current = playback.session?.installationId === installation.id;
-  const [visualizerMode, setVisualizerMode] = useState<VisualizerMode>(readVisualizerMode);
+  const [visualStyle, setVisualStyle] = useState<VisualStyle>(readVisualStyle);
+  const [visualColor, setVisualColor] = useState<VisualColor>(readVisualColor);
+  const [visualMenuOpen, setVisualMenuOpen] = useState(false);
+  const stageRef = useRef<HTMLDivElement>(null);
   const [opened, setOpened] = useState(false);
   const [openFailed, setOpenFailed] = useState(false);
   const rootRef = useRef<HTMLElement>(null);
@@ -92,11 +149,17 @@ export function AudioPlayer({ gateway, installation, session, work, onBack }: Au
     ? playback.item
     : items.find((candidate) => candidate.ordinal === session.progress.itemOrdinal) ?? items[0] ?? null;
   const index = item ? items.findIndex((candidate) => candidate.ordinal === item.ordinal) : -1;
+  useWarmWaveforms(
+    gateway,
+    installation.id,
+    current && index >= 0
+      ? [...items.slice(index), ...items.slice(0, index)].map((entry) => entry.ordinal)
+      : [],
+  );
   const title = installationTitle(installation);
-  const chooseVisualizer = (mode: VisualizerMode) => {
-    setVisualizerMode(mode);
-    writeStoredText(VISUALIZER_STORAGE_KEY, mode);
-  };
+  const ownCover = own.coverUrl(installation.id);
+  const cover = useCoverColor(stageRef, `${installation.id}|${work?.code ?? ""}|${ownCover ?? ""}`);
+  const wholeTrack = showsWholeTrack(visualStyle);
   const failure = openFailed ? t("media.openFailed") : playback.error;
 
   return (
@@ -114,41 +177,69 @@ export function AudioPlayer({ gateway, installation, session, work, onBack }: Au
       </header>
 
       <div className="audio-player-workspace">
-        <div className="audio-player-stage">
-          <LibraryArtwork kind="audio" title={title} work={work ?? undefined} cover={own.coverUrl(installation.id)} />
+        <div ref={stageRef} className="audio-player-stage">
+          <LibraryArtwork kind="audio" title={title} work={work ?? undefined} cover={ownCover} />
           <span className="audio-player-shade" aria-hidden="true" />
-          <div className="audio-player-visualizer-toggle">
-            <button
-              className={visualizerMode === "waveform" ? "is-active" : undefined}
-              type="button"
-              aria-pressed={visualizerMode === "waveform"}
-              onClick={() => chooseVisualizer("waveform")}
+          <div className="audio-player-visual-menu">
+            <MediaDockMenu
+              label={t("media.visual.menu")}
+              icon={<AudioLines aria-hidden="true" />}
+              open={visualMenuOpen}
+              side="bottom"
+              onOpenChange={setVisualMenuOpen}
             >
-              <AudioWaveform aria-hidden="true" />
-              {t("media.visualizer.waveform")}
-            </button>
-            <button
-              className={visualizerMode === "analyser" ? "is-active" : undefined}
-              type="button"
-              aria-pressed={visualizerMode === "analyser"}
-              onClick={() => chooseVisualizer("analyser")}
-            >
-              <AudioLines aria-hidden="true" />
-              {t("media.visualizer.analyser")}
-            </button>
+              <MediaDockMenuGroup labelKey="media.visual.style">
+                {VISUAL_STYLES.map((style) => (
+                  <MediaDockMenuItem
+                    key={style}
+                    active={style === visualStyle}
+                    label={t(VISUAL_STYLE_LABELS[style])}
+                    keepOpen
+                    onSelect={() => {
+                      setVisualStyle(style);
+                      writeVisualStyle(style);
+                    }}
+                  />
+                ))}
+              </MediaDockMenuGroup>
+              <MediaDockMenuGroup labelKey="media.visual.color">
+                {VISUAL_COLORS.map((color) => (
+                  <MediaDockMenuItem
+                    key={color}
+                    active={color === visualColor}
+                    label={t(VISUAL_COLOR_LABELS[color])}
+                    swatch={{
+                      theme: "var(--color-primary)",
+                      cover: cover ?? "var(--color-primary)",
+                      white: "#ffffff",
+                      ice: "#6fe3ff",
+                      rainbow: RAINBOW_SWATCH,
+                    }[color]}
+                    keepOpen
+                    onSelect={() => {
+                      setVisualColor(color);
+                      writeVisualColor(color);
+                    }}
+                  />
+                ))}
+              </MediaDockMenuGroup>
+            </MediaDockMenu>
           </div>
-          <div className="audio-player-visualizer-stage">
+          <div className={`audio-player-visualizer-stage${visualStyle === "ring" ? " is-tall" : ""}`}>
             {item ? (
               <div
-                className={`audio-player-visualizer-layer${visualizerMode === "waveform" ? " is-active" : ""}`}
-                aria-hidden={visualizerMode !== "waveform"}
-                inert={visualizerMode !== "waveform"}
+                className={`audio-player-visualizer-layer${wholeTrack ? " is-active" : ""}`}
+                aria-hidden={!wholeTrack}
+                inert={!wholeTrack}
               >
                 <TrackWaveform
                   gateway={gateway}
                   installationId={installation.id}
                   ordinal={item.ordinal}
                   resume={null}
+                  visualStyle={visualStyle}
+                  visualColor={visualColor}
+                  coverColor={cover}
                   onStart={async (ordinal, positionSeconds) => {
                     if (current) playback.selectOrdinal(ordinal, positionSeconds);
                   }}
@@ -156,13 +247,15 @@ export function AudioPlayer({ gateway, installation, session, work, onBack }: Au
               </div>
             ) : null}
             <div
-              className={`audio-player-visualizer-layer is-analyser${visualizerMode === "analyser" ? " is-active" : ""}`}
-              aria-hidden={visualizerMode !== "analyser"}
+              className={`audio-player-visualizer-layer is-live${wholeTrack ? "" : " is-active"}`}
+              aria-hidden="true"
             >
-              <NowPlayingBars
+              <LiveVisual
                 installationId={installation.id}
-                alwaysVisible
-                liveSpectrum={visualizerMode === "analyser"}
+                style={visualStyle}
+                color={visualColor}
+                cover={cover}
+                active={!wholeTrack}
               />
             </div>
           </div>

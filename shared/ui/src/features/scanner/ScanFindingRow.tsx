@@ -232,7 +232,14 @@ export function ScanFindingRow({
         ) : null}
       </div>
 
-      {status === "failed" && install?.detail ? (
+      {status === "failed" && install?.conflict ? (
+        <p className="scan-finding-note is-problem">
+          {t("folderTaken.message", { name: install.conflict.folderName })}{" "}
+          <button className="scan-text-button" type="button" onClick={() => onManage(install.installationId, "files")}>
+            {t("folderTaken.choose")}
+          </button>
+        </p>
+      ) : status === "failed" && install?.detail ? (
         <p className="scan-finding-note is-problem">{t("common.technicalDetail", { detail: install.detail })}</p>
       ) : null}
 

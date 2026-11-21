@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useRef, useState } from "react";
 
@@ -88,6 +88,48 @@ describe("AnchoredPopover", () => {
     } finally {
       Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => null });
       stage.remove();
+    }
+  });
+
+  it("stays open through the blur the Chromium runtime sends around a press", () => {
+    vi.useFakeTimers();
+    try {
+      render(<PopoverHarness />);
+      const popover = screen.getByRole("dialog", { name: "Calendar" });
+
+      fireEvent.pointerDown(popover);
+      fireEvent.blur(window);
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(screen.queryByRole("dialog", { name: "Calendar" })).not.toBeNull();
+
+      vi.advanceTimersByTime(1000);
+      fireEvent.blur(window);
+      vi.advanceTimersByTime(2);
+      fireEvent.pointerDown(popover);
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(screen.queryByRole("dialog", { name: "Calendar" })).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("closes when the window loses focus with no press near it", () => {
+    vi.useFakeTimers();
+    try {
+      render(<PopoverHarness />);
+
+      fireEvent.blur(window);
+      expect(screen.queryByRole("dialog", { name: "Calendar" })).not.toBeNull();
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      expect(screen.queryByRole("dialog", { name: "Calendar" })).toBeNull();
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

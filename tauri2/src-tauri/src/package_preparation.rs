@@ -186,6 +186,17 @@ impl PackagePreparationController {
             .inspect_destination(installation_id, destination_parent)
     }
 
+    /// What stands where the installation would unpack under a folder the
+    /// launcher already holds, such as the install folder.
+    pub fn inspect_destination_in(
+        &self,
+        installation_id: &InstallationId,
+        destination_parent: String,
+    ) -> Result<PackageDestinationPreview, PackagePreparationError> {
+        self.service
+            .inspect_destination(installation_id, destination_parent)
+    }
+
     pub fn start(
         self: &Arc<Self>,
         installation_id: InstallationId,

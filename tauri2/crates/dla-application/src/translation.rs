@@ -13,7 +13,10 @@ use thiserror::Error;
 
 mod text;
 
-pub use text::{PreparedText, has_japanese, has_leftover_japanese, text_key, uses_term};
+pub use text::{
+    PreparedText, has_japanese, has_leftover_japanese, name_parts, text_key, uses_term,
+    wolf_code_length,
+};
 
 const DIALOGUE_BATCH: usize = 10;
 const TERM_BATCH: usize = 25;
@@ -199,6 +202,24 @@ pub trait TranslationStore: Send + Sync {
 
     fn save_names(&self, work: &str, names: &[(String, String)]) -> Result<(), TranslationError>;
 
+    fn speakers(&self, work: &str) -> Result<Vec<MessageSpeakerOverride>, TranslationError>;
+
+    fn save_speakers(
+        &self,
+        work: &str,
+        speakers: &[MessageSpeakerOverride],
+    ) -> Result<(), TranslationError>;
+
+    /// The work's images in English, the player's own before a pack's.
+    fn pictures(&self, work: &str) -> Result<Vec<TranslatedPicture>, TranslationError>;
+
+    /// Replaces the player's own images of the work.
+    fn save_pictures(
+        &self,
+        work: &str,
+        pictures: &[TranslatedPicture],
+    ) -> Result<(), TranslationError>;
+
     fn glossary(&self, work: &str) -> Result<Glossary, TranslationError>;
 
     /// Replaces the work's glossary.
@@ -217,7 +238,104 @@ pub trait TranslationStore: Send + Sync {
         work: &str,
         pack: &str,
         translations: &[NewTranslation<'_>],
+        speakers: &[MessageSpeakerOverride],
+        pictures: &[TranslatedPicture],
     ) -> Result<(), TranslationError>;
+}
+
+/// An image of a game with its words drawn into it (a character's
+/// introduction, a map's title), made again in English. `path` names the
+/// game's image under `img` (RPG Maker MV and MZ) or `Graphics` (VX Ace)
+/// without its extension (`pictures/Namecut02`); the game is handed this
+/// PNG in its place.
+#[derive(Clone, Eq, PartialEq)]
+pub struct TranslatedPicture {
+    pub path: String,
+    pub png: Vec<u8>,
+}
+
+impl std::fmt::Debug for TranslatedPicture {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{} ({} bytes)", self.path, self.png.len())
+    }
+}
+
+pub const MAX_PICTURE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_PICTURES_BYTES: usize = 48 * 1024 * 1024;
+const MAX_PICTURE_PATH_CHARS: usize = 200;
+const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+
+/// A path stays inside the folder it is written under, on any system, and
+/// the image is a PNG of a size a game shows.
+pub fn validate_pictures(pictures: &[TranslatedPicture]) -> Result<(), TranslationError> {
+    let mut paths = HashSet::new();
+    let mut bytes = 0;
+    for picture in pictures {
+        let named = !picture.path.is_empty()
+            && picture.path.chars().count() <= MAX_PICTURE_PATH_CHARS
+            && picture.path.split('/').all(|part| {
+                !part.is_empty()
+                    && part != "."
+                    && part != ".."
+                    && part.trim() == part
+                    && !part.contains(|letter: char| {
+                        letter.is_control() || "\\:*?\"<>|".contains(letter)
+                    })
+            });
+        bytes += picture.png.len();
+        if !named
+            || !picture.png.starts_with(PNG_SIGNATURE)
+            || picture.png.len() > MAX_PICTURE_BYTES
+            || bytes > MAX_PICTURES_BYTES
+            || !paths.insert(picture.path.to_lowercase())
+        {
+            return Err(TranslationError::Pack(format!(
+                "invalid or duplicate image: {}",
+                picture.path.chars().take(80).collect::<String>()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// A speaker correction for one RPG Maker map message. Hashes guard against
+/// applying a correction after the game changes that message or its speaker.
+#[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessageSpeakerOverride {
+    pub map: u32,
+    pub event: u32,
+    pub page: u32,
+    pub command: u32,
+    pub key: String,
+    pub expected_speaker: String,
+    pub text: String,
+}
+
+pub fn validate_speakers(speakers: &[MessageSpeakerOverride]) -> Result<(), TranslationError> {
+    let mut positions = HashSet::new();
+    let hash = |value: &str| {
+        value.len() == 32
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    };
+    for speaker in speakers {
+        if speaker.map == 0
+            || speaker.event == 0
+            || !hash(&speaker.key)
+            || !hash(&speaker.expected_speaker)
+            || speaker.text.trim().is_empty()
+            || speaker.text.chars().count() > 1000
+            || has_japanese(&speaker.text)
+            || !positions.insert((speaker.map, speaker.event, speaker.page, speaker.command))
+        {
+            return Err(TranslationError::Pack(
+                "invalid or duplicate message speaker override".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// A work's lines translated ahead of time, downloaded from the DLA archive.
@@ -231,6 +349,8 @@ pub struct TranslationPack {
     pub made: String,
     pub texts: Vec<PackLine>,
     pub names: Vec<PackLine>,
+    pub speakers: Vec<MessageSpeakerOverride>,
+    pub pictures: Vec<TranslatedPicture>,
     /// The glossary it was made with, for the player's translator to follow
     /// in the lines the pack lacks.
     pub glossary: Option<Glossary>,
@@ -292,6 +412,8 @@ pub trait TranslationPacks: Send + Sync {
 pub struct WorkTranslations {
     pub texts: Vec<(String, String)>,
     pub names: Vec<(String, String)>,
+    pub speakers: Vec<MessageSpeakerOverride>,
+    pub pictures: Vec<TranslatedPicture>,
 }
 
 /// A player waiting in the game goes before anything translated ahead of play.
@@ -357,11 +479,13 @@ impl TranslationService {
             .iter()
             .map(|line| {
                 let source = shown.get(&line.key);
-                // A text without Japanese comes with the pack, where its key fits.
+                // A text the game does not list comes with the pack, where
+                // its key fits: one without Japanese, or the text of the
+                // maker's own line (the pack's reader allows no other).
                 let carried = line
                     .source
                     .as_deref()
-                    .filter(|text| !has_japanese(text) && text_key(text) == line.key);
+                    .filter(|text| text_key(text) == line.key);
                 NewTranslation {
                     key: &line.key,
                     source: source.map_or(carried.unwrap_or(""), |source| source.text.as_str()),
@@ -376,7 +500,15 @@ impl TranslationService {
                 }
             })
             .collect::<Vec<_>>();
-        self.store.save_pack(&pack.work, &pack.made, &entries)?;
+        validate_speakers(&pack.speakers)?;
+        validate_pictures(&pack.pictures)?;
+        self.store.save_pack(
+            &pack.work,
+            &pack.made,
+            &entries,
+            &pack.speakers,
+            &pack.pictures,
+        )?;
         let named = names
             .iter()
             .map(|name| (text_key(name), name))
@@ -452,6 +584,8 @@ impl TranslationService {
         Ok(WorkTranslations {
             texts: self.store.all(work)?,
             names: self.store.names(work)?,
+            speakers: self.store.speakers(work)?,
+            pictures: self.store.pictures(work)?,
         })
     }
 
@@ -569,7 +703,9 @@ impl TranslationService {
         for (position, &at) in positions.iter().enumerate() {
             let prepared = &batch.prepared[at];
             match replies.get(position).cloned().flatten() {
-                Some(reply) if lenient || prepared.accepts(&reply) => {
+                Some(reply)
+                    if !prepared.runs_away(&reply) && (lenient || prepared.accepts(&reply)) =>
+                {
                     accepted.push((at, prepared.finish(&reply)));
                 }
                 _ => rejected.push(at),
@@ -780,6 +916,8 @@ mod tests {
         sources: Mutex<HashMap<(String, String), String>>,
         names: Mutex<Vec<(String, String)>>,
         glossary: Mutex<Glossary>,
+        speakers: Mutex<Vec<MessageSpeakerOverride>>,
+        pictures: Mutex<Vec<TranslatedPicture>>,
     }
 
     impl TranslationStore for MemoryStore {
@@ -840,6 +978,32 @@ mod tests {
             Ok(self.names.lock().unwrap().clone())
         }
 
+        fn speakers(&self, _work: &str) -> Result<Vec<MessageSpeakerOverride>, TranslationError> {
+            Ok(self.speakers.lock().unwrap().clone())
+        }
+
+        fn save_speakers(
+            &self,
+            _work: &str,
+            speakers: &[MessageSpeakerOverride],
+        ) -> Result<(), TranslationError> {
+            *self.speakers.lock().unwrap() = speakers.to_vec();
+            Ok(())
+        }
+
+        fn pictures(&self, _work: &str) -> Result<Vec<TranslatedPicture>, TranslationError> {
+            Ok(self.pictures.lock().unwrap().clone())
+        }
+
+        fn save_pictures(
+            &self,
+            _work: &str,
+            pictures: &[TranslatedPicture],
+        ) -> Result<(), TranslationError> {
+            *self.pictures.lock().unwrap() = pictures.to_vec();
+            Ok(())
+        }
+
         fn glossary(&self, _work: &str) -> Result<Glossary, TranslationError> {
             Ok(self.glossary.lock().unwrap().clone())
         }
@@ -863,7 +1027,11 @@ mod tests {
             work: &str,
             _pack: &str,
             translations: &[NewTranslation<'_>],
+            speakers: &[MessageSpeakerOverride],
+            pictures: &[TranslatedPicture],
         ) -> Result<(), TranslationError> {
+            self.save_speakers(work, speakers)?;
+            self.save_pictures(work, pictures)?;
             self.save(work, translations)
         }
 
@@ -1116,6 +1284,25 @@ mod tests {
     }
 
     #[test]
+    fn never_keeps_a_reply_that_went_on_repeating_itself() {
+        let translator = ScriptedTranslator::new(|batch| {
+            batch.lines.iter().map(|_| Some("n".repeat(3195))).collect()
+        });
+        let (service, store) = service_with(translator.clone());
+        let results = service
+            .translate(
+                "RJ1",
+                &[text("んおおおぉぉっ♥♥", TextKind::Dialogue)],
+                TextMarkup::RpgMaker,
+                Urgency::Background,
+            )
+            .unwrap();
+        assert_eq!(results, vec![None]);
+        assert_eq!(translator.batches().len(), 2);
+        assert!(store.translations.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn translates_a_repeated_text_once() {
         let translator = ScriptedTranslator::new(english);
         let (service, _) = service_with(translator.clone());
@@ -1172,6 +1359,19 @@ mod tests {
             )
             .unwrap();
         let pack = TranslationPack {
+            speakers: vec![MessageSpeakerOverride {
+                map: 1,
+                event: 2,
+                page: 0,
+                command: 4,
+                key: text_key("はい"),
+                expected_speaker: text_key("ユキナ"),
+                text: "Other Speaker".into(),
+            }],
+            pictures: vec![TranslatedPicture {
+                path: "pictures/Namecut02".to_owned(),
+                png: b"\x89PNG\r\n\x1a\nEnglish".to_vec(),
+            }],
             work: "RJ1".to_owned(),
             made: "2026-10-30".to_owned(),
             texts: vec![
@@ -1194,6 +1394,20 @@ mod tests {
                     reviewed: true,
                     source: Some("MOBDICTIONARY".to_owned()),
                 },
+                // The maker's own line for a label a script joins.
+                PackLine {
+                    key: text_key("消費JOBEXP:"),
+                    text: "Job Cost:".to_owned(),
+                    reviewed: true,
+                    source: Some("消費JOBEXP:".to_owned()),
+                },
+                // A text that is not its key's is not placed.
+                PackLine {
+                    key: text_key("前提："),
+                    text: "Requires:".to_owned(),
+                    reviewed: true,
+                    source: Some("別の文".to_owned()),
+                },
             ],
             names: vec![PackLine {
                 key: text_key("ユキナ"),
@@ -1214,6 +1428,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(shown, 1);
+        assert_eq!(service.all("RJ1").unwrap().speakers, pack.speakers);
+        assert_eq!(service.all("RJ1").unwrap().pictures, pack.pictures);
         let stored = store.translations.lock().unwrap();
         assert_eq!(
             stored[&("RJ1".to_owned(), text_key("はい"))].origin,
@@ -1235,6 +1451,9 @@ mod tests {
                 .texts
                 .contains(&("MOBDICTIONARY".to_owned(), "BESTIARY".to_owned()))
         );
+        let texts = service.all("RJ1").unwrap().texts;
+        assert!(texts.contains(&("消費JOBEXP:".to_owned(), "Job Cost:".to_owned())));
+        assert!(!texts.iter().any(|(source, _)| source == "別の文"));
         assert_eq!(store.glossary.lock().unwrap().terms.len(), 1);
     }
 

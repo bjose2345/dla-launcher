@@ -294,16 +294,31 @@ pub trait ScanIdentifiers: Send + Sync {
 }
 
 pub trait ArchiveHasher: Send + Sync {
+    /// `read` is told of each run of bytes as it is read from the file.
     fn hash(
         &self,
         request: &ArchiveHashRequest,
         cancellation: &dyn ScanCancellation,
+        read: &(dyn Fn(u64) + Sync),
     ) -> Result<ArchiveHash, ArchiveHashError>;
 }
 
 pub trait FilesystemScanObserver: Send + Sync {
+    /// How many files the root holds and their bytes together, before the
+    /// first of them is handed over.
+    fn counted(&self, files: u64, bytes: u64) -> Result<(), ScannerError>;
     fn discovered(&self, entry: DiscoveredEntry) -> Result<(), ScannerError>;
     fn issue(&self, issue: ScanSourceIssue) -> Result<(), ScannerError>;
+}
+
+/// A file's digest as the root's last scan stored it, with the size and the
+/// time of change the file had then.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KnownFileDigest {
+    pub path_key: String,
+    pub size: String,
+    pub modified_at: String,
+    pub hash: ArchiveHash,
 }
 
 pub trait FilesystemScanner: Send + Sync {
@@ -321,6 +336,12 @@ pub trait ScanRepository: Send + Sync {
     fn record_batch(&self, batch: &ScanWriteBatch) -> Result<(), ScannerError>;
     fn update_session(&self, session: &ScanSession) -> Result<(), ScannerError>;
     fn read_root(&self, root_id: &ScanRootId) -> Result<Option<ScanRoot>, ScannerError>;
+    /// The digests of the root's files, each from the scan that saw the
+    /// file last.
+    fn read_known_digests(
+        &self,
+        root_id: &ScanRootId,
+    ) -> Result<Vec<KnownFileDigest>, ScannerError>;
     fn read_session(&self, session_id: &ScanSessionId)
     -> Result<Option<ScanSession>, ScannerError>;
     fn read_latest_session(&self) -> Result<Option<ScanSession>, ScannerError>;

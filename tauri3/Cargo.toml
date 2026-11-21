@@ -41,6 +41,7 @@ flate2 = { version = "=1.1.10", default-features = false, features = ["zlib-rs"]
 lindera = { version = "=5.2.0", default-features = false, features = ["embed-ipadic"] }
 lindera-tantivy = { version = "=5.0.1", default-features = false, features = ["embed-ipadic"] }
 libc = "=0.2.190"
+lz4_flex = { version = "=0.13.1", default-features = false, features = ["std"] }
 md-5 = "=0.11.0"
 percent-encoding = "=2.3.2"
 rayon = "=1.12.0"
@@ -158,6 +159,30 @@ weezl = { opt-level = 3 }
 color_quant = { opt-level = 3 }
 moxcms = { opt-level = 3 }
 pxfm = { opt-level = 3 }
+
+# A launch hashes the program it starts, and unpacking a game hashes every
+# file of it: hundreds of megabytes.
+sha2 = { opt-level = 3 }
+
+# A track's waveform comes from decoding the whole file: unoptimized, 15
+# minutes of MP3 took 21 seconds (2026-11-20).
+symphonia = { opt-level = 3 }
+symphonia-bundle-flac = { opt-level = 3 }
+symphonia-bundle-mp3 = { opt-level = 3 }
+symphonia-codec-aac = { opt-level = 3 }
+symphonia-codec-adpcm = { opt-level = 3 }
+symphonia-codec-alac = { opt-level = 3 }
+symphonia-codec-pcm = { opt-level = 3 }
+symphonia-codec-vorbis = { opt-level = 3 }
+symphonia-common = { opt-level = 3 }
+symphonia-core = { opt-level = 3 }
+symphonia-format-caf = { opt-level = 3 }
+symphonia-format-isomp4 = { opt-level = 3 }
+symphonia-format-mkv = { opt-level = 3 }
+symphonia-format-ogg = { opt-level = 3 }
+symphonia-format-riff = { opt-level = 3 }
+symphonia-metadata = { opt-level = 3 }
+dla-media = { opt-level = 3 }
 
 # The CEF runtime with the launcher's patches (patches/), vendored by
 # scripts/prepare-runtime-cef.sh: its resource handler cannot skip to a

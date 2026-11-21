@@ -2761,22 +2761,26 @@ button.catalog-page.ellipsis {
   color: var(--color-error);
 }
 
-.work-launch-history {
-  flex: 0 0 100%;
-  min-width: 0;
-  margin-top: 10px;
-  padding: 11px 12px 12px;
-  border: 1px solid var(--app-border);
-  background: color-mix(in oklch, var(--color-base-200) 90%, transparent);
+.work-data-panel .work-data-wide {
+  grid-column: 1 / -1;
 }
 
-.work-launch-history > strong {
-  display: block;
-  margin-bottom: 8px;
-  color: var(--app-subtle);
-  font-size: 0.58rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+.work-library-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-primary);
+  cursor: pointer;
+  font: inherit;
+}
+
+.work-library-link:hover,
+.work-library-link:focus-visible {
+  text-decoration: underline;
+}
+
+.work-data-panel .is-running dd {
+  color: var(--color-success);
 }
 
 .work-local-button-play:disabled,

@@ -351,6 +351,8 @@ export interface LibraryLaunchTotals {
   installationId: string;
   launchCount: number;
   totalDurationMs: number;
+  /** When the work was last started. */
+  lastStartedAt: string;
 }
 
 export interface LibraryShelves {
@@ -569,6 +571,9 @@ export interface InstallationReviewRequest {
   contentItems: ContentItemOverride[];
 }
 
+/** gamescope on Linux where it is installed, Magpie on Windows. */
+export type Enlarger = "gamescope" | "magpie";
+
 export interface LaunchOptions {
   /** Start the work as if Windows were Japanese, through Locale Remulator. */
   japaneseLocale: boolean;
@@ -580,12 +585,20 @@ export interface LaunchOptions {
   videoPlayer: string | null;
   /** An audio player of the user's to play this work's tracks in, or none for the built-in player. */
   audioPlayer: string | null;
-  /** How Linux shows the game's window; null leaves it as the game made it. */
+  /** How the game's window is shown; null leaves it as the game made it. */
   windowScale: WindowScale | null;
-  /** Linux with gamescope installed can enlarge a game's window. */
-  windowScaleAvailable: boolean;
+  /** The program that enlarges a game's window on this computer; null where none can. */
+  enlarger: Enlarger | null;
   /** The refresh rate of the enlarged game in Hz; null is the launcher's default. */
   refreshRate: number | null;
+  /** How the enlarged picture is drawn; null is sharp pixels. */
+  pictureFilter: PictureFilter | null;
+  /** Show frame rate and load over the enlarged game. */
+  performanceOverlay: boolean;
+  /** The overlay needs MangoHud's mangoapp installed. */
+  performanceOverlayAvailable: boolean;
+  /** Milliseconds without movement before the enlarged game's cursor hides; null is ten seconds. */
+  cursorHideDelay: number | null;
 }
 
 export interface LaunchOptionsRequest {
@@ -594,13 +607,25 @@ export interface LaunchOptionsRequest {
   audioPlayer: string | null;
   windowScale: WindowScale | null;
   refreshRate: number | null;
+  pictureFilter: PictureFilter | null;
+  performanceOverlay: boolean;
+  cursorHideDelay: number | null;
 }
 
 /**
- * A small game's window enlarged through gamescope: full screen fitted, full screen
- * by whole numbers so its pixels stay sharp, or a window of the given size.
+ * A small game's window enlarged through gamescope: full screen fitted, cropped to
+ * cover the screen or stretched over it, full screen by whole numbers so its pixels
+ * stay sharp, or a window of the given size.
  */
-export type WindowScale = "fit" | "integer" | `${number}x${number}`;
+export type WindowScale = "fit" | "fill" | "stretch" | "integer" | `${number}x${number}`;
+
+export type PictureUpscaler = "fsr" | "nis";
+export type PictureSharpness = "soft" | "medium" | "strong";
+/**
+ * The enlarged picture with its pixels evened out, smoothed, or sharpened by one of
+ * gamescope's upscalers.
+ */
+export type PictureFilter = "even" | "smooth" | `${PictureUpscaler}-${PictureSharpness}`;
 
 /** Which of a work's media an external player is for. */
 export type MediaPlayerKind = "audio" | "video";
@@ -663,6 +688,8 @@ export interface LibraryGateway {
     installationId: string,
     limit: number,
   ): Promise<LaunchActivity[]>;
+  /** Forgets the work's ended launches, and with them its play time, on desktop. */
+  resetPlayTime?(installationId: string): Promise<void>;
   listMediaItems(installationId: string): Promise<MediaSessionItem[]>;
   readAudioWaveform(
     installationId: string,

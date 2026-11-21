@@ -7,6 +7,7 @@ import {
   FolderSearch2,
   LoaderCircle,
   OctagonAlert,
+  RefreshCw,
   Square,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -16,6 +17,7 @@ import { useGatewaySubscription } from "../../app/useGatewaySubscription";
 import { PathText } from "../../app/PathText";
 import { ProgressBar } from "../../app/ProgressBar";
 import { displayPath } from "../../displayPath";
+import { formatByteSize } from "../../formatByteSize";
 import { evidenceReasonMessageKey } from "../../i18n/domainLabels";
 import type { MessageKey } from "../../i18n/catalogs";
 import { usePresentation } from "../../preferences/PresentationProvider";
@@ -38,6 +40,7 @@ import {
 import type {
   AddScanFinding,
   ScanAddResult,
+  ScanExtent,
   ScanFinding,
   ScanProgress,
   ScanSessionView,
@@ -93,7 +96,8 @@ export function ScannerPage({
   const { locale, t } = usePresentation();
   const queryClient = useQueryClient();
   const preferEnglish = locale !== "ja-JP";
-  const [currentPath, setCurrentPath] = useState<string | null>(null);
+  // What only the scan's own reports say: where it is and how far.
+  const [live, setLive] = useState<{ sessionId: string; path: string | null; extent: ScanExtent | null } | null>(null);
   const [outcomes, setOutcomes] = useState<Record<string, RowOutcome>>({});
   const [notice, setNotice] = useState<ScannerNotice | null>(null);
   const [managing, setManaging] = useState<{ installationId: string; tab: ManageTab } | null>(null);
@@ -153,7 +157,7 @@ export function ScannerPage({
 
   const acceptStartedScan = async (started: ScanSessionView | null) => {
     if (!started) return;
-    setCurrentPath(null);
+    setLive(null);
     setNotice(null);
     queryClient.setQueryData(latestKey, started);
     await queryClient.invalidateQueries({ queryKey: latestKey });
@@ -179,7 +183,9 @@ export function ScannerPage({
     gateway.subscribeProgress.bind(gateway),
     (update) => {
       queryClient.setQueryData<ScanSessionView | null>(latestKey, (current) => mergeProgress(current, update));
-      setCurrentPath(isActive(update.status) ? update.currentRelativePath : null);
+      setLive(isActive(update.status)
+        ? { sessionId: update.sessionId, path: update.currentRelativePath, extent: update.extent ?? null }
+        : null);
       if (!isActive(update.status)) {
         void queryClient.invalidateQueries({ queryKey: latestKey });
       }
@@ -374,6 +380,8 @@ export function ScannerPage({
   const busy = add.isPending || undo.isPending || ignore.isPending;
   const rootPath = findings.data?.rootPath ?? view?.root.displayPath ?? "";
   const archivesFound = list.some((finding) => finding.kind === "archive" && !finding.inLibrary && !finding.ignored);
+  // The folder the last scan read is the one the main button scans: again.
+  const scannedDefault = Boolean(view && rootPreference.data?.displayPath === view.root.displayPath);
 
   const row = (finding: ScanFinding) => {
     const outcome = outcomes[finding.key];
@@ -412,12 +420,14 @@ export function ScannerPage({
         <div className="scanner-actions">
           {active && view ? (
             <button
-              className="app-button is-quiet is-danger"
+              className="app-button is-solid-danger"
               type="button"
               disabled={cancel.isPending}
               onClick={() => cancel.mutate(view.session.id)}
             >
-              {cancel.isPending ? <LoaderCircle className="app-spin" aria-hidden="true" /> : <Square aria-hidden="true" />}
+              {cancel.isPending
+                ? <LoaderCircle className="app-spin" aria-hidden="true" />
+                : <Square fill="currentColor" aria-hidden="true" />}
               {t("scanner.cancel")}
             </button>
           ) : (
@@ -432,8 +442,10 @@ export function ScannerPage({
                 disabled={!canScanDefault}
                 onClick={() => startPreferred.mutate()}
               >
-                {startPreferred.isPending ? <LoaderCircle className="app-spin" aria-hidden="true" /> : <FolderCog aria-hidden="true" />}
-                {t("scanner.scanDefault")}
+                {startPreferred.isPending
+                  ? <LoaderCircle className="app-spin" aria-hidden="true" />
+                  : scannedDefault ? <RefreshCw aria-hidden="true" /> : <FolderCog aria-hidden="true" />}
+                {t(scannedDefault ? "scanner.scanAgain" : "scanner.scanDefault")}
               </button>
             </>
           )}
@@ -463,17 +475,12 @@ export function ScannerPage({
         ) : null}
 
         {view && active ? (
-          <section className="scan-progress" aria-live="polite">
-            <LoaderCircle className="app-spin" aria-hidden="true" />
-            <div>
-              <strong><PathText text={(path) => t("scanner.progress.title", { path })} path={view.root.displayPath} /></strong>
-              <span>{t("scanner.progress.files", {
-                count: view.session.counters.inspectedFiles.toLocaleString(locale),
-              })}</span>
-              {currentPath ? <code title={currentPath}>{currentPath}</code> : null}
-            </div>
-            <ProgressBar className="scan-progress-bar" percent={null} size="slim" />
-          </section>
+          <ScanProgressCard
+            path={view.root.displayPath}
+            checkedFiles={view.session.counters.inspectedFiles}
+            extent={live?.sessionId === view.session.id ? live.extent : null}
+            current={live?.sessionId === view.session.id ? live.path : null}
+          />
         ) : null}
 
         {view && !active && !completed ? (
@@ -609,6 +616,59 @@ export function ScannerPage({
         />
       ) : null}
     </main>
+  );
+}
+
+/**
+ * A running scan: how far it is once the folder has been counted, and the
+ * file it is at. Until then, and where the scanner does not count, the bar
+ * sweeps and the files checked so far stand in.
+ */
+function ScanProgressCard({
+  path,
+  checkedFiles,
+  extent,
+  current,
+}: {
+  path: string;
+  checkedFiles: number;
+  extent: ScanExtent | null;
+  current: string | null;
+}) {
+  const { locale, t } = usePresentation();
+  const count = (value: number) => value.toLocaleString(locale);
+  const percent = !extent
+    ? null
+    : extent.totalBytes > 0
+      ? Math.floor((100 * extent.checkedBytes) / extent.totalBytes)
+      : extent.totalFiles > 0 ? Math.floor((100 * checkedFiles) / extent.totalFiles) : 100;
+  return (
+    <section className="scan-progress">
+      <div className="scan-progress-head">
+        <h2>
+          <LoaderCircle className="app-spin" aria-hidden="true" />
+          <PathText text={(shown) => t("scanner.progress.title", { path: shown })} path={path} />
+        </h2>
+        {percent === null ? null : <strong>{`${percent}%`}</strong>}
+      </div>
+      <ProgressBar percent={percent} label={t("scanner.progress.label")} />
+      <div className="scan-progress-counts">
+        {extent ? (
+          <>
+            <span>{t("scanner.progress.filesOf", { done: count(checkedFiles), total: count(extent.totalFiles) })}</span>
+            <span>{t("scanner.progress.bytesOf", {
+              done: formatByteSize(extent.checkedBytes, locale),
+              total: formatByteSize(extent.totalBytes, locale),
+            })}</span>
+          </>
+        ) : (
+          <span>{checkedFiles > 0
+            ? t("scanner.progress.files", { count: count(checkedFiles) })
+            : t("scanner.progress.counting")}</span>
+        )}
+      </div>
+      {current ? <code title={current}>{current}</code> : null}
+    </section>
   );
 }
 

@@ -4,15 +4,16 @@ use std::{
 };
 
 use dla_application::{
+    identity::{ArchiveHash, ArchiveHashAlgorithm},
     installation_from_scan::{
         InstallationScanResultScope, InstallationScanSelection, InstallationScanSnapshot,
         InstallationScanSource, InstallationScanSourceError,
     },
     scan_findings::IgnoredScanFindingStore,
     scanner::{
-        ScanIssuePage, ScanIssueQuery, ScanRepository, ScanResultItem, ScanResultPage,
-        ScanResultQuery, ScanRootLocation, ScanRootPreferenceRepository, ScanWriteBatch,
-        ScannerError,
+        KnownFileDigest, ScanIssuePage, ScanIssueQuery, ScanRepository, ScanResultItem,
+        ScanResultPage, ScanResultQuery, ScanRootLocation, ScanRootPreferenceRepository,
+        ScanWriteBatch, ScannerError,
     },
 };
 use dla_domain::scanner::{
@@ -171,6 +172,49 @@ impl ScanRepository for SqliteLibraryStore {
                 return Err(rusqlite::Error::QueryReturnedNoRows);
             }
             Ok(())
+        })
+        .map_err(ScannerError::persistence)
+    }
+
+    fn read_known_digests(
+        &self,
+        root_id: &ScanRootId,
+    ) -> Result<Vec<KnownFileDigest>, ScannerError> {
+        self.with_connection(|connection| {
+            // The entry's size and time are those of the scan that saw it
+            // last, and so is the digest taken here.
+            let mut statement = connection.prepare_cached(
+                "SELECT entry.path_key, entry.size, entry.modified_at, evidence.kind,
+                        evidence.normalized_value
+                 FROM library_scan_entry AS entry
+                 JOIN library_scan_evidence AS evidence
+                   ON evidence.source_entry_id = entry.entry_id
+                 JOIN library_scan_result AS result
+                   ON result.result_id = evidence.result_id
+                  AND result.session_id = entry.last_seen_session_id
+                 WHERE entry.root_id = ?1
+                   AND entry.kind = 'file'
+                   AND entry.size IS NOT NULL
+                   AND entry.modified_at IS NOT NULL
+                   AND evidence.kind IN ('archive_md5', 'archive_sha1', 'archive_sha256')",
+            )?;
+            let rows = statement.query_map(params![root_id.0], |row| {
+                let algorithm = match row.get::<_, String>(3)?.as_str() {
+                    "archive_md5" => ArchiveHashAlgorithm::Md5,
+                    "archive_sha1" => ArchiveHashAlgorithm::Sha1,
+                    _ => ArchiveHashAlgorithm::Sha256,
+                };
+                Ok(KnownFileDigest {
+                    path_key: row.get(0)?,
+                    size: row.get(1)?,
+                    modified_at: row.get(2)?,
+                    hash: ArchiveHash {
+                        algorithm,
+                        digest: row.get(4)?,
+                    },
+                })
+            })?;
+            rows.collect()
         })
         .map_err(ScannerError::persistence)
     }

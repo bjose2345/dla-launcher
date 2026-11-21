@@ -99,13 +99,28 @@ impl GameTranslationStore for SqliteLibraryStore {
                 let mut statement = transaction.prepare_cached(
                     "INSERT INTO library_game_translation_change
                      (installation_id, path, original, written_sha256, written_bytes,
-                      patched_at, original_bytes)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                      patched_at, original_bytes, moved_to, unpacked_from, unpacked_list)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 )?;
                 for change in &translation.changes {
+                    let moved_to = match &change.kind {
+                        GameFileChangeKind::Moved { to } => Some(to.as_str()),
+                        _ => None,
+                    };
+                    let (unpacked_from, unpacked_list) = match &change.kind {
+                        GameFileChangeKind::Unpacked { from, starts, .. } => {
+                            (Some(from.as_str()), starts.as_deref())
+                        }
+                        _ => (None, None),
+                    };
                     let (original, written_sha256, written_bytes, patched_at, original_bytes) =
                         match &change.kind {
-                            GameFileChangeKind::Added => (None, None, None, None, None),
+                            GameFileChangeKind::Added | GameFileChangeKind::Moved { .. } => {
+                                (None, None, None, None, None)
+                            }
+                            GameFileChangeKind::Unpacked { sha256, bytes, .. } => {
+                                (None, Some(sha256.as_str()), Some(count(*bytes)), None, None)
+                            }
                             GameFileChangeKind::Changed {
                                 original,
                                 written_sha256,
@@ -139,6 +154,9 @@ impl GameTranslationStore for SqliteLibraryStore {
                         written_bytes,
                         patched_at,
                         original_bytes,
+                        moved_to,
+                        unpacked_from,
+                        unpacked_list,
                     ])?;
                 }
             }
@@ -234,7 +252,8 @@ fn read_changes(
     installation_id: &InstallationId,
 ) -> rusqlite::Result<Vec<GameFileChange>> {
     let mut statement = connection.prepare_cached(
-        "SELECT path, original, written_sha256, written_bytes, patched_at, original_bytes
+        "SELECT path, original, written_sha256, written_bytes, patched_at, original_bytes,
+                moved_to, unpacked_from, unpacked_list
          FROM library_game_translation_change
          WHERE installation_id = ?1 ORDER BY path",
     )?;
@@ -244,11 +263,28 @@ fn read_changes(
                 .map_err(|error| conversion_error(0, error))?;
             let written_sha256 = row.get::<_, Option<String>>(2)?.unwrap_or_default();
             let written_bytes = uncount(row.get(3)?);
+            let moved_to = row
+                .get::<_, Option<String>>(6)?
+                .map(|to| RelativePath::parse(to).map_err(|error| conversion_error(6, error)))
+                .transpose()?;
+            let unpacked_from = row
+                .get::<_, Option<String>>(7)?
+                .map(|from| RelativePath::parse(from).map_err(|error| conversion_error(7, error)))
+                .transpose()?;
             let kind = match (
                 row.get::<_, Option<Vec<u8>>>(1)?,
                 row.get::<_, Option<i64>>(4)?,
             ) {
-                (None, _) => GameFileChangeKind::Added,
+                (None, _) => match (moved_to, unpacked_from) {
+                    (Some(to), _) => GameFileChangeKind::Moved { to },
+                    (None, Some(from)) => GameFileChangeKind::Unpacked {
+                        from,
+                        sha256: written_sha256,
+                        bytes: written_bytes,
+                        starts: row.get(8)?,
+                    },
+                    (None, None) => GameFileChangeKind::Added,
+                },
                 (Some(original), None) => GameFileChangeKind::Changed {
                     original,
                     written_sha256,
@@ -297,6 +333,13 @@ mod tests {
             plugin: "plugin-1".to_owned(),
             changes: vec![
                 GameFileChange {
+                    path: RelativePath::parse("Game/www/Data/BasicData.wolf").unwrap(),
+                    kind: GameFileChangeKind::Moved {
+                        to: RelativePath::parse("Game/www/Data/BasicData.wolf.dla-original")
+                            .unwrap(),
+                    },
+                },
+                GameFileChange {
                     path: RelativePath::parse("Game/www/Game.rgss3a").unwrap(),
                     kind: GameFileChangeKind::Patched {
                         at: 4369,
@@ -307,8 +350,26 @@ mod tests {
                     },
                 },
                 GameFileChange {
+                    path: RelativePath::parse("Game/www/data/System.json").unwrap(),
+                    kind: GameFileChangeKind::Unpacked {
+                        from: RelativePath::parse("Game/Packed.exe").unwrap(),
+                        sha256: "123".to_owned(),
+                        bytes: 4_294_967_300,
+                        starts: None,
+                    },
+                },
+                GameFileChange {
                     path: RelativePath::parse("Game/www/dla-translation").unwrap(),
                     kind: GameFileChangeKind::Added,
+                },
+                GameFileChange {
+                    path: RelativePath::parse("Game/www/game.exe").unwrap(),
+                    kind: GameFileChangeKind::Unpacked {
+                        from: RelativePath::parse("Game/Packed.exe").unwrap(),
+                        sha256: "456".to_owned(),
+                        bytes: 2_139_648,
+                        starts: Some("789".to_owned()),
+                    },
                 },
                 GameFileChange {
                     path: RelativePath::parse("Game/www/js/plugins.js").unwrap(),

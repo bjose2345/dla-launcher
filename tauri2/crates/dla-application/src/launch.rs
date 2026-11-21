@@ -13,7 +13,11 @@ use dla_domain::{
         Installation, InstallationId, InstallationPlatform, InstallationStatus, LaunchActionKind,
         LaunchTarget, MediaType, RelativePath,
     },
-    launch::{LaunchActivity, LaunchActivityId, LaunchActivityStatus, LaunchAdapter, WindowScale},
+    launch::{
+        LaunchActivity, LaunchActivityId, LaunchActivityStatus, LaunchAdapter, PictureFilter,
+        WindowScale,
+    },
+    translation::UnpackedProgram,
 };
 use thiserror::Error;
 
@@ -27,6 +31,9 @@ pub struct LaunchInstallationRequest {
     pub installation_id: InstallationId,
     pub activity_id: LaunchActivityId,
     pub attempted_at: String,
+    /// The program of a game the launcher unpacked from its executable: it
+    /// starts when that executable is what the installation starts.
+    pub program: Option<UnpackedProgram>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -44,6 +51,13 @@ pub struct LaunchExecutionPlan {
     /// The refresh rate gamescope paces the enlarged game at, in Hz; none
     /// leaves the launcher's default.
     pub refresh_rate: Option<u32>,
+    /// How gamescope draws the enlarged picture; none is sharp pixels.
+    pub picture_filter: Option<PictureFilter>,
+    /// Draw MangoHud's performance overlay over the enlarged game.
+    pub performance_overlay: bool,
+    /// Milliseconds without movement before gamescope hides the cursor;
+    /// none leaves its ten seconds.
+    pub cursor_hide_delay: Option<u32>,
 }
 
 /// The player's choices for how a work starts.
@@ -58,6 +72,13 @@ pub struct LaunchOptions {
     pub window_scale: Option<WindowScale>,
     /// The refresh rate of the enlarged game, in Hz; none is the default.
     pub refresh_rate: Option<u32>,
+    /// How the enlarged picture is drawn; none is sharp pixels.
+    pub picture_filter: Option<PictureFilter>,
+    /// Show frame rate and load over the enlarged game.
+    pub performance_overlay: bool,
+    /// Milliseconds without movement before the enlarged game's cursor
+    /// hides; none is ten seconds.
+    pub cursor_hide_delay: Option<u32>,
 }
 
 pub trait LaunchOptionStore: Send + Sync {
@@ -165,6 +186,9 @@ pub trait LaunchActivityStore: Send + Sync {
         interrupted_at: &str,
         reason: &str,
     ) -> Result<u64, LaunchError>;
+    /// Deletes the launches of an installation that have ended; a launch still
+    /// going on stays.
+    fn forget_ended_launches(&self, installation_id: &InstallationId) -> Result<u64, LaunchError>;
 }
 
 pub trait LaunchActivityObserver: Send + Sync {
@@ -221,6 +245,10 @@ impl LaunchActivityStore for ObservedLaunchActivityStore {
         reason: &str,
     ) -> Result<u64, LaunchError> {
         self.inner.interrupt_active_launches(interrupted_at, reason)
+    }
+
+    fn forget_ended_launches(&self, installation_id: &InstallationId) -> Result<u64, LaunchError> {
+        self.inner.forget_ended_launches(installation_id)
     }
 }
 
@@ -318,13 +346,19 @@ impl LaunchService {
             .read(&request.installation_id)?
             .ok_or_else(|| LaunchError::NotFound(request.installation_id.0.clone()))?;
 
-        let plan = match self.build_plan(&installation) {
+        let mut plan = match self.build_plan(&installation) {
             Ok(plan) => plan,
             Err(error) => {
                 self.record_preflight_failure(&request, &installation, &error)?;
                 return Err(error);
             }
         };
+        if let Some(program) = &request.program
+            && plan.relative_target == program.in_place_of
+        {
+            plan.relative_target = program.path.clone();
+            plan.expected_sha256 = Some(program.sha256.clone());
+        }
 
         let mut activity = LaunchActivity {
             id: request.activity_id.clone(),
@@ -447,6 +481,11 @@ impl LaunchService {
             .list_launch_activities(Some(installation_id), normalized_history_limit(limit))
     }
 
+    /// Starts the play time and count of an installation from nothing again.
+    pub fn reset_play_time(&self, installation_id: &InstallationId) -> Result<u64, LaunchError> {
+        self.activities.forget_ended_launches(installation_id)
+    }
+
     fn supervise(
         &self,
         activity: LaunchActivity,
@@ -566,6 +605,9 @@ impl LaunchService {
                 japanese_locale: options.japanese_locale,
                 window_scale: options.window_scale,
                 refresh_rate: options.refresh_rate,
+                picture_filter: options.picture_filter,
+                performance_overlay: options.performance_overlay,
+                cursor_hide_delay: options.cursor_hide_delay,
             });
         }
 
@@ -616,6 +658,9 @@ impl LaunchService {
             japanese_locale: options.japanese_locale,
             window_scale: options.window_scale,
             refresh_rate: options.refresh_rate,
+            picture_filter: options.picture_filter,
+            performance_overlay: options.performance_overlay,
+            cursor_hide_delay: options.cursor_hide_delay,
         })
     }
 
@@ -1132,6 +1177,23 @@ mod tests {
             }
             Ok(active.len() as u64)
         }
+
+        fn forget_ended_launches(
+            &self,
+            installation_id: &InstallationId,
+        ) -> Result<u64, LaunchError> {
+            let ended: Vec<_> = self
+                .list_launch_activities(Some(installation_id), u32::MAX)?
+                .into_iter()
+                .filter(|activity| activity.status.is_terminal())
+                .map(|activity| activity.id)
+                .collect();
+            self.activities
+                .lock()
+                .expect("activities")
+                .retain(|activity| !ended.contains(&activity.id));
+            Ok(ended.len() as u64)
+        }
     }
 
     fn latest_for_installation<'a>(
@@ -1247,6 +1309,7 @@ mod tests {
             installation_id: InstallationId("installation-1".to_owned()),
             activity_id: LaunchActivityId("launch-1".to_owned()),
             attempted_at: "2026-08-09T01:00:00Z".to_owned(),
+            program: None,
         }
     }
 
@@ -1330,6 +1393,53 @@ mod tests {
             .expect("stop long-running process");
     }
 
+    #[test]
+    fn starts_the_unpacked_program_in_place_of_the_executable_it_came_from() {
+        let unpacked = |in_place_of: &str| UnpackedProgram {
+            in_place_of: RelativePath::parse(in_place_of).unwrap(),
+            path: RelativePath::parse("game/Unpacked.exe").unwrap(),
+            sha256: "def456".to_owned(),
+        };
+        let launched = |program: UnpackedProgram| {
+            let executor = Arc::new(RecordingExecutor {
+                plans: Mutex::new(vec![]),
+                failure: None,
+                behavior: ProcessBehavior::LongRunning,
+            });
+            let service = LaunchService::new(
+                Arc::new(MemoryInstallationStore {
+                    installation: installation(true, true),
+                }),
+                Arc::new(MemoryPreparationStore {
+                    prepared: Some(prepared()),
+                }),
+                executor.clone(),
+                Arc::new(MemoryActivityStore::default()),
+                Arc::new(TestClock::default()),
+            );
+            let running = service
+                .launch(LaunchInstallationRequest {
+                    program: Some(program),
+                    ..request()
+                })
+                .expect("running activity");
+            service
+                .stop(&running.id)
+                .expect("stop long-running process");
+            let plan = executor.plans.lock().expect("plans")[0].clone();
+            (running.target_path, plan)
+        };
+
+        let (target, plan) = launched(unpacked("game/Game.exe"));
+        assert_eq!(target.as_deref(), Some("game/Unpacked.exe"));
+        assert_eq!(plan.relative_target.as_str(), "game/Unpacked.exe");
+        assert_eq!(plan.expected_sha256.as_deref(), Some("def456"));
+
+        let (target, plan) = launched(unpacked("game/Other.exe"));
+        assert_eq!(target.as_deref(), Some("game/Game.exe"));
+        assert_eq!(plan.expected_sha256.as_deref(), Some("abc123"));
+    }
+
     struct ChosenOptions;
 
     impl LaunchOptionStore for ChosenOptions {
@@ -1343,6 +1453,9 @@ mod tests {
                 audio_player: None,
                 window_scale: Some(WindowScale::Fit),
                 refresh_rate: Some(60),
+                picture_filter: Some(PictureFilter::Smooth),
+                performance_overlay: true,
+                cursor_hide_delay: Some(3000),
             })
         }
 
@@ -1392,6 +1505,11 @@ mod tests {
         assert_eq!(plans[1].window_scale, Some(WindowScale::Fit));
         assert_eq!(plans[0].refresh_rate, None);
         assert_eq!(plans[1].refresh_rate, Some(60));
+        assert_eq!(plans[0].picture_filter, None);
+        assert_eq!(plans[1].picture_filter, Some(PictureFilter::Smooth));
+        assert!(!plans[0].performance_overlay && plans[1].performance_overlay);
+        assert_eq!(plans[0].cursor_hide_delay, None);
+        assert_eq!(plans[1].cursor_hide_delay, Some(3000));
     }
 
     #[test]

@@ -105,7 +105,9 @@ fn serve(
         TranslationService::new(store)
             .with_name_readings(Arc::new(dla_translator::NameList::new())),
     );
-    service.set_translator(Some(Arc::new(LocalModelTranslator::new(address, model))));
+    service.set_translator(Some(Arc::new(LocalModelTranslator::new(
+        address, model, None,
+    ))));
     let relay = TranslationRelay::start(Arc::new(Bridge(Arc::clone(&service)))).map_err(text)?;
     let access = RelayAccess {
         address: format!("http://{}", relay.address()),
@@ -382,6 +384,22 @@ fn write_changes(file: &Path, changes: &[GameFileChange]) -> Result<(), String> 
                 "writtenSha256": written_sha256,
                 "writtenBytes": written_bytes,
             }),
+            GameFileChangeKind::Moved { to } => json!({
+                "path": change.path.as_str(),
+                "movedTo": to.as_str(),
+            }),
+            GameFileChangeKind::Unpacked {
+                from,
+                sha256,
+                bytes,
+                starts,
+            } => json!({
+                "path": change.path.as_str(),
+                "unpackedFrom": from.as_str(),
+                "writtenSha256": sha256,
+                "writtenBytes": bytes,
+                "unpackedList": starts,
+            }),
         })
         .collect::<Vec<_>>();
     fs::write(file, serde_json::to_vec_pretty(&entries).map_err(text)?).map_err(text)
@@ -401,7 +419,18 @@ fn read_changes(file: &Path) -> Result<Vec<GameFileChange>, String> {
                 .to_owned();
             let written_bytes = entry["writtenBytes"].as_u64().unwrap_or_default();
             let kind = match (entry["original"].as_str(), entry["patchedAt"].as_u64()) {
-                (None, _) => GameFileChangeKind::Added,
+                (None, _) => match (entry["movedTo"].as_str(), entry["unpackedFrom"].as_str()) {
+                    (Some(to), _) => GameFileChangeKind::Moved {
+                        to: RelativePath::parse(to).map_err(text)?,
+                    },
+                    (None, Some(from)) => GameFileChangeKind::Unpacked {
+                        from: RelativePath::parse(from).map_err(text)?,
+                        sha256: written_sha256,
+                        bytes: written_bytes,
+                        starts: entry["unpackedList"].as_str().map(str::to_owned),
+                    },
+                    (None, None) => GameFileChangeKind::Added,
+                },
                 (Some(original), None) => GameFileChangeKind::Changed {
                     original: hex::decode(original).map_err(text)?,
                     written_sha256,

@@ -138,7 +138,7 @@ export const tauriLibraryGateway: LibraryGateway = {
   saveLaunchOptions: __DLA_TARGET_PLATFORM__ === "android"
     ? undefined
     : (installationId: string, options: LaunchOptionsRequest): Promise<LaunchOptions> =>
-      invoke("save_launch_options", { installationId, ...options }),
+      invoke("save_launch_options", { installationId, options }),
   selectMediaPlayer: __DLA_TARGET_PLATFORM__ === "android"
     ? undefined
     : (): Promise<string | null> => invoke("select_media_player"),
@@ -173,6 +173,9 @@ export const tauriLibraryGateway: LibraryGateway = {
     limit: number,
   ): Promise<LaunchActivity[]> {
     return invoke("list_installation_launch_history", { installationId, limit });
+  },
+  resetPlayTime(installationId: string): Promise<void> {
+    return invoke("reset_library_play_time", { installationId });
   },
   listMediaItems(installationId: string): Promise<MediaSessionItem[]> {
     return invoke("list_library_media_items", { installationId });

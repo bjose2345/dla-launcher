@@ -8,10 +8,11 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 
 export const tauriTranslationGateway: TranslationGateway = {
   readSettings: () => invoke("read_translation_settings"),
-  saveSettings: ({ translator, deeplKey, prepareOnlyWhenIdle }) =>
-    invoke("save_translation_settings", { translator, deeplKey, prepareOnlyWhenIdle }),
-  testTranslator: (translator, deeplKey) => invoke("test_translator", { translator, deeplKey }),
+  saveSettings: ({ translator, key, prepareOnlyWhenIdle }) =>
+    invoke("save_translation_settings", { translator, key, prepareOnlyWhenIdle }),
+  testTranslator: (translator, key) => invoke("test_translator", { translator, key }),
   readGame: (installationId) => invoke("read_game_translation", { installationId }),
+  shownGames: () => invoke("list_shown_game_translations"),
   turnOn: (installationId) => invoke("turn_on_game_translation", { installationId }),
   show: (installationId, shown) => invoke("show_game_translation", { installationId, shown }),
   remove: (installationId) => invoke("remove_game_translation", { installationId }),

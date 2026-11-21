@@ -19,7 +19,7 @@ use dla_application::{
 };
 use dla_domain::scanner::{DiscoveredEntry, ScanCounters, ScanEntryKind, ScanIssueCode};
 use md5::Md5;
-use rayon::iter::{ParallelBridge, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -56,21 +56,35 @@ impl FilesystemScanner for DesktopFilesystem {
             .thread_name(|index| format!("dla-scan-{index}"))
             .build()
             .map_err(ScannerError::filesystem)?;
+        // The folder is walked whole first, so the observer knows how much
+        // there is before the first file is checked.
+        let mut walked = Vec::new();
+        let (mut files, mut bytes) = (0_u64, 0_u64);
+        for entry in WalkDir::new(&root).follow_links(request.options.follow_symlinks) {
+            if cancellation.is_cancelled() {
+                return Err(ScannerError::Cancelled);
+            }
+            if let Ok(entry) = &entry
+                && entry.depth() > 0
+                && entry.file_type().is_file()
+            {
+                files += 1;
+                bytes += entry.metadata().map_or(0, |metadata| metadata.len());
+            }
+            walked.push(entry);
+        }
+        observer.counted(files, bytes)?;
         pool.install(|| {
-            WalkDir::new(&root)
-                .follow_links(request.options.follow_symlinks)
-                .into_iter()
-                .par_bridge()
-                .try_for_each(|walked| {
-                    if cancellation.is_cancelled() {
-                        return Err(ScannerError::Cancelled);
-                    }
-                    match walked {
-                        Ok(entry) if entry.depth() == 0 => Ok(()),
-                        Ok(entry) => observe_entry(&root, entry, observer, &counters, cancellation),
-                        Err(error) => observe_walk_error(&root, error, observer, &counters),
-                    }
-                })
+            walked.into_par_iter().try_for_each(|walked| {
+                if cancellation.is_cancelled() {
+                    return Err(ScannerError::Cancelled);
+                }
+                match walked {
+                    Ok(entry) if entry.depth() == 0 => Ok(()),
+                    Ok(entry) => observe_entry(&root, entry, observer, &counters, cancellation),
+                    Err(error) => observe_walk_error(&root, error, observer, &counters),
+                }
+            })
         })?;
         Ok(counters.snapshot())
     }
@@ -81,6 +95,7 @@ impl ArchiveHasher for DesktopFilesystem {
         &self,
         request: &ArchiveHashRequest,
         cancellation: &dyn ScanCancellation,
+        read: &(dyn Fn(u64) + Sync),
     ) -> Result<ArchiveHash, ArchiveHashError> {
         let root = self
             .access
@@ -106,9 +121,11 @@ impl ArchiveHasher for DesktopFilesystem {
         })?;
         let mut reader = BufReader::with_capacity(1024 * 1024, file);
         let digest = match request.algorithm {
-            ArchiveHashAlgorithm::Md5 => digest_reader::<Md5>(&mut reader, cancellation),
-            ArchiveHashAlgorithm::Sha1 => digest_reader::<Sha1>(&mut reader, cancellation),
-            ArchiveHashAlgorithm::Sha256 => digest_reader::<Sha256>(&mut reader, cancellation),
+            ArchiveHashAlgorithm::Md5 => digest_reader::<Md5>(&mut reader, cancellation, read),
+            ArchiveHashAlgorithm::Sha1 => digest_reader::<Sha1>(&mut reader, cancellation, read),
+            ArchiveHashAlgorithm::Sha256 => {
+                digest_reader::<Sha256>(&mut reader, cancellation, read)
+            }
         }
         .map_err(|error| match error {
             ArchiveHashError::Source(mut source) => {
@@ -287,6 +304,7 @@ fn resolve_child_path(root: &Path, relative_path: &str) -> Result<PathBuf, Strin
 fn digest_reader<D: Digest + Default>(
     reader: &mut BufReader<File>,
     cancellation: &dyn ScanCancellation,
+    told: &(dyn Fn(u64) + Sync),
 ) -> Result<String, ArchiveHashError> {
     let mut digest = D::new();
     let mut buffer = vec![0_u8; 1024 * 1024];
@@ -306,6 +324,7 @@ fn digest_reader<D: Digest + Default>(
             break;
         }
         digest.update(&buffer[..read]);
+        told(read as u64);
     }
     let bytes = digest.finalize();
     let mut value = String::with_capacity(bytes.len() * 2);
@@ -343,11 +362,23 @@ mod tests {
 
     #[derive(Default)]
     struct RecordingObserver {
+        /// The files and bytes counted, with how many entries had been
+        /// handed over by then.
+        counted: Mutex<Vec<(u64, u64, usize)>>,
         entries: Mutex<Vec<DiscoveredEntry>>,
         issues: Mutex<Vec<ScanSourceIssue>>,
     }
 
     impl FilesystemScanObserver for RecordingObserver {
+        fn counted(&self, files: u64, bytes: u64) -> Result<(), ScannerError> {
+            let entries = self.entries.lock().expect("entries lock").len();
+            self.counted
+                .lock()
+                .expect("counted lock")
+                .push((files, bytes, entries));
+            Ok(())
+        }
+
         fn discovered(&self, entry: DiscoveredEntry) -> Result<(), ScannerError> {
             self.entries.lock().expect("entries lock").push(entry);
             Ok(())
@@ -364,6 +395,7 @@ mod tests {
         let directory = tempdir().expect("temporary directory");
         fs::create_dir(directory.path().join("RJ01326398")).expect("work directory");
         fs::write(directory.path().join("RJ01326398/game.exe"), b"game").expect("game file");
+        fs::write(directory.path().join("RJ01326398/readme.txt"), b"read me").expect("text file");
         let access = Arc::new(ScanAccessRegistry::new());
         let approved = access.approve(directory.path()).expect("approved root");
         let scanner = DesktopFilesystem::new(access);
@@ -384,9 +416,17 @@ mod tests {
             .map(|entry| entry.relative_path.clone())
             .collect::<Vec<_>>();
         paths.sort();
-        assert_eq!(paths, vec!["RJ01326398", "RJ01326398/game.exe"]);
+        assert_eq!(
+            paths,
+            vec!["RJ01326398", "RJ01326398/game.exe", "RJ01326398/readme.txt"]
+        );
         assert_eq!(counters.discovered_directories, 1);
-        assert_eq!(counters.discovered_files, 1);
+        assert_eq!(counters.discovered_files, 2);
+        // Counted once, before any entry: two files of 4 and 7 bytes.
+        assert_eq!(
+            *observer.counted.lock().expect("counted lock"),
+            [(2, 11, 0)]
+        );
     }
 
     #[test]
@@ -396,6 +436,7 @@ mod tests {
         let access = Arc::new(ScanAccessRegistry::new());
         let approved = access.approve(directory.path()).expect("approved root");
         let scanner = DesktopFilesystem::new(access);
+        let read = AtomicU64::new(0);
         let hash = scanner
             .hash(
                 &ArchiveHashRequest {
@@ -404,6 +445,9 @@ mod tests {
                     algorithm: ArchiveHashAlgorithm::Sha256,
                 },
                 &NeverCancelled,
+                &|bytes| {
+                    read.fetch_add(bytes, Ordering::Relaxed);
+                },
             )
             .expect("archive hash");
 
@@ -411,6 +455,7 @@ mod tests {
             hash.digest,
             "af752b95d170411f60fd279016c06877879c6dd5d7f9f9152fe584ee8ea5f557"
         );
+        assert_eq!(read.into_inner(), 12);
     }
 
     #[test]
@@ -480,6 +525,7 @@ mod tests {
                     algorithm: ArchiveHashAlgorithm::Sha256,
                 },
                 &NeverCancelled,
+                &|_| {},
             )
             .expect_err("outside path rejected");
 

@@ -5,15 +5,15 @@ export type TranslatorSettings =
 
 export interface TranslationSettings {
   translator: TranslatorSettings | null;
-  /** The DeepL key itself never comes back from the launcher. */
-  deeplKeySaved: boolean;
+  /** Whether the translator chosen has a key saved; the key itself never comes back from the launcher. */
+  keySaved: boolean;
   prepareOnlyWhenIdle: boolean;
 }
 
 export interface SaveTranslationSettings {
   translator: TranslatorSettings | null;
-  /** Undefined keeps the saved key; an empty string forgets it. */
-  deeplKey?: string;
+  /** The key of the translator chosen. Undefined keeps the saved key; an empty string forgets it. */
+  key?: string;
   prepareOnlyWhenIdle?: boolean;
 }
 
@@ -49,6 +49,8 @@ export interface GroupProgress {
 
 export interface PreparationView {
   state: PreparationState;
+  /** Pause was chosen, and the lines being translated are still finishing. */
+  pausing: boolean;
   groups: GroupProgress[];
   done: number;
   total: number;
@@ -88,14 +90,18 @@ export interface GameTranslationView {
   translatorReady: boolean;
   preparation: PreparationView | null;
   pack: PackView | null;
+  /** The bytes turning translation on writes to unpack a game packed into one file. */
+  unpackBytes?: number | null;
 }
 
 export interface TranslationGateway {
   readSettings(): Promise<TranslationSettings>;
   saveSettings(request: SaveTranslationSettings): Promise<TranslationSettings>;
   /** Translates one line with these settings, without saving them. */
-  testTranslator(translator: TranslatorSettings, deeplKey?: string): Promise<TranslatorTestResult>;
+  testTranslator(translator: TranslatorSettings, key?: string): Promise<TranslatorTestResult>;
   readGame(installationId: string): Promise<GameTranslationView>;
+  /** The installations whose translation is on and shown. */
+  shownGames?(): Promise<string[]>;
   turnOn(installationId: string): Promise<GameTranslationView>;
   show(installationId: string, shown: boolean): Promise<GameTranslationView>;
   remove(installationId: string): Promise<void>;

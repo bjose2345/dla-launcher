@@ -180,34 +180,43 @@ export function AnchoredPopover({
     };
   }, [anchorRef, updatePosition]);
 
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     let pointerDownAt = Number.NEGATIVE_INFINITY;
+    let leaving: number | undefined;
     const closeOutside = (event: PointerEvent) => {
       pointerDownAt = performance.now();
+      window.clearTimeout(leaving);
+      leaving = undefined;
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (anchorRef.current?.contains(target) || popoverRef.current?.contains(target)) return;
-      onClose();
+      onCloseRef.current();
     };
     const closeWithEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") onCloseRef.current();
     };
     const closeWhenLeft = () => {
       // Chromium embedded under GTK (the CEF runtime) blurs the page for a
-      // moment on every press while X11 focus moves between its windows. A
-      // blur right after a press in the page is that, not the user leaving.
+      // moment on every press while X11 focus moves between its windows. The
+      // blur comes right after the press, or just before it when the page
+      // was still blurred from the press before. Neither is the user
+      // leaving, so only a blur with no press near it closes.
       if (performance.now() - pointerDownAt < PRESS_BLUR_GRACE_MS) return;
-      onClose();
+      window.clearTimeout(leaving);
+      leaving = window.setTimeout(() => onCloseRef.current(), PRESS_BLUR_GRACE_MS);
     };
     document.addEventListener("pointerdown", closeOutside, true);
     window.addEventListener("keydown", closeWithEscape, true);
     window.addEventListener("blur", closeWhenLeft);
     return () => {
+      window.clearTimeout(leaving);
       document.removeEventListener("pointerdown", closeOutside, true);
       window.removeEventListener("keydown", closeWithEscape, true);
       window.removeEventListener("blur", closeWhenLeft);
     };
-  }, [anchorRef, onClose]);
+  }, [anchorRef]);
 
   // While an element is fullscreen the top layer paints it over the rest of
   // the document, so a popover for a control inside it must mount inside it

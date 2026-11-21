@@ -7,6 +7,7 @@ import {
   libraryDisplayCreator,
   libraryReleaseDate,
   resumePlaceLabel,
+  lastPlayedDay,
   launchTotalsByInstallation,
   libraryLensCounts,
   matchesLibraryLens,
@@ -188,9 +189,19 @@ describe("playTimeParts", () => {
 describe("launchTotalsByInstallation", () => {
   it("indexes totals by installation", () => {
     const totals = launchTotalsByInstallation([
-      { installationId: "game", launchCount: 4, totalDurationMs: 900_000 },
+      { installationId: "game", launchCount: 4, totalDurationMs: 900_000, lastStartedAt: "2026-08-08T12:00:00Z" },
     ]);
     expect(totals.get("game")?.launchCount).toBe(4);
     expect(totals.get("absent")).toBeUndefined();
+  });
+});
+
+describe("lastPlayedDay", () => {
+  const now = new Date(2026, 10, 15, 0, 30);
+
+  it("goes by the calendar day here, not by hours passed", () => {
+    expect(lastPlayedDay(new Date(2026, 10, 15, 0, 5).toISOString(), now)).toBe("today");
+    expect(lastPlayedDay(new Date(2026, 10, 14, 23, 55).toISOString(), now)).toBe("yesterday");
+    expect(lastPlayedDay(new Date(2026, 10, 13, 23, 55).toISOString(), now)).toBeNull();
   });
 });

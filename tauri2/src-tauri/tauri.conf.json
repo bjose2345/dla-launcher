@@ -63,6 +63,7 @@
         "recommends": [
           "gamescope",
           "libdecor-0-plugin-1-cairo",
+          "mangoapp",
           "gstreamer1.0-gl",
           "gstreamer1.0-plugins-bad",
           "gstreamer1.0-plugins-base",

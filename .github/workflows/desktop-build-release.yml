@@ -138,6 +138,27 @@ jobs:
             echo "No DLA_LAUNCHER_ACCESS_TOKEN secret; Install from DLA will be unavailable in this build."
           fi
 
+      - name: Write the overlays access token and CA
+        shell: bash
+        env:
+          DLA_LAUNCHER_OVERLAYS_ACCESS_TOKEN: ${{ secrets.DLA_LAUNCHER_OVERLAYS_ACCESS_TOKEN }}
+          DLA_LAUNCHER_OVERLAYS_CA: ${{ secrets.DLA_LAUNCHER_OVERLAYS_CA }}
+        run: |
+          # Repository secrets holding the contents of state/tunnel/overlays-token.json
+          # and state/overlays/ca.crt. Both are needed; without them the build
+          # succeeds and translations from the archive are unavailable.
+          if [[ -n "$DLA_LAUNCHER_OVERLAYS_ACCESS_TOKEN" && -n "$DLA_LAUNCHER_OVERLAYS_CA" ]]; then
+            token_file="$RUNNER_TEMP/overlays-token.json"
+            ca_file="$RUNNER_TEMP/overlays-ca.crt"
+            printf '%s' "$DLA_LAUNCHER_OVERLAYS_ACCESS_TOKEN" > "$token_file"
+            printf '%s\n' "$DLA_LAUNCHER_OVERLAYS_CA" > "$ca_file"
+            echo "DLA_LAUNCHER_OVERLAYS_ACCESS_TOKEN_FILE=$token_file" >> "$GITHUB_ENV"
+            echo "DLA_LAUNCHER_OVERLAYS_CA_FILE=$ca_file" >> "$GITHUB_ENV"
+            echo "The overlays access token and CA are set for this build."
+          else
+            echo "No overlays secrets; translations from the archive will be unavailable in this build."
+          fi
+
       - name: Set up Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
@@ -295,6 +316,26 @@ jobs:
             echo "The launcher access token is set for this build."
           else
             echo "No DLA_LAUNCHER_ACCESS_TOKEN secret; Install from DLA will be unavailable in this build."
+          fi
+
+      - name: Write the overlays access token and CA
+        env:
+          DLA_LAUNCHER_OVERLAYS_ACCESS_TOKEN: ${{ secrets.DLA_LAUNCHER_OVERLAYS_ACCESS_TOKEN }}
+          DLA_LAUNCHER_OVERLAYS_CA: ${{ secrets.DLA_LAUNCHER_OVERLAYS_CA }}
+        run: |
+          # Repository secrets holding the contents of state/tunnel/overlays-token.json
+          # and state/overlays/ca.crt. Both are needed; without them the build
+          # succeeds and translations from the archive are unavailable.
+          if [[ -n "$DLA_LAUNCHER_OVERLAYS_ACCESS_TOKEN" && -n "$DLA_LAUNCHER_OVERLAYS_CA" ]]; then
+            token_file="$RUNNER_TEMP/overlays-token.json"
+            ca_file="$RUNNER_TEMP/overlays-ca.crt"
+            printf '%s' "$DLA_LAUNCHER_OVERLAYS_ACCESS_TOKEN" > "$token_file"
+            printf '%s\n' "$DLA_LAUNCHER_OVERLAYS_CA" > "$ca_file"
+            echo "DLA_LAUNCHER_OVERLAYS_ACCESS_TOKEN_FILE=$token_file" >> "$GITHUB_ENV"
+            echo "DLA_LAUNCHER_OVERLAYS_CA_FILE=$ca_file" >> "$GITHUB_ENV"
+            echo "The overlays access token and CA are set for this build."
+          else
+            echo "No overlays secrets; translations from the archive will be unavailable in this build."
           fi
 
       - name: Set up Node.js

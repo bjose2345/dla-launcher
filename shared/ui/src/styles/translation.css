@@ -83,6 +83,28 @@
   color: var(--color-warning);
 }
 
+.translation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+/* Play and Stop take each other's place: one width, so neither moves the
+   buttons beside it. */
+.translation-play {
+  min-width: 88px;
+  margin-left: auto;
+}
+
+.translation-running {
+  color: var(--app-muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
 .translation-card-head {
   display: flex;
   align-items: baseline;

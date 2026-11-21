@@ -255,13 +255,27 @@ pub struct ScanIssue {
     pub created_at: String,
 }
 
+/// How much a scan has to check and how much of that it has checked, in
+/// files' bytes: a file it has to read counts as it is read, any other when
+/// it is done.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanExtent {
+    pub total_files: u64,
+    pub total_bytes: u64,
+    pub checked_bytes: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanProgress {
     pub session_id: ScanSessionId,
     pub status: ScanStatus,
     pub counters: ScanCounters,
+    /// The file being read, or the one checked last.
     pub current_relative_path: Option<String>,
+    /// Known once the folder has been counted.
+    pub extent: Option<ScanExtent>,
 }
 
 #[cfg(test)]

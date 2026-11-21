@@ -61,8 +61,11 @@ export const tauriScannerGateway: ScannerGateway = {
   selectInstallFolder(): Promise<ScanInstallView | null> {
     return invoke("select_install_folder");
   },
-  installArchive(installationId): Promise<ScanInstallView> {
-    return invoke("install_library_archive", { installationId });
+  installArchive(installationId, takenFolder): Promise<ScanInstallView> {
+    return invoke("install_library_archive", {
+      installationId,
+      destinationConflictPolicy: takenFolder ?? null,
+    });
   },
   cancelInstall(installationId): Promise<ScanInstallView> {
     return invoke("cancel_scan_install", { installationId });

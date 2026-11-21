@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
 use dla_domain::translation::TextMarkup;
 use sha2::{Digest, Sha256};
@@ -15,6 +15,9 @@ pub fn has_japanese(text: &str) -> bool {
 
 /// Japanese left in a translation. The middle dot and the long-vowel mark are
 /// punctuation in an English line, not leftovers.
+const RUNAWAY_FACTOR: usize = 12;
+const RUNAWAY_ALLOWANCE: usize = 80;
+
 pub fn has_leftover_japanese(text: &str) -> bool {
     text.chars()
         .any(|character| is_japanese(character) && !matches!(character, '・' | 'ー'))
@@ -48,19 +51,23 @@ fn is_katakana(character: char) -> bool {
 /// code that applies to the whole rest of the text and starts or ends it (a
 /// face change, an icon, a single colour) is held back and put back where it
 /// was: models drop placeholders at a line's edges, and nothing in the
-/// English needs it.
+/// English needs it. So are the parts of a name that a game's scripts read
+/// (`name_parts`).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreparedText {
     pub line: String,
     codes: Vec<String>,
     before: String,
     after: String,
+    /// The game's scripts split this name at `/`: the English adds none.
+    divided: bool,
 }
 
 impl PreparedText {
     pub fn new(text: &str, markup: TextMarkup) -> Self {
         match markup {
             TextMarkup::RpgMaker => rpg_maker(text, true),
+            TextMarkup::Wolf => wolf(text, true),
         }
     }
 
@@ -74,17 +81,32 @@ impl PreparedText {
         }
         let earlier = match markup {
             TextMarkup::RpgMaker => rpg_maker(text, false),
+            TextMarkup::Wolf => wolf(text, false),
         };
         (earlier.line == sent).then_some(earlier)
     }
 
     /// Whether a reply can stand as this text's translation: every
     /// placeholder kept, the same numbers (as digits or words), no Japanese
-    /// left.
+    /// left, and no code of its own making. A translator that has seen
+    /// codes writes some where there are none (`\_`, or the `_` of one):
+    /// a backslash or an underscore the line does not have is one.
     pub fn accepts(&self, reply: &str) -> bool {
-        placeholders(reply) == placeholders(&self.line)
+        !self.runs_away(reply)
+            && placeholders(reply) == placeholders(&self.line)
             && keeps_numbers(&self.line, reply)
             && !has_leftover_japanese(reply)
+            && ['\\', '_']
+                .iter()
+                .all(|sign| reply.matches(*sign).count() <= self.line.matches(*sign).count())
+    }
+
+    /// Whether a reply is a translator that went on repeating itself
+    /// (3,195 letters of `Nnnn…` for a cry of nine): English runs to a few
+    /// times the letters of its Japanese, and to more only for a word or
+    /// two. Such a reply is never kept, not even as an imperfect one.
+    pub fn runs_away(&self, reply: &str) -> bool {
+        reply.chars().count() > self.line.chars().count() * RUNAWAY_FACTOR + RUNAWAY_ALLOWANCE
     }
 
     /// The reply a translator should give for this text when `english` is
@@ -100,6 +122,7 @@ impl PreparedText {
             .join(" ");
         let theirs = match markup {
             TextMarkup::RpgMaker => rpg_maker(&joined, true),
+            TextMarkup::Wolf => wolf(&joined, true),
         };
         if theirs.before != self.before || theirs.after != self.after {
             return None;
@@ -138,8 +161,13 @@ impl PreparedText {
     }
 
     pub fn finish(&self, reply: &str) -> String {
+        let reply = if self.divided {
+            Cow::Owned(reply.replace('/', "-"))
+        } else {
+            Cow::Borrowed(reply)
+        };
         let mut finished = String::with_capacity(reply.len());
-        let mut rest = reply;
+        let mut rest = reply.as_ref();
         while let Some(start) = rest.find('{') {
             finished.push_str(&rest[..start]);
             let after = &rest[start + 1..];
@@ -193,6 +221,11 @@ fn code_kind(code: &str) -> String {
 }
 
 fn rpg_maker(text: &str, hold_back: bool) -> PreparedText {
+    let (mark, text, tail) = if hold_back {
+        name_parts(text)
+    } else {
+        ("", text, "")
+    };
     let mut pieces = Vec::new();
     let mut line = String::new();
     // VX Ace's battle messages are format strings: `%s` and `%d` become
@@ -204,6 +237,7 @@ fn rpg_maker(text: &str, hold_back: bool) -> PreparedText {
         }
         pieces.push(Piece::Code(code));
     };
+    let breaks = text.matches('\n').count();
     for (index, text_line) in text.split('\n').enumerate() {
         let text_line = if index == 0 {
             text_line
@@ -214,6 +248,13 @@ fn rpg_maker(text: &str, hold_back: bool) -> PreparedText {
         while let Some((at, character)) = characters.next() {
             match (character, characters.peek().map(|&(_, next)| next)) {
                 ('\\', Some(next)) if ".|!^><".contains(next) => {
+                    characters.next();
+                }
+                // `\_` before a line break takes the break out, in the
+                // message script many XP games use (XRXS). The English is
+                // wrapped anew, and the script draws a `\_` left without
+                // its break.
+                ('\\', Some('_')) if index < breaks && &text_line[at..] == "\\_" => {
                     characters.next();
                 }
                 ('\\', Some(next)) if "{}$\\".contains(next) => {
@@ -230,7 +271,7 @@ fn rpg_maker(text: &str, hold_back: bool) -> PreparedText {
                         characters.next();
                     }
                     if let Some(&(position, '[')) = characters.peek()
-                        && let Some(close) = text_line[position..].find(']')
+                        && let Some(close) = closing_bracket(&text_line[position..])
                     {
                         end = position + close + 1;
                         while characters.peek().is_some_and(|&(next, _)| next < end) {
@@ -239,6 +280,18 @@ fn rpg_maker(text: &str, hold_back: bool) -> PreparedText {
                     }
                     add_code(&mut line, text_line[at..end].to_owned());
                 }
+                // A value a game's Ruby puts into the line (`#{target}`), in
+                // texts read from Ruby files.
+                ('#', Some('{')) => match ruby_value_length(&text_line[at..]) {
+                    Some(length) => {
+                        let end = at + length;
+                        while characters.peek().is_some_and(|&(next, _)| next < end) {
+                            characters.next();
+                        }
+                        add_code(&mut line, text_line[at..end].to_owned());
+                    }
+                    None => line.push(character),
+                },
                 ('%', Some(kind @ ('s' | 'd'))) => {
                     characters.next();
                     formats += 1;
@@ -259,13 +312,265 @@ fn rpg_maker(text: &str, hold_back: bool) -> PreparedText {
     if !line.is_empty() {
         pieces.push(Piece::Text(line));
     }
-    held_back(pieces, hold_back)
+    let mut prepared = held_back(pieces, hold_back, &LAYOUT_CODES, code_kind);
+    prepared.before.insert_str(0, mark);
+    prepared.after.push_str(tail);
+    prepared.divided = !tail.is_empty() && !text.contains('/');
+    prepared
+}
+
+/// The parts of a one-line name that a game's scripts read and a player
+/// does not: marks before it (`【data】`, tested with `include?`) and
+/// numbers after it (`サキュバス/10/5`, split at `/`). Returns the marks,
+/// the name and the numbers. A translator that drops a mark or adds a `/`
+/// changes what the scripts read, so it sees the name only.
+pub fn name_parts(text: &str) -> (&str, &str, &str) {
+    let whole = ("", text, "");
+    if text.contains(['\n', '\r']) {
+        return whole;
+    }
+    let mut head = text;
+    while let Some((before, part)) = head.rsplit_once('/') {
+        let number = part.bytes().any(|byte| byte.is_ascii_digit())
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b".+-".contains(&byte));
+        if !number {
+            break;
+        }
+        head = before;
+    }
+    let mut tail = &text[head.len()..];
+    // `1/2` is a fraction, not a name with a number after it.
+    let fraction = head.ends_with(|last: char| last.is_ascii_digit())
+        && tail.bytes().skip(1).all(|byte| byte.is_ascii_digit());
+    if fraction {
+        (head, tail) = (text, "");
+    }
+    let mut marks = 0;
+    while let Some(rest) = head[marks..].strip_prefix('【')
+        && let Some(end) = rest.find('】')
+        && end > 0
+        && rest[..end]
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        marks += '【'.len_utf8() + end + '】'.len_utf8();
+    }
+    if marks == head.len() {
+        return whole;
+    }
+    (&head[..marks], &head[marks..], tail)
+}
+
+/// Where the `]` is that closes the `[` `text` starts with. What a code
+/// takes may be a code itself (`\name[\v[2]]`): cut at the first `]`, the
+/// second one would be left in the line as text.
+fn closing_bracket(text: &str) -> Option<usize> {
+    let mut depth = 0;
+    for (at, character) in text.char_indices() {
+        match character {
+            '[' => depth += 1,
+            ']' if depth == 1 => return Some(at),
+            ']' => depth -= 1,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// How long the `#{…}` at the start of `text` is, to the `}` that closes it.
+fn ruby_value_length(text: &str) -> Option<usize> {
+    let mut depth = 0;
+    for (at, character) in text.char_indices().skip(1) {
+        match character {
+            '{' => depth += 1,
+            '}' if depth == 1 => return Some(at + 1),
+            '}' => depth -= 1,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// WOLF RPG Editor's codes that change how text looks or is shown, not
+/// what it says: colour, size, font, edge, spacing, position, drawing at
+/// once (`\>`), closing by itself (`\^`), and a symbol drawn in a font of
+/// its own.
+const WOLF_LAYOUT_CODES: [&str; 18] = [
+    "C",
+    "F",
+    "FONT",
+    "E",
+    "M",
+    "SP",
+    "SPACE",
+    "AX",
+    "AY",
+    "MX",
+    "MY",
+    "A",
+    ">",
+    "<",
+    "^",
+    "-",
+    WOLF_ALIGNMENT,
+    WOLF_SYMBOL,
+];
+const WOLF_ALIGNMENT: &str = "alignment";
+const WOLF_SYMBOL: &str = "symbol";
+
+/// How long the WOLF RPG Editor code at the start of `text` is, if one
+/// starts it: a backslash with letters or one sign and, in brackets, what
+/// it takes, which may hold codes itself (`\f[\cself[19]]`); or a line's
+/// alignment (`<C>`).
+pub fn wolf_code_length(text: &str) -> Option<usize> {
+    if ["<C>", "<R>", "<L>"]
+        .iter()
+        .any(|alignment| text.starts_with(alignment))
+    {
+        return Some(3);
+    }
+    let rest = text.strip_prefix('\\')?;
+    let letters = rest.bytes().take_while(u8::is_ascii_alphabetic).count();
+    let name = if letters > 0 {
+        letters
+    } else {
+        rest.chars().next()?.len_utf8()
+    };
+    let mut length = 1 + name;
+    if text[length..].starts_with('[') {
+        let mut depth = 0;
+        for (at, character) in text[length..].char_indices() {
+            match character {
+                '[' => depth += 1,
+                ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        length += at + 1;
+                        break;
+                    }
+                }
+                '\n' => break,
+                _ => {}
+            }
+        }
+    }
+    Some(length)
+}
+
+fn wolf_code_kind(code: &str) -> String {
+    let mut rest = code;
+    while let Some(length) = wolf_code_length(rest) {
+        rest = &rest[length..];
+    }
+    if !rest.is_empty() {
+        WOLF_SYMBOL.to_owned()
+    } else if code.starts_with('<') {
+        WOLF_ALIGNMENT.to_owned()
+    } else {
+        code_kind(code)
+    }
+}
+
+/// A sign games draw between codes that pick its font and size (a heart
+/// from a symbol font): neither a letter, a digit, a space nor Japanese.
+fn is_symbol(text: &str) -> bool {
+    let mut characters = text.chars();
+    matches!(
+        (characters.next(), characters.next()),
+        (Some(sign), None) if !sign.is_alphanumeric() && !sign.is_whitespace() && !is_japanese(sign)
+    )
+}
+
+fn wolf(text: &str, hold_back: bool) -> PreparedText {
+    let mut pieces = Vec::<Piece>::new();
+    let add_text = |pieces: &mut Vec<Piece>, text: &str| match pieces.last_mut() {
+        Some(Piece::Text(last)) => last.push_str(text),
+        _ => pieces.push(Piece::Text(text.to_owned())),
+    };
+    for (index, line) in text.split('\n').enumerate() {
+        let line = line.trim_end_matches('\r');
+        let mut rest = if index == 0 {
+            line
+        } else {
+            line.trim_start_matches(|c: char| c.is_whitespace())
+        };
+        while let Some(character) = rest.chars().next() {
+            let Some(length) = wolf_code_length(rest) else {
+                add_text(&mut pieces, &rest[..character.len_utf8()]);
+                rest = &rest[character.len_utf8()..];
+                continue;
+            };
+            let code = &rest[..length];
+            rest = &rest[length..];
+            match code {
+                // Waits; the English has other places to breathe.
+                "\\." | "\\!" | "\\|" => {}
+                // A reading over a word: the word itself is the text.
+                _ if code.starts_with("\\r[") && code.ends_with(']') => {
+                    let word = code[3..code.len() - 1]
+                        .split(',')
+                        .next()
+                        .unwrap_or_default();
+                    add_text(&mut pieces, word);
+                }
+                _ => pieces.push(Piece::Code(code.to_owned())),
+            }
+        }
+    }
+    // A symbol and the codes around it are one code to keep together.
+    let mut joined = Vec::<Piece>::with_capacity(pieces.len());
+    let mut at = 0;
+    while at < pieces.len() {
+        let run = pieces[at..]
+            .iter()
+            .take_while(|piece| match piece {
+                Piece::Code(_) => true,
+                Piece::Text(text) => is_symbol(text),
+            })
+            .count();
+        let run = &pieces[at..at + run];
+        let has_symbol = run.iter().any(|piece| matches!(piece, Piece::Text(_)));
+        let code_before = matches!(run.first(), Some(Piece::Code(_)));
+        let code_after = matches!(run.last(), Some(Piece::Code(_)));
+        if has_symbol && code_before && code_after {
+            joined.push(Piece::Code(
+                run.iter()
+                    .map(|piece| match piece {
+                        Piece::Code(text) | Piece::Text(text) => text.as_str(),
+                    })
+                    .collect(),
+            ));
+            at += run.len();
+        } else {
+            joined.push(match &pieces[at] {
+                Piece::Code(code) => Piece::Code(code.clone()),
+                Piece::Text(text) => Piece::Text(text.clone()),
+            });
+            at += 1;
+        }
+    }
+    // Text pieces a code-only run split apart are joined again.
+    let mut pieces = Vec::<Piece>::with_capacity(joined.len());
+    for piece in joined {
+        match (pieces.last_mut(), piece) {
+            (Some(Piece::Text(last)), Piece::Text(text)) => last.push_str(&text),
+            (_, piece) => pieces.push(piece),
+        }
+    }
+    held_back(pieces, hold_back, &WOLF_LAYOUT_CODES, wolf_code_kind)
 }
 
 /// Holds back the layout codes at the text's start and end whose kind
 /// appears only once (so they apply to everything after them), and numbers
 /// the other codes in order.
-fn held_back(pieces: Vec<Piece>, hold_back: bool) -> PreparedText {
+fn held_back(
+    pieces: Vec<Piece>,
+    hold_back: bool,
+    layout: &[&str],
+    code_kind: fn(&str) -> String,
+) -> PreparedText {
     let mut kinds = HashMap::<String, usize>::new();
     for piece in &pieces {
         if let Piece::Code(code) = piece {
@@ -276,7 +581,7 @@ fn held_back(pieces: Vec<Piece>, hold_back: bool) -> PreparedText {
         Piece::Code(_) if !hold_back => false,
         Piece::Code(code) => {
             let kind = code_kind(code);
-            LAYOUT_CODES.contains(&kind.as_str()) && kinds.get(&kind) == Some(&1)
+            layout.contains(&kind.as_str()) && kinds.get(&kind) == Some(&1)
         }
         Piece::Text(_) => false,
     };
@@ -311,6 +616,7 @@ fn held_back(pieces: Vec<Piece>, hold_back: bool) -> PreparedText {
         codes,
         before: joined(&pieces[..start]),
         after: joined(&pieces[end..]),
+        divided: false,
     }
 }
 
@@ -489,6 +795,87 @@ mod tests {
     }
 
     #[test]
+    fn keeps_the_values_ruby_puts_into_a_line() {
+        let text = prepared("「ふふ、#{target}はここだね。\n　後は#{names[\"自分\"]}に任せて\\H」");
+        assert_eq!(text.line, "「ふふ、{1}はここだね。後は{2}に任せて{3}」");
+        assert_eq!(
+            text.finish("\"Hehe, {1}, right here. Leave the rest to {2}{3}\""),
+            "\"Hehe, #{target}, right here. Leave the rest to #{names[\"自分\"]}\\H\""
+        );
+        assert!(!text.accepts("\"Hehe, right here. Leave the rest to {2}{3}\""));
+        assert_eq!(prepared("残り #{ 個").line, "残り #{ 個");
+    }
+
+    #[test]
+    fn takes_a_code_with_a_code_in_its_brackets_whole() {
+        let text = prepared("\\name[\\v[2]]\\_\nルーンの材料を探してる。");
+        assert_eq!(text.line, "{1}ルーンの材料を探してる。");
+        assert_eq!(
+            text.finish("{1}I'm looking for rune materials."),
+            "\\name[\\v[2]]I'm looking for rune materials."
+        );
+        // A bracket never closed is no code's.
+        assert_eq!(
+            prepared("\\name[\\v[2]こんにちは").line,
+            "{1}[{2}こんにちは"
+        );
+    }
+
+    #[test]
+    fn refuses_a_reply_with_a_code_of_its_own_making() {
+        let text = prepared("\\name[アンジュ]ホームポート用マニュアル");
+        assert_eq!(text.line, "{1}ホームポート用マニュアル");
+        assert!(text.accepts("{1}Homeport Manual"));
+        assert!(!text.accepts("{1}_Homeport Manual"));
+        assert!(!text.accepts("{1}\\_Homeport Manual"));
+        // What the line itself has may stay.
+        assert!(prepared("save_data を読む").accepts("Read save_data"));
+        let cry = prepared("んおおおぉぉっ♥♥");
+        assert!(cry.accepts("Nnooooohh♥♥"));
+        assert!(cry.runs_away(&"n".repeat(3195)) && !cry.accepts(&"n".repeat(3195)));
+        assert!(!prepared("雷").runs_away("A bolt of lightning from a clear sky"));
+    }
+
+    #[test]
+    fn drops_the_code_that_takes_a_line_break_out() {
+        let text = prepared("\\name[アンジュ]\\_\nルーンを\\_\nあげよう。\\_");
+        assert_eq!(text.line, "{1}ルーンをあげよう。\\_");
+        assert_eq!(
+            text.finish("{1}I'll give you a rune.\\_"),
+            "\\name[アンジュ]I'll give you a rune.\\_"
+        );
+        assert_eq!(prepared("a\\_b\nc").line, "a\\_bc");
+    }
+
+    #[test]
+    fn holds_back_the_parts_of_a_name_that_scripts_read() {
+        let enemy = prepared("【data】尻尾持ち/02/1");
+        assert_eq!(enemy.line, "尻尾持ち");
+        assert_eq!(enemy.finish("Tail Holder"), "【data】Tail Holder/02/1");
+
+        let map = prepared("外地A 出入り口/15AE");
+        assert_eq!(map.line, "外地A 出入り口");
+        assert_eq!(
+            map.finish("Barren Land A Entrance/Exit"),
+            "Barren Land A Entrance-Exit/15AE"
+        );
+        assert_eq!(prepared("獄界C 小部屋2/10C/0").line, "獄界C 小部屋2");
+        assert_eq!(prepared("調整用/-5/-5").line, "調整用");
+
+        let marked = prepared("【data】人間/男");
+        assert_eq!(marked.line, "人間/男");
+        assert_eq!(marked.finish("Human/Male"), "【data】Human/Male");
+        for text in ["残り1/2", "【注意】触れるな", "はい/いいえ"] {
+            assert_eq!(prepared(text).line, text);
+        }
+        assert_eq!(prepared("一行目/12\n二行目").line, "一行目/12二行目");
+        assert_eq!(
+            prepared("魔法使い/12").reply_for("Mage/12", TextMarkup::RpgMaker),
+            Some("Mage".to_owned())
+        );
+    }
+
+    #[test]
     fn numbers_vx_ace_format_codes_so_the_english_may_reorder_them() {
         let text = prepared("%sは %s のダメージを受けた！（100%%）");
         assert_eq!(text.line, "{1}は {2} のダメージを受けた！（100{3}）");
@@ -584,6 +971,50 @@ mod tests {
         let text = prepared("\\C[2]赤\\c[0]");
         assert_eq!(text.finish("  {1}Red  {2} {9} "), "\\C[2]Red \\c[0]");
         assert_eq!(text.finish("braces {stay} {1}"), "braces {stay} \\C[2]");
+    }
+
+    #[test]
+    fn reads_wolf_rpg_editors_codes() {
+        let prepare = |text: &str| PreparedText::new(text, TextMarkup::Wolf);
+        // A colour inside the line is a placeholder; a pause is dropped;
+        // lines are joined.
+        let text = prepare("\\c[2]しっかり\\c[0]と…\\.\n　洗うんだよ♪");
+        assert_eq!(text.line, "{1}しっかり{2}と…洗うんだよ♪");
+        assert_eq!(
+            text.finish("{1}Properly{2}... wash it♪"),
+            "\\c[2]Properly\\c[0]... wash it♪"
+        );
+        // Codes inside a code's brackets belong to it, and what the whole
+        // text starts and ends with is held back.
+        let text = prepare("\\>\\f[\\cself[19]]所持数\\ax[\\cself[13]]は\\cself[97]個\\^");
+        assert_eq!(text.line, "所持数{1}は{2}個");
+        assert_eq!(
+            text.finish("Held{1}: {2}"),
+            "\\>\\f[\\cself[19]]Held\\ax[\\cself[13]]: \\cself[97]\\^"
+        );
+        // A symbol drawn in its own font stays one piece with its codes.
+        let text = prepare("そりゃ大変だぁ\\f[11]\\font[2]㌢\\font[0]\\f[12]");
+        assert_eq!(text.line, "そりゃ大変だぁ");
+        assert_eq!(
+            text.finish("Oh, that's rough."),
+            "Oh, that's rough.\\f[11]\\font[2]㌢\\font[0]\\f[12]"
+        );
+        let text = prepare("いいわ\\font[2]㌢\\font[0]もっと…\\font[2]㌢\\font[0]");
+        assert_eq!(text.line, "いいわ{1}もっと…{2}");
+        // A reading over a word leaves the word; a centred line, a database
+        // value and a string variable are placeholders.
+        let text = prepare("<C>\\r[魔育,まいく]日誌は\\cdb[21:78:0]と\\s[7]");
+        assert_eq!(text.line, "魔育日誌は{1}と{2}");
+        assert!(text.accepts("The Maiku diary is {1} and {2}"));
+        assert!(!text.accepts("The Maiku diary is {1}"));
+        assert_eq!(
+            text.finish("The Maiku diary is {1} and {2}"),
+            "<C>The Maiku diary is \\cdb[21:78:0] and \\s[7]"
+        );
+        assert_eq!(wolf_code_length("\\-[1]x"), Some(5));
+        assert_eq!(wolf_code_length("\\\\n"), Some(2));
+        assert_eq!(wolf_code_length("<<PAGE>>"), None);
+        assert_eq!(wolf_code_length("text"), None);
     }
 
     #[test]

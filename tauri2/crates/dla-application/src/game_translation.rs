@@ -14,6 +14,7 @@ use dla_domain::{
     installation::{Installation, InstallationId},
     translation::{
         GameFileChange, GameTranslation, InstalledPack, PreparedTranslation, TextKind, TextMarkup,
+        UnpackedProgram,
     },
 };
 use serde::Serialize;
@@ -147,6 +148,19 @@ pub trait GameFolder: Send + Sync {
     /// there is none yet.
     fn plugin(&self, engine: GameEngine) -> Option<String>;
 
+    /// Whether the launcher can translate the game found in the folder:
+    /// its engine has a plugin, and the game is of a version and packing
+    /// the launcher reads.
+    fn can_translate(&self, _root: &str, detection: &GameEngineDetection) -> bool {
+        self.plugin(detection.engine).is_some()
+    }
+
+    /// The bytes turning translation on writes to take the game's files out
+    /// of the executable that holds them; none for a game in loose files.
+    fn unpack_bytes(&self, _root: &str, _detection: &GameEngineDetection) -> Option<u64> {
+        None
+    }
+
     /// Adds the plugin, or brings it up to date. `previous` holds the
     /// changes of an earlier install, whose original files are kept.
     fn install(
@@ -209,6 +223,15 @@ pub trait PreparationHost: Send + Sync {
     fn changed(&self, view: &GameTranslationView);
 }
 
+/// What a launch takes from the game's translation.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PreparedLaunch {
+    /// The game starts with its translation shown.
+    pub shown: bool,
+    /// What starts in place of the executable the game was unpacked from.
+    pub program: Option<UnpackedProgram>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GameTranslationView {
@@ -221,6 +244,9 @@ pub struct GameTranslationView {
     pub translator_ready: bool,
     pub preparation: Option<PreparationView>,
     pub pack: Option<PackView>,
+    /// The bytes turning translation on writes to unpack a game packed into
+    /// one file.
+    pub unpack_bytes: Option<u64>,
 }
 
 /// The translation from the DLA archive: the one in use, and a newer one to
@@ -314,6 +340,8 @@ pub struct GroupProgress {
 #[serde(rename_all = "camelCase")]
 pub struct PreparationView {
     pub state: PreparationState,
+    /// The player paused, and the batch in progress is still finishing.
+    pub pausing: bool,
     pub groups: Vec<GroupProgress>,
     pub done: u64,
     pub total: u64,
@@ -386,12 +414,17 @@ impl GameTranslationService {
     ) -> Result<GameTranslationView, GameTranslationError> {
         let (installation, root) = self.installation(installation_id)?;
         let translation = self.store.read_game_translation(installation_id)?;
+        let detection = match &translation {
+            Some(_) => None,
+            None => self.folder.detect_engine(&root)?,
+        };
         let engine = match &translation {
             Some(translation) => Some(translation.engine),
-            None => self
-                .folder
-                .detect_engine(&root)?
-                .map(|detection| detection.engine),
+            None => detection.as_ref().map(|detection| detection.engine),
+        };
+        let supported = match &detection {
+            Some(detection) => self.folder.can_translate(&root, detection),
+            None => engine.is_some_and(|engine| self.folder.plugin(engine).is_some()),
         };
         let preparation = match &translation {
             Some(translation) => Some(self.preparation(translation, &installation, &root)?),
@@ -407,12 +440,16 @@ impl GameTranslationService {
             installation_id: installation_id.clone(),
             engine,
             engine_label: engine.map(GameEngine::label),
-            supported: engine.is_some_and(|engine| self.folder.plugin(engine).is_some()),
+            supported,
             on: translation.is_some(),
             shown: translation.as_ref().is_some_and(|value| value.shown),
             translator_ready: self.translations.has_translator(),
             preparation,
             pack,
+            unpack_bytes: detection
+                .as_ref()
+                .filter(|_| supported)
+                .and_then(|detection| self.folder.unpack_bytes(&root, detection)),
         })
     }
 
@@ -537,6 +574,17 @@ impl GameTranslationService {
         self.store.save_game_translation(&translation)?;
         self.write_session(&installation, &root, &translation, None)?;
         self.read(installation_id)
+    }
+
+    /// The games whose translation is on and shown, for the library to mark.
+    pub fn shown_games(&self) -> Result<Vec<InstallationId>, GameTranslationError> {
+        Ok(self
+            .store
+            .list_game_translations()?
+            .into_iter()
+            .filter(|translation| translation.shown)
+            .map(|translation| translation.installation_id)
+            .collect())
     }
 
     /// Puts the game's files back as they were. The translations stay in the
@@ -693,9 +741,9 @@ impl GameTranslationService {
         &self,
         installation_id: &InstallationId,
         relay: impl FnOnce() -> Option<RelayAccess>,
-    ) -> Result<bool, GameTranslationError> {
+    ) -> Result<PreparedLaunch, GameTranslationError> {
         let Some(mut translation) = self.store.read_game_translation(installation_id)? else {
-            return Ok(false);
+            return Ok(PreparedLaunch::default());
         };
         let (installation, root) = self.installation(installation_id)?;
         let plugin =
@@ -719,7 +767,13 @@ impl GameTranslationService {
         }
         let relay = if translation.shown { relay() } else { None };
         self.write_session(&installation, &root, &translation, relay)?;
-        Ok(translation.shown)
+        Ok(PreparedLaunch {
+            shown: translation.shown,
+            program: translation
+                .changes
+                .iter()
+                .find_map(GameFileChange::unpacked_program),
+        })
     }
 
     fn prepare_game(
@@ -806,7 +860,7 @@ impl GameTranslationService {
                 let results = self.translations.translate(
                     &work,
                     batch,
-                    TextMarkup::RpgMaker,
+                    TextMarkup::of(translation.engine),
                     Urgency::Background,
                 )?;
                 let missing = results.iter().filter(|result| result.is_none()).count();
@@ -884,10 +938,12 @@ impl GameTranslationService {
         translation: &GameTranslation,
         host: &dyn PreparationHost,
     ) {
-        let view = progress.view(translation.prepared.as_ref());
-        self.lock_queue()
-            .live
-            .insert(installation_id.clone(), view.clone());
+        let mut view = progress.view(translation.prepared.as_ref());
+        {
+            let mut queue = self.lock_queue();
+            view.pausing = queue.stop_current;
+            queue.live.insert(installation_id.clone(), view.clone());
+        }
         host.changed(&GameTranslationView {
             installation_id: installation_id.clone(),
             engine: Some(translation.engine),
@@ -901,6 +957,7 @@ impl GameTranslationService {
                 .packs
                 .as_ref()
                 .map(|_| self.pack_view(installation_id, Some(translation))),
+            unpack_bytes: None,
         });
     }
 
@@ -920,7 +977,12 @@ impl GameTranslationService {
                 queue.ran.contains(&translation.installation_id),
             )
         };
-        if let Some(live) = live {
+        if let Some(mut live) = live {
+            live.pausing = translation.paused
+                && matches!(
+                    live.state,
+                    PreparationState::Preparing | PreparationState::Waiting
+                );
             return Ok(live);
         }
         let mut progress = match self.folder.read_texts(root, translation) {
@@ -1152,6 +1214,7 @@ impl Progress {
             .then(|| (took.as_secs_f64() * self.left as f64 / cost as f64).ceil() as u64);
         PreparationView {
             state: self.state.unwrap_or(PreparationState::Waiting),
+            pausing: false,
             groups: GROUPS
                 .iter()
                 .map(|&group| GroupProgress {
@@ -1355,6 +1418,8 @@ mod tests {
         sessions: Mutex<Vec<GameSession>>,
         copies: Mutex<Vec<WorkTranslations>>,
         place: Mutex<Option<String>>,
+        unreadable: Mutex<bool>,
+        unpacked: Mutex<bool>,
     }
 
     impl Folder {
@@ -1372,6 +1437,8 @@ mod tests {
                 sessions: Mutex::default(),
                 copies: Mutex::default(),
                 place: Mutex::default(),
+                unreadable: Mutex::default(),
+                unpacked: Mutex::default(),
             })
         }
     }
@@ -1408,6 +1475,9 @@ mod tests {
             matches!(engine, GameEngine::RpgMakerMz | GameEngine::RpgMakerMv)
                 .then(|| self.plugin.lock().unwrap().clone())
         }
+        fn can_translate(&self, _root: &str, detection: &GameEngineDetection) -> bool {
+            self.plugin(detection.engine).is_some() && !*self.unreadable.lock().unwrap()
+        }
         fn install(
             &self,
             _root: &str,
@@ -1415,7 +1485,19 @@ mod tests {
             previous: &[GameFileChange],
         ) -> Result<Vec<GameFileChange>, GameTranslationError> {
             self.installs.lock().unwrap().push(previous.to_vec());
-            Ok(changes())
+            let mut changes = changes();
+            if *self.unpacked.lock().unwrap() {
+                changes.push(GameFileChange {
+                    path: RelativePath::parse("Game.exe").unwrap(),
+                    kind: GameFileChangeKind::Unpacked {
+                        from: RelativePath::parse("Packed.exe").unwrap(),
+                        sha256: "program".to_owned(),
+                        bytes: 9,
+                        starts: Some("list".to_owned()),
+                    },
+                });
+            }
+            Ok(changes)
         }
         fn remove(
             &self,
@@ -1536,6 +1618,32 @@ mod tests {
             self.names.lock().unwrap().extend_from_slice(names);
             Ok(())
         }
+        fn speakers(
+            &self,
+            _work: &str,
+        ) -> Result<Vec<crate::translation::MessageSpeakerOverride>, TranslationError> {
+            Ok(Vec::new())
+        }
+        fn save_speakers(
+            &self,
+            _work: &str,
+            _speakers: &[crate::translation::MessageSpeakerOverride],
+        ) -> Result<(), TranslationError> {
+            Ok(())
+        }
+        fn pictures(
+            &self,
+            _work: &str,
+        ) -> Result<Vec<crate::translation::TranslatedPicture>, TranslationError> {
+            Ok(Vec::new())
+        }
+        fn save_pictures(
+            &self,
+            _work: &str,
+            _pictures: &[crate::translation::TranslatedPicture],
+        ) -> Result<(), TranslationError> {
+            Ok(())
+        }
         fn glossary(&self, _work: &str) -> Result<Glossary, TranslationError> {
             Ok(Glossary::default())
         }
@@ -1547,6 +1655,8 @@ mod tests {
             work: &str,
             _pack: &str,
             translations: &[NewTranslation<'_>],
+            _speakers: &[crate::translation::MessageSpeakerOverride],
+            _pictures: &[crate::translation::TranslatedPicture],
         ) -> Result<(), TranslationError> {
             self.save(work, translations)?;
             self.packed.lock().unwrap().extend(
@@ -1638,6 +1748,7 @@ mod tests {
         views: Mutex<Vec<GameTranslationView>>,
         // Pauses the game once this many views were published.
         pause_after: OnceLock<(usize, Arc<GameTranslationService>)>,
+        pause_answer: Mutex<Option<GameTranslationView>>,
     }
 
     impl PreparationHost for Host {
@@ -1659,7 +1770,8 @@ mod tests {
             if let Some((after, service)) = self.pause_after.get()
                 && count == *after
             {
-                service.pause_preparation(&id()).unwrap();
+                let answer = service.pause_preparation(&id()).unwrap();
+                *self.pause_answer.lock().unwrap() = Some(answer);
             }
         }
     }
@@ -1809,15 +1921,29 @@ mod tests {
     }
 
     #[test]
+    fn a_game_of_a_version_the_launcher_does_not_read_is_not_offered() {
+        let setup = setup(Folder::new(GameEngine::RpgMakerMz));
+        assert!(setup.service.read(&id()).unwrap().supported);
+        *setup.folder.unreadable.lock().unwrap() = true;
+        let view = setup.service.read(&id()).unwrap();
+        assert_eq!(view.engine, Some(GameEngine::RpgMakerMz));
+        assert!(!view.supported && !view.on);
+    }
+
+    #[test]
     fn a_launch_updates_the_plugin_and_hands_over_the_relay_only_when_shown() {
         let setup = turned_on(GameTexts::default());
         *setup.folder.plugin.lock().unwrap() = "plugin-2".to_owned();
-        assert!(setup.service.prepare_launch(&id(), relay).unwrap());
+        let prepared = setup.service.prepare_launch(&id(), relay).unwrap();
+        assert!(prepared.shown);
+        assert_eq!(prepared.program, None);
         assert_eq!(setup.folder.installs.lock().unwrap()[1], changes());
         assert_eq!(setup.records.get().plugin, "plugin-2");
         assert_eq!(setup.folder.sessions.lock().unwrap()[1].relay, relay());
 
+        assert_eq!(setup.service.shown_games().unwrap(), vec![id()]);
         setup.service.show(&id(), false).unwrap();
+        assert_eq!(setup.service.shown_games().unwrap(), Vec::new());
         let asked = std::cell::Cell::new(false);
         assert!(
             !setup
@@ -1827,6 +1953,7 @@ mod tests {
                     relay()
                 })
                 .unwrap()
+                .shown
         );
         assert!(!asked.get());
         let sessions = setup.folder.sessions.lock().unwrap();
@@ -1835,11 +1962,45 @@ mod tests {
     }
 
     #[test]
+    fn a_launch_of_an_unpacked_game_starts_its_program_shown_or_not() {
+        let folder = Folder::new(GameEngine::RpgMakerMz);
+        *folder.unpacked.lock().unwrap() = true;
+        let setup = setup(folder);
+        setup
+            .service
+            .turn_on(&id(), "2026-10-29T10:00:00Z".to_owned())
+            .unwrap();
+        let program = Some(UnpackedProgram {
+            in_place_of: RelativePath::parse("Packed.exe").unwrap(),
+            path: RelativePath::parse("Game.exe").unwrap(),
+            sha256: "program".to_owned(),
+        });
+        assert_eq!(
+            setup.service.prepare_launch(&id(), relay).unwrap(),
+            PreparedLaunch {
+                shown: true,
+                program: program.clone(),
+            }
+        );
+        setup.service.show(&id(), false).unwrap();
+        assert_eq!(
+            setup.service.prepare_launch(&id(), relay).unwrap(),
+            PreparedLaunch {
+                shown: false,
+                program,
+            }
+        );
+    }
+
+    #[test]
     fn removing_puts_back_what_was_recorded_and_forgets_the_game() {
         let setup = setup(Folder::new(GameEngine::RpgMakerMz));
         setup.service.remove(&id()).unwrap();
         assert!(setup.folder.removed.lock().unwrap().is_empty());
-        assert!(!setup.service.prepare_launch(&id(), relay).unwrap());
+        assert_eq!(
+            setup.service.prepare_launch(&id(), relay).unwrap(),
+            PreparedLaunch::default()
+        );
 
         setup
             .service
@@ -2002,8 +2163,14 @@ mod tests {
         assert_eq!(setup.echo.calls.lock().unwrap().len(), 4);
         let record = setup.records.get();
         assert!(record.paused && record.prepared.is_none());
+        // Until the batch in progress ends, the game is still preparing.
+        let answer = host.pause_answer.lock().unwrap().take().unwrap();
+        let pausing = answer.preparation.unwrap();
+        assert_eq!(pausing.state, PreparationState::Preparing);
+        assert!(pausing.pausing);
         let view = state(&setup);
         assert_eq!(view.state, PreparationState::Paused);
+        assert!(!view.pausing);
         assert_eq!((view.done, view.total), (14, 16));
 
         // A paused game is not prepared, even when asked by the worker.
@@ -2079,6 +2246,8 @@ mod tests {
                 source: None,
             };
             Ok(TranslationPack {
+                speakers: Vec::new(),
+                pictures: Vec::new(),
                 work: offer.work.clone(),
                 made: offer.made.clone(),
                 texts: vec![line("あ", "Ah"), line("右上のヒント", "Hint")],
@@ -2347,6 +2516,8 @@ mod tests {
                     origin: TranslationOrigin::PackReviewed,
                     model: None,
                 }],
+                &[],
+                &[],
             )
             .unwrap();
         assert_eq!(state(&setup).state, PreparationState::Ready);

@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CatalogDetailGateway } from "../catalog";
+import type { TranslationGateway } from "../translation/types";
 import type { AndroidAppGateway, AndroidAppView } from "../../android-package";
 import { PresentationProvider } from "../../preferences/PresentationProvider";
 import { KeyBindingsProvider } from "../../preferences/KeyBindingsProvider";
@@ -23,6 +24,7 @@ import type {
 
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
 });
 
 describe("LibraryPage data loading", () => {
@@ -207,6 +209,43 @@ describe("Library executable actions", () => {
     fireEvent.click(menus[0]!);
     fireEvent.click(screen.getByRole("menuitem", { name: "Remove from Library…" }));
     expect(onManage).toHaveBeenCalledWith("installation-app", "files");
+  });
+
+  it("shows a played game's time by Play and its product format in place of its kind and file count", async () => {
+    const { gateway } = renderExecutableLibrary({ played: true, english: true });
+
+    const feature = await screen.findByRole("region", { name: "Ready when you are" });
+    expect(await within(feature).findByText("1 h 57 m played")).toBeTruthy();
+    expect(within(feature).getByText(/^Last played Aug 26, 2026 · 4 times$/)).toBeTruthy();
+    expect(await within(feature).findByText("English")).toBeTruthy();
+    expect(await within(feature).findByText("Adventure")).toBeTruthy();
+    expect([...feature.querySelectorAll(".library-feature-meta > span")].map((chip) => chip.textContent)).toEqual([
+      "RJ00000003",
+      "Adventure",
+      "2026",
+      "English",
+    ]);
+
+    const menu = within(feature).getByRole("button", { name: /^More for / });
+    fireEvent.click(menu);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      "Catalog page",
+      "Edit details…",
+      "Browse files…",
+      "Hide play time",
+      "Reset play time…",
+      "Remove from Library…",
+    ]);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Reset play time…" }));
+    expect(gateway.resetPlayTime).not.toHaveBeenCalled();
+    fireEvent.click(within(feature).getByRole("button", { name: "Reset" }));
+    await waitFor(() => expect(gateway.resetPlayTime).toHaveBeenCalledWith("installation-app"));
+
+    fireEvent.click(menu);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Hide play time" }));
+    expect(within(feature).queryByText("1 h 57 m played")).toBeNull();
+    fireEvent.click(menu);
+    expect(screen.getByRole("menuitem", { name: "Show play time" })).toBeTruthy();
   });
 
   it("launches a prepared executable from Never launched with its arrow instead of opening its review", async () => {
@@ -523,6 +562,8 @@ function renderExecutableLibrary({
   onManage = vi.fn(),
   recentAction = "launch_executable",
   shelf = "recent",
+  played = false,
+  english = false,
 }: {
   launchResult?: Promise<LaunchActivity>;
   running?: boolean;
@@ -530,6 +571,8 @@ function renderExecutableLibrary({
   onManage?: (installationId: string) => void | Promise<void>;
   recentAction?: LaunchActionKind;
   shelf?: "never" | "recent";
+  played?: boolean;
+  english?: boolean;
 } = {}) {
   const executable = installation("installation-app", "RJ00000003");
   const activity = executableActivity(running ? "running" : "exited");
@@ -545,7 +588,12 @@ function renderExecutableLibrary({
     continueItems: [],
     neverLaunched: shelf === "never" ? [executable.id] : [],
     unfinished: [],
-    launchTotals: [],
+    launchTotals: played ? [{
+      installationId: executable.id,
+      launchCount: 4,
+      totalDurationMs: 7_020_000,
+      lastStartedAt: "2026-08-26T12:00:00Z",
+    }] : [],
   };
   const readShelves = vi.fn().mockResolvedValue(shelves);
   const listRecentLaunches = vi.fn().mockResolvedValue(running ? [activity] : []);
@@ -562,10 +610,18 @@ function renderExecutableLibrary({
     stopLaunch: vi.fn().mockResolvedValue(executableActivity("stopping")),
     mediaAssetUrl: vi.fn().mockReturnValue(""),
     openInstallationFolder: vi.fn().mockResolvedValue(undefined),
+    resetPlayTime: vi.fn().mockResolvedValue(undefined),
   } as unknown as LibraryGateway;
   const catalogGateway = {
-    readWorks: vi.fn().mockResolvedValue([]),
+    readWorks: vi.fn().mockResolvedValue(played ? [{
+      ...personalWork("RJ00000003"),
+      categories: [{ code: "ADV", name: "アドベンチャー", nameEnglish: "Adventure" }],
+    }] : []),
   } as unknown as CatalogDetailGateway;
+  const translationGateway = english ? {
+    shownGames: vi.fn().mockResolvedValue([executable.id]),
+    translatedWorks: vi.fn().mockResolvedValue({}),
+  } as unknown as TranslationGateway : undefined;
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
   render(
@@ -577,6 +633,7 @@ function renderExecutableLibrary({
               <LibraryPage
                 gateway={gateway}
                 catalogGateway={catalogGateway}
+                translationGateway={translationGateway}
                 onManage={onManage}
                 onOpenMedia={onOpenMedia}
                 onOpenWork={vi.fn()}

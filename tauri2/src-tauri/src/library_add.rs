@@ -469,6 +469,7 @@ impl LibraryAddController {
                 work_code,
                 status: ScanInstallStatus::Queued,
                 detail: None,
+                conflict: None,
             },
             identity,
             archive_retention(delete_archives),

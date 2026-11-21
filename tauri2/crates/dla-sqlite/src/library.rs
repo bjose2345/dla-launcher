@@ -39,6 +39,18 @@ const LIBRARY_MIGRATION_LIST: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/library/0028_add_launch_option_refresh_rate.sql"
     )),
+    M::up(include_str!(
+        "../migrations/library/0029_add_game_translation_moves.sql"
+    )),
+    M::up(include_str!(
+        "../migrations/library/0030_add_launch_option_picture_filter.sql"
+    )),
+    M::up(include_str!(
+        "../migrations/library/0031_add_launch_option_overlay_and_cursor.sql"
+    )),
+    M::up(include_str!(
+        "../migrations/library/0032_add_game_translation_unpacked.sql"
+    )),
 ];
 const LIBRARY_MIGRATIONS: Migrations<'static> = Migrations::from_slice(LIBRARY_MIGRATION_LIST);
 const STATEMENT_CACHE_CAPACITY: usize = 64;

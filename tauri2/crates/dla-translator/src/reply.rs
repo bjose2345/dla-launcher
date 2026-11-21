@@ -38,11 +38,14 @@ fn numbered(line: &str) -> Option<(usize, &str)> {
 }
 
 // A model sometimes repeats who speaks ("[Yukina] …", "Yukina: …"). Only a
-// known character name is taken off, so a line like "Note: …" stays whole.
+// known character name is taken off, so a line like "Note: …" stays whole,
+// and so does a line that is all brackets: 【以下ボス系】 comes back as
+// "[Bosses]", which is the text and not a label.
 fn clean(text: &str, speakers: &[&str]) -> Option<String> {
     let mut text = text.trim();
     if text.starts_with('[')
         && let Some(close) = text.find(']')
+        && !text[close + 1..].trim().is_empty()
     {
         text = text[close + 1..].trim_start();
     }
@@ -93,6 +96,14 @@ mod tests {
                 Some("Note: shops close at 9.".to_owned()),
                 Some("Hmm...".to_owned())
             ]
+        );
+    }
+
+    #[test]
+    fn keeps_a_line_that_is_only_a_bracketed_heading() {
+        assert_eq!(
+            numbered_lines("1. [Bosses]\n2. [Sample]", 2, &["Yukina"]),
+            vec![Some("[Bosses]".to_owned()), Some("[Sample]".to_owned())]
         );
     }
 

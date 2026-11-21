@@ -1,7 +1,12 @@
-use std::{collections::HashMap, path::Path, sync::Mutex};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::Path,
+    sync::Mutex,
+};
 
 use dla_application::translation::{
-    Glossary, NewTranslation, StoredTranslation, TranslationError, TranslationStore,
+    Glossary, MessageSpeakerOverride, NewTranslation, StoredTranslation, TranslatedPicture,
+    TranslationError, TranslationStore, validate_pictures, validate_speakers,
 };
 use dla_domain::translation::{TRANSLATION_LANGUAGE, TextKind, TranslationOrigin};
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
@@ -15,6 +20,12 @@ const TRANSLATION_MIGRATION_LIST: &[M<'static>] = &[
     )),
     M::up(include_str!(
         "../migrations/translation/0002_add_glossaries.sql"
+    )),
+    M::up(include_str!(
+        "../migrations/translation/0003_add_message_speakers.sql"
+    )),
+    M::up(include_str!(
+        "../migrations/translation/0004_add_translated_pictures.sql"
     )),
 ];
 const TRANSLATION_MIGRATIONS: Migrations<'static> =
@@ -209,6 +220,84 @@ impl TranslationStore for SqliteTranslationStore {
         })
     }
 
+    fn speakers(&self, work: &str) -> Result<Vec<MessageSpeakerOverride>, TranslationError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare_cached(
+                "SELECT map_id, event_id, page_index, command_index, key, expected_speaker, text
+                 FROM translation_speaker WHERE work = ?1 AND language = ?2
+                 ORDER BY map_id, event_id, page_index, command_index, origin",
+            )?;
+            let rows = statement.query_map(params![work, TRANSLATION_LANGUAGE], |row| {
+                Ok(MessageSpeakerOverride {
+                    map: row.get(0)?,
+                    event: row.get(1)?,
+                    page: row.get(2)?,
+                    command: row.get(3)?,
+                    key: row.get(4)?,
+                    expected_speaker: row.get(5)?,
+                    text: row.get(6)?,
+                })
+            })?;
+            let mut best = BTreeMap::new();
+            for row in rows {
+                let speaker = row?;
+                best.entry((speaker.map, speaker.event, speaker.page, speaker.command))
+                    .or_insert(speaker);
+            }
+            Ok(best.into_values().collect())
+        })
+    }
+
+    fn save_speakers(
+        &self,
+        work: &str,
+        speakers: &[MessageSpeakerOverride],
+    ) -> Result<(), TranslationError> {
+        validate_speakers(speakers)?;
+        self.with_connection(|connection| {
+            let transaction = connection.transaction()?;
+            replace_speakers(&transaction, work, "edit", speakers)?;
+            transaction.commit()
+        })
+    }
+
+    fn pictures(&self, work: &str) -> Result<Vec<TranslatedPicture>, TranslationError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare_cached(
+                "SELECT path, png FROM translation_picture WHERE work = ?1 AND language = ?2
+                 ORDER BY path, origin",
+            )?;
+            let rows = statement.query_map(params![work, TRANSLATION_LANGUAGE], |row| {
+                Ok(TranslatedPicture {
+                    path: row.get(0)?,
+                    png: row.get(1)?,
+                })
+            })?;
+            let mut pictures: Vec<TranslatedPicture> = Vec::new();
+            for row in rows {
+                let picture = row?;
+                // 'edit' sorts before 'pack': the player's own is first.
+                if pictures.last().is_none_or(|last| last.path != picture.path) {
+                    pictures.push(picture);
+                }
+            }
+            Ok(pictures)
+        })
+    }
+
+    fn save_pictures(
+        &self,
+        work: &str,
+        pictures: &[TranslatedPicture],
+    ) -> Result<(), TranslationError> {
+        validate_pictures(pictures)?;
+        self.with_connection(|connection| {
+            let transaction = connection.transaction()?;
+            replace_pictures(&transaction, work, "edit", pictures)?;
+            transaction.commit()
+        })
+    }
+
     fn glossary(&self, work: &str) -> Result<Glossary, TranslationError> {
         self.with_connection(|connection| {
             let note = connection
@@ -303,7 +392,11 @@ impl TranslationStore for SqliteTranslationStore {
         work: &str,
         pack: &str,
         translations: &[NewTranslation<'_>],
+        speakers: &[MessageSpeakerOverride],
+        pictures: &[TranslatedPicture],
     ) -> Result<(), TranslationError> {
+        validate_speakers(speakers)?;
+        validate_pictures(pictures)?;
         let now = database::now_rfc3339();
         self.with_connection(|connection| {
             let transaction = connection.transaction()?;
@@ -343,9 +436,69 @@ impl TranslationStore for SqliteTranslationStore {
                     ])?;
                 }
             }
+            replace_speakers(&transaction, work, "pack", speakers)?;
+            replace_pictures(&transaction, work, "pack", pictures)?;
             transaction.commit()
         })
     }
+}
+
+fn replace_speakers(
+    connection: &Connection,
+    work: &str,
+    origin: &str,
+    speakers: &[MessageSpeakerOverride],
+) -> rusqlite::Result<()> {
+    connection.execute(
+        "DELETE FROM translation_speaker WHERE work = ?1 AND language = ?2 AND origin = ?3",
+        params![work, TRANSLATION_LANGUAGE, origin],
+    )?;
+    let mut statement = connection.prepare_cached(
+        "INSERT INTO translation_speaker
+         (work, language, origin, map_id, event_id, page_index, command_index, key, expected_speaker, text)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+    )?;
+    for speaker in speakers {
+        statement.execute(params![
+            work,
+            TRANSLATION_LANGUAGE,
+            origin,
+            speaker.map,
+            speaker.event,
+            speaker.page,
+            speaker.command,
+            speaker.key,
+            speaker.expected_speaker,
+            speaker.text
+        ])?;
+    }
+    Ok(())
+}
+
+fn replace_pictures(
+    connection: &Connection,
+    work: &str,
+    origin: &str,
+    pictures: &[TranslatedPicture],
+) -> rusqlite::Result<()> {
+    connection.execute(
+        "DELETE FROM translation_picture WHERE work = ?1 AND language = ?2 AND origin = ?3",
+        params![work, TRANSLATION_LANGUAGE, origin],
+    )?;
+    let mut statement = connection.prepare_cached(
+        "INSERT INTO translation_picture (work, language, origin, path, png)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+    )?;
+    for picture in pictures {
+        statement.execute(params![
+            work,
+            TRANSLATION_LANGUAGE,
+            origin,
+            picture.path,
+            picture.png
+        ])?;
+    }
+    Ok(())
 }
 
 fn kind_name(kind: TextKind) -> &'static str {
@@ -426,6 +579,8 @@ mod tests {
                     "Old line",
                     TranslationOrigin::PackMachine,
                 )],
+                &[],
+                &[],
             )
             .unwrap();
         store
@@ -437,6 +592,8 @@ mod tests {
                     // Text the game shows only while playing: no Japanese yet.
                     entry(&hint, "", "Hint", TranslationOrigin::PackMachine),
                 ],
+                &[],
+                &[],
             )
             .unwrap();
 
@@ -565,6 +722,8 @@ mod tests {
                 "RJ1",
                 "2026-10-30",
                 &[entry(&yes, "はい", "Yes!", TranslationOrigin::PackReviewed)],
+                &[],
+                &[],
             )
             .unwrap();
 
@@ -692,6 +851,144 @@ mod tests {
             .collect::<Vec<_>>();
         store.save("RJ1", &entries).unwrap();
         assert_eq!(store.best("RJ1", &keys).unwrap().len(), 1200);
+    }
+
+    fn speaker(text: &str) -> MessageSpeakerOverride {
+        MessageSpeakerOverride {
+            map: 1,
+            event: 2,
+            page: 0,
+            command: 4,
+            key: text_key("台詞"),
+            expected_speaker: text_key("名前"),
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn speaker_edits_survive_pack_replacement_and_reopening() {
+        let folder = tempdir().unwrap();
+        let path = folder.path().join("translations.sqlite");
+        let store = SqliteTranslationStore::open(&path).unwrap();
+        store
+            .save_pack("RJ1", "old", &[], &[speaker("Old")], &[])
+            .unwrap();
+        store.save_speakers("RJ1", &[speaker("Player")]).unwrap();
+        store
+            .save_speakers("RJ2", &[speaker("Other work")])
+            .unwrap();
+        store
+            .save_pack("RJ1", "new", &[], &[speaker("New")], &[])
+            .unwrap();
+        assert_eq!(store.speakers("RJ1").unwrap(), vec![speaker("Player")]);
+        drop(store);
+        let store = SqliteTranslationStore::open(&path).unwrap();
+        assert_eq!(store.speakers("RJ1").unwrap(), vec![speaker("Player")]);
+        store.save_speakers("RJ1", &[]).unwrap();
+        assert_eq!(store.speakers("RJ1").unwrap(), vec![speaker("New")]);
+        store
+            .save_pack("RJ1", "without speakers", &[], &[], &[])
+            .unwrap();
+        assert!(store.speakers("RJ1").unwrap().is_empty());
+        assert_eq!(store.speakers("RJ2").unwrap(), vec![speaker("Other work")]);
+    }
+
+    #[test]
+    fn invalid_speakers_do_not_replace_a_pack_or_its_texts() {
+        let folder = tempdir().unwrap();
+        let store =
+            SqliteTranslationStore::open(&folder.path().join("translations.sqlite")).unwrap();
+        let key = text_key("台詞");
+        store
+            .save_pack(
+                "RJ1",
+                "old",
+                &[entry(&key, "台詞", "Old", TranslationOrigin::PackReviewed)],
+                &[speaker("Original")],
+                &[],
+            )
+            .unwrap();
+        assert!(
+            store
+                .save_pack(
+                    "RJ1",
+                    "new",
+                    &[entry(&key, "台詞", "New", TranslationOrigin::PackReviewed)],
+                    &[speaker("A"), speaker("B")],
+                    &[],
+                )
+                .is_err()
+        );
+        assert_eq!(
+            store.best("RJ1", std::slice::from_ref(&key)).unwrap()[&key].text,
+            "Old"
+        );
+        assert_eq!(store.speakers("RJ1").unwrap(), vec![speaker("Original")]);
+        let mut invalid = speaker("Invalid");
+        invalid.expected_speaker.clear();
+        assert!(store.save_speakers("RJ1", &[invalid]).is_err());
+        assert_eq!(store.speakers("RJ1").unwrap(), vec![speaker("Original")]);
+    }
+
+    fn picture(path: &str, mark: u8) -> TranslatedPicture {
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.push(mark);
+        TranslatedPicture {
+            path: path.to_owned(),
+            png,
+        }
+    }
+
+    #[test]
+    fn the_players_pictures_go_before_a_packs_and_survive_its_replacement() {
+        let folder = tempdir().unwrap();
+        let path = folder.path().join("translations.sqlite");
+        let store = SqliteTranslationStore::open(&path).unwrap();
+        let pack = [
+            picture("pictures/Namecut02", 1),
+            picture("pictures/Mapname01", 2),
+        ];
+        store.save_pack("RJ1", "old", &[], &[], &pack).unwrap();
+        assert_eq!(
+            store.pictures("RJ1").unwrap(),
+            [
+                picture("pictures/Mapname01", 2),
+                picture("pictures/Namecut02", 1)
+            ]
+        );
+        store
+            .save_pictures("RJ1", &[picture("pictures/Namecut02", 9)])
+            .unwrap();
+        store
+            .save_pack("RJ1", "new", &[], &[], &[picture("pictures/Namecut02", 3)])
+            .unwrap();
+        drop(store);
+        let store = SqliteTranslationStore::open(&path).unwrap();
+        assert_eq!(
+            store.pictures("RJ1").unwrap(),
+            [picture("pictures/Namecut02", 9)]
+        );
+        store.save_pictures("RJ1", &[]).unwrap();
+        assert_eq!(
+            store.pictures("RJ1").unwrap(),
+            [picture("pictures/Namecut02", 3)]
+        );
+        assert!(store.pictures("RJ2").unwrap().is_empty());
+        // A path that would leave its folder, and a file that is no PNG.
+        assert!(
+            store
+                .save_pictures("RJ1", &[picture("../Namecut02", 1)])
+                .is_err()
+        );
+        let text = TranslatedPicture {
+            path: "pictures/Namecut02".to_owned(),
+            png: b"not a picture".to_vec(),
+        };
+        assert!(store.save_pack("RJ1", "bad", &[], &[], &[text]).is_err());
+        assert_eq!(
+            store.pictures("RJ1").unwrap(),
+            [picture("pictures/Namecut02", 3)]
+        );
     }
 
     #[test]

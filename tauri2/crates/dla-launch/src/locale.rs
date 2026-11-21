@@ -11,21 +11,20 @@
 
 use std::{
     fs,
-    io::{Cursor, Read},
     path::{Path, PathBuf},
     process::Command,
-    time::Duration,
 };
 
 use dla_application::launch::LaunchError;
-use sha2::{Digest, Sha256};
+
+use crate::release;
 
 pub const VERSION: &str = "1.6.0";
 const URL: &str = "https://github.com/InWILL/Locale_Remulator/releases/download/v1.6.0/Locale_Remulator.1.6.0.zip";
 const SHA256: &str = "f7f7b4ed8ef5bf1b25d46eb6cbf10d0a01dddfe5030ae09f8a1e73c5ad3c1b02";
 const ARCHIVE_FOLDER: &str = "Locale_Remulator.1.6.0/";
 const MOST_BYTES: u64 = 4 * 1024 * 1024;
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(120);
+const NAME: &str = "Locale Remulator";
 
 /// The launcher's profile in Locale Remulator's settings: Japanese, as its
 /// own "Run in Japanese" profile. LRProc takes it by this ID.
@@ -113,7 +112,7 @@ impl LocaleRemulator {
                 LaunchError::adapter(format!("Locale Remulator could not be set up: {error}"))
             });
         }
-        self.install_from(&download()?)
+        self.install_from(&release::download(NAME, URL, MOST_BYTES)?)
     }
 
     /// LRProc with the launcher's profile, starting `target` in `folder`.
@@ -139,16 +138,11 @@ impl LocaleRemulator {
     }
 
     fn install_from(&self, archive: &[u8]) -> Result<(), LaunchError> {
-        let digest = hex::encode(Sha256::digest(archive));
-        if digest != SHA256 {
-            return Err(LaunchError::adapter(format!(
-                "Locale Remulator {VERSION} did not match the tested download (SHA-256 {digest})"
-            )));
-        }
+        release::verify(NAME, VERSION, archive, SHA256)?;
         let staging = self
             .directory
             .join(format!(".{VERSION}-{}", std::process::id()));
-        let unpacked = unpack(archive, &staging).and_then(|()| {
+        let unpacked = release::unpack(archive, &staging, ARCHIVE_FOLDER).and_then(|()| {
             fs::write(staging.join("LRConfig.xml"), CONFIG)?;
             if self.folder().exists() {
                 fs::remove_dir_all(self.folder())?;
@@ -163,57 +157,6 @@ impl LocaleRemulator {
         }
         Ok(())
     }
-}
-
-fn download() -> Result<Vec<u8>, LaunchError> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(DOWNLOAD_TIMEOUT))
-        .build()
-        .into();
-    let failed = |error: &dyn std::fmt::Display| {
-        LaunchError::adapter(format!("Locale Remulator could not be downloaded: {error}"))
-    };
-    let mut response = agent.get(URL).call().map_err(|error| failed(&error))?;
-    let mut bytes = Vec::new();
-    response
-        .body_mut()
-        .as_reader()
-        .take(MOST_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| failed(&error))?;
-    if bytes.len() as u64 > MOST_BYTES {
-        return Err(failed(&"the download is larger than expected"));
-    }
-    Ok(bytes)
-}
-
-/// The release's files, without its top folder, into `target`.
-fn unpack(archive: &[u8], target: &Path) -> std::io::Result<()> {
-    if target.exists() {
-        fs::remove_dir_all(target)?;
-    }
-    fs::create_dir_all(target)?;
-    let mut zip = zip::ZipArchive::new(Cursor::new(archive)).map_err(std::io::Error::other)?;
-    for index in 0..zip.len() {
-        let mut entry = zip.by_index(index).map_err(std::io::Error::other)?;
-        let Some(name) = entry.enclosed_name() else {
-            return Err(std::io::Error::other("an unsafe path in the archive"));
-        };
-        let Ok(name) = name.strip_prefix(ARCHIVE_FOLDER) else {
-            continue;
-        };
-        if entry.is_dir() || name.as_os_str().is_empty() {
-            continue;
-        }
-        let path = target.join(name);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut bytes = Vec::new();
-        entry.read_to_end(&mut bytes)?;
-        fs::write(path, bytes)?;
-    }
-    Ok(())
 }
 
 /// The launcher runs as a 64-bit program, so System32 is the 64-bit folder
@@ -232,7 +175,7 @@ fn missing_runtimes_in(windows: &Path) -> Vec<VisualCppRuntime> {
 
 /// Windows canonical paths carry the `\\?\` prefix, which a command line
 /// does not take.
-fn ordinary_path(path: &Path) -> PathBuf {
+pub(crate) fn ordinary_path(path: &Path) -> PathBuf {
     match path.to_str().and_then(|text| text.strip_prefix(r"\\?\")) {
         Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
         _ => path.to_path_buf(),
@@ -241,7 +184,7 @@ fn ordinary_path(path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
+    use std::io::{Cursor, Write};
 
     use tempfile::tempdir;
     use zip::write::SimpleFileOptions;
@@ -276,7 +219,7 @@ mod tests {
             zip.finish().expect("archive");
         }
         let target = directory.path().join("unpacked");
-        unpack(&archive, &target).expect("unpacked");
+        release::unpack(&archive, &target, ARCHIVE_FOLDER).expect("unpacked");
         assert_eq!(
             fs::read_to_string(target.join("LRProc.exe")).expect("program"),
             "program"

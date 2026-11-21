@@ -30,6 +30,9 @@ fn launches_a_pe32_fixture_through_the_desktop_wine_adapter() {
         japanese_locale: false,
         window_scale: None,
         refresh_rate: None,
+        picture_filter: None,
+        performance_overlay: false,
+        cursor_hide_delay: None,
     };
 
     let mut result = DesktopLaunchExecutor::new()

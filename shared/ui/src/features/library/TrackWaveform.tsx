@@ -1,9 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 
 import { useResizeObserver } from "../../app/useResizeObserver";
 import { usePresentation } from "../../preferences/PresentationProvider";
 import { formatPlaybackTime } from "./audioPlayer";
+import { TrackPicture } from "./AudioVisualCanvas";
+import type { VisualColor, VisualStyle } from "./audioVisual";
 import { useMediaPlayback } from "./MediaPlaybackProvider";
 import type { LibraryGateway, MediaResume } from "./types";
 
@@ -38,19 +40,56 @@ export function resampleWaveformPeaks(peaks: number[], targetCount: number): num
   });
 }
 
+type WaveformGateway = Pick<LibraryGateway, "readAudioWaveform">;
+
+function waveformQuery(gateway: WaveformGateway, installationId: string, ordinal: number) {
+  return {
+    queryKey: ["library", "waveform", installationId, ordinal, SOURCE_BUCKETS],
+    queryFn: () => gateway.readAudioWaveform(installationId, ordinal, SOURCE_BUCKETS),
+    staleTime: Infinity,
+    gcTime: 30 * 60_000,
+  };
+}
+
+/**
+ * Reads the waveforms of the tracks to come, one at a time and in the order
+ * given, so each is there when its track starts: a first reading decodes the
+ * whole file, seconds for a long track.
+ */
+export function useWarmWaveforms(gateway: WaveformGateway, installationId: string, ordinals: number[]) {
+  const queryClient = useQueryClient();
+  const order = ordinals.join(",");
+  useEffect(() => {
+    let stopped = false;
+    void (async () => {
+      for (const ordinal of order.split(",").filter(Boolean).map(Number)) {
+        if (stopped) return;
+        await queryClient.prefetchQuery(waveformQuery(gateway, installationId, ordinal));
+      }
+    })();
+    return () => { stopped = true; };
+  }, [gateway, installationId, order, queryClient]);
+}
+
 export function TrackWaveform({
   gateway,
   installationId,
   ordinal,
   resume,
+  visualStyle,
+  visualColor,
+  coverColor,
   onStart,
   onSeekPreview,
   onDuration,
 }: {
-  gateway: Pick<LibraryGateway, "readAudioWaveform">;
+  gateway: WaveformGateway;
   installationId: string;
   ordinal: number;
   resume: MediaResume | null;
+  visualStyle: VisualStyle;
+  visualColor: VisualColor;
+  coverColor: string | null;
   onStart: (ordinal: number, positionSeconds: number) => Promise<void>;
   onSeekPreview?: (positionSeconds: number | null) => void;
   onDuration?: (durationSeconds: number | null) => void;
@@ -62,12 +101,7 @@ export function TrackWaveform({
   const [dragPosition, setDragPosition] = useState<number | null>(null);
   const current = playback.session?.installationId === installationId
     && playback.item?.ordinal === ordinal;
-  const waveform = useQuery({
-    queryKey: ["library", "waveform", installationId, ordinal, SOURCE_BUCKETS],
-    queryFn: () => gateway.readAudioWaveform(installationId, ordinal, SOURCE_BUCKETS),
-    staleTime: Infinity,
-    gcTime: 30 * 60_000,
-  });
+  const waveform = useQuery(waveformQuery(gateway, installationId, ordinal));
   const duration = current
     ? playback.durationSeconds ?? (waveform.data?.durationMs ?? 0) / 1_000
     : (waveform.data?.durationMs ?? resume?.durationMs ?? 0) / 1_000;
@@ -75,7 +109,7 @@ export function TrackWaveform({
     ? playback.positionSeconds
     : resume?.positionMs ? resume.positionMs / 1_000 : 0);
   const progress = duration > 0 ? Math.max(0, Math.min(1, position / duration)) : 0;
-  const peaks = resampleWaveformPeaks(waveform.data?.peaks ?? [], bucketCount);
+  const peaks = waveform.data ? resampleWaveformPeaks(waveform.data.peaks, bucketCount) : null;
 
   useResizeObserver(rootRef, (root, entry) => {
     setBucketCount(waveformBucketCount(entry?.contentRect.width ?? root.clientWidth));
@@ -146,14 +180,15 @@ export function TrackWaveform({
         }
       }}
     >
-      <span className="track-waveform-bars" aria-hidden="true">
-        {(waveform.data ? peaks : Array.from({ length: bucketCount }, () => 0.04)).map((peak, index) => (
-          <i
-            key={index}
-            className={(index + 1) / bucketCount <= progress ? "is-played" : undefined}
-            style={{ height: `${Math.max(4, Math.min(100, peak * 100))}%` }}
-          />
-        ))}
+      <span className="track-waveform-picture" aria-hidden="true">
+        <TrackPicture
+          levels={peaks}
+          count={bucketCount}
+          progress={progress}
+          style={visualStyle}
+          color={visualColor}
+          cover={coverColor}
+        />
       </span>
       <span className="track-waveform-times" aria-hidden="true">
         <span>{formatPlaybackTime(position)}</span>

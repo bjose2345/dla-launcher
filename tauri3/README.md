@@ -139,5 +139,4 @@ prebuilt `@tauri-apps/cli@3.0.0-alpha.5` from npm fails the same way.
   3.0.0-alpha.7 mirrors the page's fullscreen state to the window.
 - CEF's standard builds leave out the H.264 and AAC decoders; the project's
   own build (`cef-build/`) has them, so video plays in the page and the deb
-  needs no GStreamer. H.265 waits for a second pass of that build; such files
-  keep the external-player option.
+  needs no GStreamer. It also decodes H.265 in software.

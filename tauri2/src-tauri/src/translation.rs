@@ -23,7 +23,7 @@ use dla_application::{
 };
 use dla_domain::{
     installation::InstallationId,
-    translation::{TextMarkup, TranslatorSettings},
+    translation::{TextMarkup, TranslatorSettings, UnpackedProgram},
 };
 use dla_translation_relay::{
     NamesRequest, RelayError, RelayHandler, TranslateRequest, TranslationRelay,
@@ -54,7 +54,9 @@ pub struct TranslationController {
 #[serde(rename_all = "camelCase")]
 pub struct TranslationSettingsView {
     pub translator: Option<TranslatorSettings>,
-    pub deepl_key_saved: bool,
+    /// Whether the translator chosen has a key saved; a key never leaves
+    /// the launcher.
+    pub key_saved: bool,
     pub prepare_only_when_idle: bool,
 }
 
@@ -116,22 +118,24 @@ impl TranslationController {
         view(&self.saved.lock().unwrap_or_else(PoisonError::into_inner))
     }
 
-    /// `deepl_key`: `None` keeps the saved key, an empty one forgets it.
+    /// `key`: the key of the translator chosen; `None` keeps the saved key,
+    /// an empty one forgets it.
     /// `prepare_only_when_idle`: `None` keeps the saved choice.
     pub fn save_settings(
         &self,
         translator: Option<TranslatorSettings>,
-        deepl_key: Option<String>,
+        key: Option<String>,
         prepare_only_when_idle: Option<bool>,
     ) -> Result<TranslationSettingsView, String> {
         let mut saved = self.saved.lock().unwrap_or_else(PoisonError::into_inner);
         let mut next = SavedTranslator {
             translator,
             deepl_key: saved.deepl_key.clone(),
+            model_key: saved.model_key.clone(),
             prepare_only_when_idle: prepare_only_when_idle.unwrap_or(saved.prepare_only_when_idle),
         };
-        if let Some(key) = deepl_key {
-            next.deepl_key = Some(key.trim().to_owned()).filter(|key| !key.is_empty());
+        if let Some(key) = key {
+            next.set_key(&key);
         }
         self.settings
             .save(&next)
@@ -156,22 +160,17 @@ impl TranslationController {
     pub fn test(
         &self,
         translator: TranslatorSettings,
-        deepl_key: Option<String>,
+        key: Option<String>,
     ) -> Result<TranslatorTestResult, String> {
-        let saved_key = self
+        let mut candidate = self
             .saved
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .deepl_key
             .clone();
-        let candidate = SavedTranslator {
-            translator: Some(translator),
-            deepl_key: deepl_key
-                .map(|key| key.trim().to_owned())
-                .filter(|key| !key.is_empty())
-                .or(saved_key),
-            prepare_only_when_idle: false,
-        };
+        candidate.translator = Some(translator);
+        if let Some(key) = key.filter(|key| !key.trim().is_empty()) {
+            candidate.set_key(&key);
+        }
         let translator = candidate
             .translator()
             .ok_or_else(|| "Enter an address, or a DeepL key, first.".to_owned())?;
@@ -199,24 +198,33 @@ impl TranslationController {
         })
     }
 
-    /// Before a game starts. A translation problem never keeps a game from
-    /// starting: the game then plays with what it has.
-    pub fn before_launch(&self, installation_id: &InstallationId) {
+    /// Before a game starts: the program to start in place of the
+    /// executable the game was unpacked from, if it was. A translation
+    /// problem never keeps a game from starting: the game then plays with
+    /// what it has.
+    pub fn before_launch(&self, installation_id: &InstallationId) -> Option<UnpackedProgram> {
         match self
             .games
             .prepare_launch(installation_id, || self.relay_access())
         {
-            Ok(true) => log::info!(
-                target: "dla::translation",
-                "event=game_translated installation_id={}",
-                installation_id.0
-            ),
-            Ok(false) => {}
-            Err(error) => log::warn!(
-                target: "dla::translation",
-                "event=game_translation_unavailable installation_id={} error={error}",
-                installation_id.0
-            ),
+            Ok(prepared) => {
+                if prepared.shown {
+                    log::info!(
+                        target: "dla::translation",
+                        "event=game_translated installation_id={}",
+                        installation_id.0
+                    );
+                }
+                prepared.program
+            }
+            Err(error) => {
+                log::warn!(
+                    target: "dla::translation",
+                    "event=game_translation_unavailable installation_id={} error={error}",
+                    installation_id.0
+                );
+                None
+            }
         }
     }
 
@@ -315,7 +323,7 @@ mod archive {
 fn view(saved: &SavedTranslator) -> TranslationSettingsView {
     TranslationSettingsView {
         translator: saved.translator.clone(),
-        deepl_key_saved: saved.deepl_key.is_some(),
+        key_saved: saved.key_saved(),
         prepare_only_when_idle: saved.prepare_only_when_idle,
     }
 }
@@ -427,21 +435,21 @@ pub async fn read_translation_settings(
 pub async fn save_translation_settings(
     state: tauri::State<'_, AppState>,
     translator: Option<TranslatorSettings>,
-    deepl_key: Option<String>,
+    key: Option<String>,
     prepare_only_when_idle: Option<bool>,
 ) -> Result<TranslationSettingsView, String> {
     let translation = Arc::clone(&state.translation);
-    blocking(move || translation.save_settings(translator, deepl_key, prepare_only_when_idle)).await
+    blocking(move || translation.save_settings(translator, key, prepare_only_when_idle)).await
 }
 
 #[tauri::command]
 pub async fn test_translator(
     state: tauri::State<'_, AppState>,
     translator: TranslatorSettings,
-    deepl_key: Option<String>,
+    key: Option<String>,
 ) -> Result<TranslatorTestResult, String> {
     let translation = Arc::clone(&state.translation);
-    blocking(move || translation.test(translator, deepl_key)).await
+    blocking(move || translation.test(translator, key)).await
 }
 
 #[tauri::command]
@@ -451,6 +459,14 @@ pub async fn read_game_translation(
 ) -> Result<GameTranslationView, String> {
     let translation = Arc::clone(&state.translation);
     blocking(move || translation.games().read(&InstallationId(installation_id))).await
+}
+
+#[tauri::command]
+pub async fn list_shown_game_translations(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<InstallationId>, String> {
+    let translation = Arc::clone(&state.translation);
+    blocking(move || translation.games().shown_games()).await
 }
 
 #[tauri::command]

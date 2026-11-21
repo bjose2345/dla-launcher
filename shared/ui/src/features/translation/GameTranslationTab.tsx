@@ -10,11 +10,14 @@ import {
   Pause,
   Play,
   RefreshCw,
+  Square,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { AnimatedDots } from "../../app/AnimatedDots";
 import { ProgressBar, timeLeftText } from "../../app/ProgressBar";
 import { DeliverySignIn } from "../delivery/DeliverySignIn";
+import { formatFileSize } from "../library/imageViewerModel";
 import { patronPlansUrl } from "../delivery/deliveryText";
 import type { DeliveryGateway } from "../delivery/types";
 import { acceptDeliveryView } from "../delivery/useDelivery";
@@ -37,6 +40,7 @@ import { Switch } from "../../app/Switch";
 export const gameTranslationKey = (installationId: string) =>
   ["translation", "game", installationId] as const;
 export const translationSettingsKey = ["translation", "settings"] as const;
+export const shownGamesKey = ["translation", "shown"] as const;
 
 const groupLabelKeys = {
   menus: "translation.group.menus",
@@ -73,6 +77,9 @@ export function GameTranslationTab({
   onOpenSettings,
   onOpenExternal,
   onPlay,
+  playing = null,
+  onStop,
+  stopping = false,
 }: {
   installationId: string;
   gateway: TranslationGateway;
@@ -82,8 +89,12 @@ export function GameTranslationTab({
   onOpenSettings?: () => void;
   onOpenExternal?: (url: string) => Promise<void>;
   onPlay?: () => void;
+  /** The game is being started, or is running: Stop takes the place of Play. */
+  playing?: "starting" | "running" | null;
+  onStop?: () => void;
+  stopping?: boolean;
 }) {
-  const { t } = usePresentation();
+  const { locale, t } = usePresentation();
   const queryClient = useQueryClient();
   const key = gameTranslationKey(installationId);
   const view = useQuery({ queryKey: key, queryFn: () => gateway.readGame(installationId) });
@@ -98,7 +109,10 @@ export function GameTranslationTab({
     }
   }), [gateway, installationId, queryClient]);
 
-  const accept = (next: GameTranslationView) => queryClient.setQueryData(key, next);
+  const accept = (next: GameTranslationView) => {
+    queryClient.setQueryData(key, next);
+    void queryClient.invalidateQueries({ queryKey: shownGamesKey });
+  };
   const turnOn = useMutation({ mutationFn: () => gateway.turnOn(installationId), onSuccess: accept });
   const show = useMutation({ mutationFn: (shown: boolean) => gateway.show(installationId, shown), onSuccess: accept });
   const prepare = useMutation({ mutationFn: () => gateway.prepare(installationId), onSuccess: accept });
@@ -128,7 +142,10 @@ export function GameTranslationTab({
     mutationFn: () => gateway.remove(installationId),
     onSuccess: async () => {
       setConfirmRemove(false);
-      await queryClient.invalidateQueries({ queryKey: key });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: key }),
+        queryClient.invalidateQueries({ queryKey: shownGamesKey }),
+      ]);
     },
   });
   const idle = useMutation({
@@ -203,6 +220,11 @@ export function GameTranslationTab({
             <>
               <h3>{t("translation.offTitle")}</h3>
               <p className="library-manage-help">{t("translation.offHelp")}</p>
+              {current.unpackBytes ? (
+                <p className="library-manage-help">
+                  {t("translation.unpackHelp", { size: formatFileSize(current.unpackBytes, locale) })}
+                </p>
+              ) : null}
               <div className="library-manage-row">
                 <button className="app-button is-primary" type="button" disabled={busy} onClick={() => turnOn.mutate()}>
                   {turnOn.isPending ? <LoaderCircle className="app-spin" aria-hidden="true" /> : <Languages aria-hidden="true" />}
@@ -250,9 +272,13 @@ export function GameTranslationTab({
               busy={busy}
               onPrepare={() => prepare.mutate()}
               onPause={() => pause.mutate()}
+              pausing={pause.isPending}
               onTranslateAgain={() => again.mutate()}
               translatingAgain={again.isPending}
               onPlay={onPlay}
+              playing={playing}
+              onStop={onStop}
+              stopping={stopping}
               onOpenSettings={onOpenSettings}
             />
           ) : null}
@@ -408,18 +434,26 @@ function PreparationCard({
   busy,
   onPrepare,
   onPause,
+  pausing: pauseAsked,
   onTranslateAgain,
   translatingAgain,
   onPlay,
+  playing,
+  onStop,
+  stopping,
   onOpenSettings,
 }: {
   preparation: PreparationView;
   busy: boolean;
   onPrepare: () => void;
   onPause: () => void;
+  pausing: boolean;
   onTranslateAgain: () => void;
   translatingAgain: boolean;
   onPlay?: () => void;
+  playing: "starting" | "running" | null;
+  onStop?: () => void;
+  stopping: boolean;
   onOpenSettings?: () => void;
 }) {
   const { locale, t } = usePresentation();
@@ -429,7 +463,12 @@ function PreparationCard({
   if (preparation.state === "ready") {
     return (
       <section className="translation-card is-ready">
-        <h3><CheckCircle2 aria-hidden="true" />{t("translation.readyTitle")}</h3>
+        <div className="translation-card-head">
+          <h3><CheckCircle2 aria-hidden="true" />{t("translation.readyTitle")}</h3>
+          {onPlay && playing === "running" ? (
+            <span className="translation-running">{t("library.launchStatus.running")}<AnimatedDots /></span>
+          ) : null}
+        </div>
         <p className="translation-card-summary">
           {preparation.preparedAt && preparation.preparedWith
             ? t("translation.readySummary", {
@@ -447,20 +486,35 @@ function PreparationCard({
           <p className="library-manage-help">{t("translation.readyMissing", { count: count(preparation.missing) })}</p>
         ) : null}
         <p className="library-manage-help">{t("translation.readyHelp")}</p>
-        <div className="library-manage-row">
-          {onPlay ? (
-            <button className="app-button is-primary" type="button" onClick={onPlay}>
-              <Play aria-hidden="true" />{t("translation.play")}
+        <div className="translation-actions">
+          <div className="library-manage-row">
+            <button className="app-button" type="button" disabled={busy} onClick={onPrepare}>
+              <RefreshCw aria-hidden="true" />{t("translation.checkNewLines")}
+            </button>
+            {confirmAgain ? null : (
+              <button className="app-button" type="button" disabled={busy} onClick={() => setConfirmAgain(true)}>
+                <Languages aria-hidden="true" />{`${t("translation.translateAgain")}…`}
+              </button>
+            )}
+          </div>
+          {onPlay && playing === "running" && onStop ? (
+            <button className="app-button translation-play" type="button" disabled={stopping} onClick={onStop}>
+              <Square fill="currentColor" aria-hidden="true" />{t("library.stopLaunch")}
+            </button>
+          ) : onPlay ? (
+            <button
+              className="app-button is-primary translation-play"
+              type="button"
+              disabled={playing !== null}
+              aria-busy={playing === "starting"}
+              onClick={onPlay}
+            >
+              {playing === "starting"
+                ? <LoaderCircle className="app-spin" aria-hidden="true" />
+                : <Play aria-hidden="true" />}
+              {t("translation.play")}
             </button>
           ) : null}
-          <button className="app-button" type="button" disabled={busy} onClick={onPrepare}>
-            <RefreshCw aria-hidden="true" />{t("translation.checkNewLines")}
-          </button>
-          {confirmAgain ? null : (
-            <button className="app-button" type="button" disabled={busy} onClick={() => setConfirmAgain(true)}>
-              <Languages aria-hidden="true" />{`${t("translation.translateAgain")}…`}
-            </button>
-          )}
         </div>
         {confirmAgain ? (
           <div
@@ -499,12 +553,13 @@ function PreparationCard({
     needs_translator: "paused",
   } as const;
   const working = preparation.state === "preparing" || preparation.state === "waiting";
+  const pausing = pauseAsked || preparation.pausing;
   return (
     <section className={`translation-card is-${preparation.state}`}>
       <div className="translation-card-head">
         <h3>
           {working ? <LoaderCircle className="app-spin" aria-hidden="true" /> : null}
-          {t(title[preparation.state])}
+          {t(preparation.state === "preparing" && preparation.done > 0 ? "translation.translating" : title[preparation.state])}
         </h3>
         <strong>{`${percent}%`}</strong>
       </div>
@@ -538,8 +593,9 @@ function PreparationCard({
       ) : null}
       <div className="library-manage-row">
         {preparation.state === "preparing" || preparation.state === "waiting" ? (
-          <button className="app-button" type="button" disabled={busy} onClick={onPause}>
-            <Pause aria-hidden="true" />{t("translation.pause")}
+          <button className="app-button" type="button" disabled={busy || pausing} onClick={onPause}>
+            {pausing ? <LoaderCircle className="app-spin" aria-hidden="true" /> : <Pause aria-hidden="true" />}
+            {t(pausing ? "translation.pausing" : "translation.pause")}
           </button>
         ) : null}
         {preparation.state === "paused" ? (

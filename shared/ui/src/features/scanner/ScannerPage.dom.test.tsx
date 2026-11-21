@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PresentationProvider } from "../../preferences/PresentationProvider";
@@ -12,6 +12,7 @@ import type {
   ScanAddResponse,
   ScanFinding,
   ScanInstallView,
+  ScanProgress,
   ScanSessionView,
   ScannerGateway,
 } from "./types";
@@ -121,6 +122,7 @@ describe("ScannerPage", () => {
           workCode: "RJ01000001",
           status: "queued",
           detail: null,
+          conflict: null,
         }],
       }),
     });
@@ -235,10 +237,70 @@ describe("ScannerPage", () => {
   });
 
   it("shows how far a running scan has got", async () => {
-    renderScanner(scannerGateway({ status: "running" }));
+    const gateway = scannerGateway({ status: "running" });
+    let report: (progress: ScanProgress) => void = () => undefined;
+    vi.mocked(gateway.subscribeProgress).mockImplementation(async (listener) => {
+      report = listener;
+      return () => undefined;
+    });
+    renderScanner(gateway);
 
-    expect(await screen.findByText((_, element) => element?.tagName === "STRONG" && element.textContent === "Scanning /home/developer/My Works")).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Scanning /home/developer/My Works" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Stop scan" })).toBeTruthy();
+    // Before the folder is counted: what has been checked, and a bar without an amount.
+    expect(screen.getByText("12 files checked so far")).toBeTruthy();
+    const bar = screen.getByRole("progressbar", { name: "Scan progress" });
+    expect(bar.getAttribute("aria-valuenow")).toBeNull();
+
+    const counters = sessionView("running").session.counters;
+    const running = (extent: ScanProgress["extent"], path: string, sessionId = "session-1"): ScanProgress => ({
+      sessionId,
+      status: "running",
+      counters: { ...counters, inspectedFiles: 3 },
+      currentRelativePath: path,
+      extent,
+    });
+    await act(async () => {
+      report(running({ totalFiles: 27, totalBytes: 4 * 1024 ** 3, checkedBytes: 1024 ** 3 }, "RJ112559.part3.rar"));
+    });
+    expect(screen.getByText("25%")).toBeTruthy();
+    expect(bar.getAttribute("aria-valuenow")).toBe("25");
+    expect(screen.getByText("3 of 27 files checked")).toBeTruthy();
+    expect(screen.getByText("1 GiB of 4 GiB")).toBeTruthy();
+    expect(screen.getByText("RJ112559.part3.rar")).toBeTruthy();
+
+    // Another scan's report, one the launcher runs for an install, is not this one's.
+    await act(async () => {
+      report(running({ totalFiles: 1, totalBytes: 10, checkedBytes: 10 }, "staging.zip", "session-9"));
+    });
+    expect(screen.queryByText("100%")).toBeNull();
+    expect(screen.queryByText("staging.zip")).toBeNull();
+  });
+
+  it("offers to scan the default folder again once it has been scanned", async () => {
+    const gateway = scannerGateway();
+    renderScanner(gateway);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Scan again" }));
+    await waitFor(() => expect(gateway.preparePreferredRoot).toHaveBeenCalledOnce());
+    expect(gateway.start).toHaveBeenCalledWith("root-1");
+    expect(screen.queryByRole("button", { name: "Scan My Works" })).toBeNull();
+  });
+
+  it("names the default folder on the button before anything was scanned, or after another folder was", async () => {
+    const never = scannerGateway();
+    vi.mocked(never.readLatest).mockResolvedValue(null);
+    const first = renderScanner(never);
+    expect(await screen.findByRole("button", { name: "Scan My Works" })).toBeTruthy();
+    first.unmount();
+
+    const other = scannerGateway();
+    const elsewhere = sessionView("completed");
+    elsewhere.root.displayPath = "/mnt/usb/Works";
+    vi.mocked(other.readLatest).mockResolvedValue(elsewhere);
+    renderScanner(other);
+    expect(await screen.findByRole("button", { name: "Scan My Works" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Scan again" })).toBeNull();
   });
 });
 

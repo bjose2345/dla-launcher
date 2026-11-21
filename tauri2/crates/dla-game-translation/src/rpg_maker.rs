@@ -116,7 +116,7 @@ fn bounds(list: &str) -> Option<(usize, usize)> {
     (close > open).then_some((open, close))
 }
 
-fn entries(list: &str) -> Result<Vec<Value>, UnknownLayout> {
+pub(crate) fn entries(list: &str) -> Result<Vec<Value>, UnknownLayout> {
     let (open, close) = bounds(list).ok_or(UnknownLayout)?;
     serde_json::from_str(&list[open..=close]).map_err(|_| UnknownLayout)
 }

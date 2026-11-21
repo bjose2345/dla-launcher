@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { useResizeObserver } from "../../app/useResizeObserver";
 import { usePresentation } from "../../preferences/PresentationProvider";
@@ -7,8 +7,6 @@ import { useMediaPlayback } from "./MediaPlaybackProvider";
 const BAR_PITCH_PX = 7;
 const MIN_BARS = 12;
 const MAX_BARS = 128;
-const RELEASE_PER_FRAME = 0.82;
-const FLOOR = 0.05;
 
 export function useIsPlaying(installationId: string): boolean {
   const playback = useMediaPlayback();
@@ -45,11 +43,9 @@ export function envelopeLevel(previous: number, target: number, release: number)
 export function NowPlayingBars({
   installationId,
   alwaysVisible = false,
-  liveSpectrum = false,
 }: {
   installationId: string;
   alwaysVisible?: boolean;
-  liveSpectrum?: boolean;
 }) {
   const { t } = usePresentation();
   const playback = useMediaPlayback();
@@ -58,51 +54,10 @@ export function NowPlayingBars({
   const current = playback.session?.action === "play_audio"
     && playback.session.installationId === installationId;
   const playing = current && playback.playing;
-  const analyser = playing && liveSpectrum ? playback.analyser : null;
-
-  useEffect(() => {
-    if (playing && liveSpectrum) playback.enableAnalyser();
-  }, [liveSpectrum, playback.enableAnalyser, playing]);
 
   useResizeObserver(containerRef, (container, entry) => {
     setBarCount(spectrumBarCount(entry?.contentRect.width ?? container.clientWidth));
   }, [alwaysVisible, current]);
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    const bars = Array.from(container.querySelectorAll<HTMLElement>("i"));
-    const showBaseline = () => {
-      bars.forEach((bar) => { bar.style.height = `${FLOOR * 100}%`; });
-    };
-    if (!analyser) {
-      showBaseline();
-      return;
-    }
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      showBaseline();
-      return;
-    }
-    const frequencies = new Uint8Array(analyser.frequencyBinCount);
-    const levels = new Float32Array(bars.length);
-    let frame = 0;
-    const draw = () => {
-      analyser.getByteFrequencyData(frequencies);
-      const heights = spectrumBarHeights(frequencies, bars.length);
-      for (let index = 0; index < bars.length; index += 1) {
-        const level = envelopeLevel(
-          levels[index] ?? 0,
-          heights[index] ?? 0,
-          RELEASE_PER_FRAME,
-        );
-        levels[index] = level;
-        bars[index]!.style.height = `${Math.max(FLOOR, level) * 100}%`;
-      }
-      frame = requestAnimationFrame(draw);
-    };
-    frame = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(frame);
-  }, [analyser, barCount, current]);
 
   if (!current && !alwaysVisible) return null;
 

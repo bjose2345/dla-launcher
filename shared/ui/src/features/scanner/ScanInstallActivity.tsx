@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PackageOpen } from "lucide-react";
 
 import { basename } from "../../basename";
@@ -15,7 +15,7 @@ import {
   type PackagePreparationProgressGateway,
 } from "../library/usePackagePreparationProgress";
 import type { ScanInstall, ScanInstallGateway } from "./types";
-import { useScanInstalls } from "./useScanInstalls";
+import { acceptScanInstallView, useScanInstalls } from "./useScanInstalls";
 
 const SETTLED: readonly ScanInstall["status"][] = ["installed", "needs_review", "failed"];
 
@@ -37,6 +37,7 @@ export function ScanInstallActivity({
   onShowInLibrary: (installationId: string) => void;
 }) {
   const { locale, t } = usePresentation();
+  const queryClient = useQueryClient();
   const installs = useScanInstalls(gateway);
   const progress = usePackagePreparationProgress(progressGateway);
   const list = installs.data?.installs ?? [];
@@ -63,6 +64,14 @@ export function ScanInstallActivity({
     return name.replace(/(\.part\d+)?\.(zip|rar|exe)$/i, "");
   };
   const current = running && progress.data?.installationId === running.installationId ? progress.data : null;
+  const taken = finished?.status === "failed" ? finished.conflict : null;
+  const showInLibrary = (installationId: string) => ({
+    label: t("scanner.notice.openLibrary"),
+    onClick: () => {
+      onShowInLibrary(installationId);
+      dismiss();
+    },
+  });
   const percent = current ? packagePreparationPercent(current) : null;
 
   return (
@@ -91,19 +100,27 @@ export function ScanInstallActivity({
             : finished.status === "needs_review"
               ? "scanner.notice.installedReview"
               : "scanner.notice.installFailed", { title: title(finished) })}
-          detail={finished.status === "failed" && finished.detail
-            ? t("common.technicalDetail", { detail: finished.detail })
-            : undefined}
-          actions={finished.status === "failed"
-            ? [{ label: t("scanner.activity.openScanner"), onClick: () => { onOpenScanner(); dismiss(); } }]
-            : [{
-              label: t("scanner.notice.openLibrary"),
-              primary: true,
-              onClick: () => {
-                onShowInLibrary(finished.installationId);
-                dismiss();
-              },
-            }]}
+          detail={taken
+            ? t("folderTaken.message", { name: taken.folderName })
+            : finished.status === "failed" && finished.detail
+              ? t("common.technicalDetail", { detail: finished.detail })
+              : undefined}
+          actions={taken
+            ? [
+              ...(taken.keepBothName ? [{
+                label: t("folderTaken.keepBoth"),
+                primary: true,
+                onClick: () => {
+                  void gateway.installArchive(finished.installationId, "keep_both")
+                    .then((view) => acceptScanInstallView(queryClient, view));
+                  dismiss();
+                },
+              }] : []),
+              showInLibrary(finished.installationId),
+            ]
+            : finished.status === "failed"
+              ? [{ label: t("scanner.activity.openScanner"), onClick: () => { onOpenScanner(); dismiss(); } }]
+              : [{ ...showInLibrary(finished.installationId), primary: true }]}
           onClose={dismiss}
         />
       ) : null}

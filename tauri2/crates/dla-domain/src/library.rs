@@ -72,6 +72,7 @@ pub struct LibraryLaunchTotals {
     pub installation_id: InstallationId,
     pub launch_count: u32,
     pub total_duration_ms: u64,
+    pub last_started_at: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

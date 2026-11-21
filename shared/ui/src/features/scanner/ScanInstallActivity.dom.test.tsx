@@ -61,6 +61,48 @@ describe("ScanInstallActivity", () => {
     expect(onShowInLibrary).toHaveBeenCalledWith("installation-1");
     await waitFor(() => expect(screen.queryByText("SiNiSistar is installed and in your Library")).toBeNull());
   });
+
+  it("offers to keep both when the install folder already has the work's folder", async () => {
+    let publish: (view: ScanInstallView) => void = () => undefined;
+    const gateway: ScanInstallGateway = {
+      readInstalls: vi.fn().mockResolvedValue(view(1, [install("installing")])),
+      subscribeInstalls: vi.fn(async (listener) => {
+        publish = listener;
+        return () => undefined;
+      }),
+      selectInstallFolder: vi.fn(),
+      installArchive: vi.fn().mockResolvedValue(view(3, [install("queued")])),
+      cancelInstall: vi.fn(),
+    };
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <PresentationProvider>
+          <ScanInstallActivity
+            gateway={gateway}
+            progressGateway={{
+              readPackagePreparationProgress: vi.fn().mockResolvedValue(null),
+              subscribePackagePreparationProgress: vi.fn().mockResolvedValue(() => undefined),
+            }}
+            catalogGateway={{ readWorks: vi.fn().mockResolvedValue([]) }}
+            onOpenScanner={() => undefined}
+            onShowInLibrary={() => undefined}
+          />
+        </PresentationProvider>
+      </QueryClientProvider>,
+    );
+    await screen.findByRole("button", { name: "SiNiSistar is installing. Open the Scanner." });
+
+    act(() => publish(view(2, [{
+      ...install("failed"),
+      detail: "the install folder already has a folder named RJ137267",
+      conflict: { folderName: "RJ137267", keepBothName: "RJ137267 (2)", replaceable: true },
+    }])));
+
+    expect(await screen.findByText("Your install folder already has a folder named RJ137267.")).toBeTruthy();
+    expect(screen.queryByText(/Technical detail/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Keep both" }));
+    await waitFor(() => expect(gateway.installArchive).toHaveBeenCalledWith("installation-1", "keep_both"));
+  });
 });
 
 function view(revision: number, installs: ScanInstall[]): ScanInstallView {
@@ -75,5 +117,6 @@ function install(status: ScanInstall["status"], installationId = "installation-1
     workCode: null,
     status,
     detail: null,
+    conflict: null,
   };
 }
